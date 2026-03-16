@@ -91,6 +91,16 @@ Database: Database Agent
 - `build_logs` - Detailed build log entries
 - `marketplace_listings` - Published marketplace items
 
+## Stripe Payments (Pending Setup)
+
+Stripe integration is partially set up but requires credentials to activate:
+- All Stripe route code is in place (`artifacts/api-server/src/routes/stripe.ts`, `stripeService.ts`, `storage.ts`, `webhookHandlers.ts`)
+- `stripeClient.ts` is currently a **stub** — it reads from `STRIPE_SECRET_KEY` env var
+- To activate: set `STRIPE_SECRET_KEY` as a secret, then run `pnpm --filter @workspace/scripts exec tsx src/seed-products.ts` to seed plans
+- Stripe routes: `GET /api/stripe/products-with-prices`, `POST /api/stripe/checkout`, `POST /api/stripe/portal`, `GET /api/stripe/subscription`
+- Webhook route: `POST /api/stripe/webhook` (registered before express.json() in app.ts — IMPORTANT)
+- Once real Stripe credentials are set, replace `stripeClient.ts` with the full Replit-connector version
+
 ## Design
 
 Dark cyberpunk aesthetic: deep black backgrounds, cyan/pink/magenta neon accents, monospace fonts, grid patterns, terminal-style headers. Brand name: "Nexus Studio".
