@@ -1,0 +1,22 @@
+packages:
+  "framer-motion": "For fluid layout animations and futuristic transitions"
+  "recharts": "For admin dashboard analytics charts"
+  "date-fns": "For formatting timestamps in logs and builds"
+  "clsx": "For conditional class names"
+  "tailwind-merge": "For merging tailwind classes safely"
+  "lucide-react": "For UI icons"
+
+images:
+  - path: "artifacts/ai-studio/public/images/hero-bg.png"
+    description: "Cyberpunk cityscape at night with glowing neon grids, deep cyan and magenta holographic elements, dark futuristic atmosphere"
+    aspect_ratio: "16:9"
+  - path: "artifacts/ai-studio/public/images/agent-core.png"
+    description: "Abstract glowing artificial intelligence core, floating energetic sphere with digital circuitry, neon blue and violet"
+    aspect_ratio: "1:1"
+  - path: "artifacts/ai-studio/public/images/game-engine.png"
+    description: "Futuristic holographic game engine interface projection, dark background, wireframe 3D models"
+    aspect_ratio: "16:9"
+
+notes:
+  - "Assuming Orval generated hooks are available at @workspace/api-client-react"
+  - "Assuming dark mode default for the cyberpunk theme"

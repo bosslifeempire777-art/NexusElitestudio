@@ -1,8 +1,8 @@
-# Workspace
+# AI Studio Platform
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+An autonomous AI-powered development platform (Nexus Studio) capable of building websites, mobile apps, SaaS platforms, automation systems, AI tools, and fully playable video games. Functions as a complete AI software factory and game studio with a dark cyberpunk aesthetic.
 
 ## Stack
 
@@ -10,7 +10,8 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Node.js version**: 24
 - **Package manager**: pnpm
 - **TypeScript version**: 5.9
-- **API framework**: Express 5
+- **Frontend**: React + Vite (artifacts/ai-studio), Tailwind CSS, Framer Motion, Recharts, Lucide React
+- **API framework**: Express 5 (artifacts/api-server)
 - **Database**: PostgreSQL + Drizzle ORM
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
 - **API codegen**: Orval (from OpenAPI spec)
@@ -20,77 +21,76 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ```text
 artifacts-monorepo/
-├── artifacts/              # Deployable applications
+├── artifacts/
+│   ├── ai-studio/          # Main platform frontend (React + Vite)
 │   └── api-server/         # Express API server
-├── lib/                    # Shared libraries
+├── lib/
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks
 │   ├── api-zod/            # Generated Zod schemas from OpenAPI
 │   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+└── scripts/                # Utility scripts
 ```
 
-## TypeScript & Composite Projects
+## AI Studio Platform Features
 
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
+### Pages
+- **Landing Page** (`/`) - Hero with prompt input, feature showcase, stats
+- **Dashboard** (`/dashboard`) - "Command Center" with user project grid, usage metrics
+- **Project Builder** (`/projects/new`) - Natural language prompt input with project type selector
+- **Project Detail** (`/projects/:id`) - File tree, code editor, agent logs, live preview
+- **Agent Swarm** (`/agents`) - Grid of 21 AI agents categorized by type
+- **Marketplace** (`/marketplace`) - "Nexus Exchange" with published apps/games/tools
+- **Admin Console** (`/admin`) - "Overseer Terminal" with analytics charts and user management
+- **Settings** (`/settings`) - Profile, plan management, API keys
+- **Pricing** (`/pricing`) - Plan comparison: Free / Pro ($49) / Enterprise ($199) / VIP
 
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
+### Agent Swarm (21 Agents)
+Categories: Software, DevOps, Design, Security, Database, Game Studio, Business
 
-## Root Scripts
+Software: Central Orchestrator, Software Architect, Code Generator, Auto Code Repair, Testing Agent, AI Integration Agent
+Game Studio: Game Designer, Game Engine Agent, Asset Generator, Level Builder, Game Physics, Multiplayer Network, Game Testing
+Business: AI Startup Builder, AI Marketing, AI Sales, Analytics Agent
+DevOps: DevOps Agent
+Design: UI/UX Design Agent
+Security: Security Agent
+Database: Database Agent
 
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
+### Project Types
+- Website, Mobile App, SaaS, Automation, AI Tool, Game (with engine selection: Godot/Unity/Unreal)
 
-## Packages
+### Subscription Plans
+- **Free**: 5 builds/month, 3 projects, limited deployment
+- **Pro ($49/mo)**: Unlimited builds, 50 projects, full deployment, game studio
+- **Enterprise ($199/mo)**: Unlimited everything, team collab, private infra
+- **VIP**: Full free access, owner-assigned
 
-### `artifacts/api-server` (`@workspace/api-server`)
+## API Routes
 
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
+- `GET /api/auth/me` - Get current user
+- `GET/POST /api/projects` - List/create projects
+- `GET/DELETE /api/projects/:id` - Get/delete project
+- `GET /api/projects/:id/build-logs` - Build logs
+- `GET /api/projects/:id/files` - File tree
+- `GET /api/agents` - List agents
+- `POST /api/agents/:id/run` - Run agent
+- `GET /api/builds` - List builds
+- `GET /api/marketplace/listings` - Marketplace items
+- `POST /api/marketplace/listings` - Publish listing
+- `GET /api/users` - User management (admin)
+- `POST /api/users/:id/grant-vip` - Grant VIP access
+- `GET /api/plans` - Subscription plans
+- `GET /api/analytics/overview` - Admin analytics
+- `GET /api/analytics/user` - User analytics
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+## Database Schema
 
-### `lib/db` (`@workspace/db`)
+- `users` - User accounts with plan, VIP, admin fields
+- `projects` - Project metadata with type, status, agent logs
+- `builds` - Build history and status
+- `build_logs` - Detailed build log entries
+- `marketplace_listings` - Published marketplace items
 
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
+## Design
 
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
-
-### `lib/api-spec` (`@workspace/api-spec`)
-
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
-
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
-
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+Dark cyberpunk aesthetic: deep black backgrounds, cyan/pink/magenta neon accents, monospace fonts, grid patterns, terminal-style headers. Brand name: "Nexus Studio".

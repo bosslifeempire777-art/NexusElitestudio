@@ -1,0 +1,333 @@
+Autonomous AI Software + Game Studio Builder Platform
+Build a fully autonomous AI-powered development platform capable of creating:
+• websites
+• mobile apps
+• SaaS platforms
+• automation systems
+• AI tools
+• fully playable video games
+The platform must function as a complete AI software factory and game studio.
+It must be more advanced than platforms like
+Replit and Emergent.sh.
+The system must run entirely on the user's own infrastructure and not depend on third-party builder platforms.
+CORE OBJECTIVE
+Create a self-hosted AI platform capable of:
+• building software from prompts
+• building video games from prompts
+• launching SaaS products
+• selling apps automatically
+• running AI businesses
+All coordinated by an AI agent swarm system.
+AGENT SWARM ARCHITECTURE
+The system functions as an AI engineering team and AI game studio.
+Agents are coordinated by a central orchestrator.
+CENTRAL ORCHESTRATOR AGENT
+Responsibilities:
+• interpret user prompts
+• break tasks into subtasks
+• assign work to agents
+• manage execution
+• combine outputs
+• supervise the entire system
+SOFTWARE DEVELOPMENT AGENTS
+Software Architect Agent
+Designs application architecture.
+Responsibilities:
+• choose frameworks
+• design microservices
+• create database schema
+• define API structures
+• generate project folders
+Code Generation Agent
+Writes application code.
+Languages supported:
+• Python
+• JavaScript
+• TypeScript
+• Go
+• Rust
+• Java
+• PHP
+Frameworks:
+Frontend:
+• React
+• Next.js
+• Vue
+Backend:
+• Node.js
+• Express
+• FastAPI
+• Django
+Mobile:
+• Flutter
+• React Native
+Auto Code Repair Agent
+Runs continuously to maintain working software.
+Capabilities:
+• detect bugs
+• automatically repair code
+• refactor inefficient logic
+• optimize performance
+Testing Agent
+Runs automated testing.
+Includes:
+• unit tests
+• integration tests
+• UI tests
+• performance tests
+DEVOPS AGENT
+Handles deployment and infrastructure.
+Tools:
+• Docker
+• Kubernetes
+• Nginx
+• Redis
+Responsibilities:
+• CI/CD pipelines
+• server setup
+• monitoring
+UI / UX DESIGN AGENT
+Generates interfaces.
+Capabilities:
+• SaaS dashboards
+• landing pages
+• mobile UI
+• admin panels
+Frameworks:
+• Tailwind CSS
+• React component libraries
+SECURITY AGENT
+Ensures system security.
+Features:
+• vulnerability scanning
+• authentication systems
+• secure APIs
+• encryption
+Authentication support:
+• OAuth
+• JWT
+• role-based permissions
+AI INTEGRATION AGENT
+Handles AI features.
+Primary model:
+Latest GPT model from OpenAI.
+Capabilities:
+• chatbots
+• automation systems
+• recommendation engines
+• AI assistants
+Allow switching between:
+• cloud models
+• local LLMs
+DATABASE AGENT
+Supported databases:
+• PostgreSQL
+• MongoDB
+• Redis
+• SQLite
+Responsibilities:
+• schema generation
+• indexing
+• performance optimization
+AUTONOMOUS BUSINESS AGENTS
+AI Startup Builder Agent
+Builds SaaS businesses automatically.
+Capabilities:
+• find profitable niches
+• generate SaaS ideas
+• build products
+• deploy them
+AI Marketing Agent
+Promotes products automatically.
+Capabilities:
+• generate ads
+• SEO content
+• social media posts
+• marketing funnels
+AI Sales Agent
+Handles monetization.
+Capabilities:
+• lead generation
+• email outreach
+• onboarding funnels
+Analytics Agent
+Tracks platform performance.
+Features:
+• revenue tracking
+• product analytics
+• growth metrics
+AI GAME STUDIO BUILDER
+Add a Game Studio Mode to the platform.
+Users can prompt:
+“Create a survival horror game”
+or
+“Build a 3D open world exploration game”.
+The AI will automatically generate a fully playable game project.
+GAME ENGINES SUPPORTED
+The platform must support:
+• Godot Engine
+• Unity
+• Unreal Engine
+Recommended default engine:
+Godot (open source and easier automation).
+GAME DEVELOPMENT AGENTS
+Game Designer Agent
+Creates game concepts.
+Responsibilities:
+• story design
+• gameplay mechanics
+• character systems
+• game progression
+Game Engine Agent
+Builds game projects.
+Responsibilities:
+• create engine projects
+• configure physics
+• generate scenes
+• create scripts
+Asset Generation Agent
+Automatically generates game assets.
+Capabilities:
+• 3D models
+• textures
+• sprites
+• animations
+• UI elements
+Level Builder Agent
+Generates levels.
+Capabilities:
+• map layouts
+• environment design
+• enemy placement
+• puzzles
+3D OPEN WORLD GENERATION
+The platform must support automatic 3D world generation.
+Capabilities:
+• procedural terrain
+• forests
+• mountains
+• oceans
+• cities
+• caves
+• weather systems
+• day/night cycles
+This allows creation of massive open worlds similar to
+Minecraft style procedural environments.
+GAME PHYSICS AGENT
+Handles physics simulation.
+Includes:
+• collision detection
+• gravity systems
+• ragdoll physics
+• vehicle physics
+MULTIPLAYER NETWORK AGENT
+Creates multiplayer systems.
+Capabilities:
+• matchmaking
+• real-time synchronization
+• multiplayer servers
+GAME TESTING AGENT
+Automatically plays the game to detect issues.
+Functions:
+• find bugs
+• detect broken levels
+• test performance
+GAME EXPORT SYSTEM
+The platform must export games to:
+PC:
+• Windows
+• Mac
+• Linux
+Mobile:
+• Android
+• iOS
+Web:
+• browser playable games
+NATURAL LANGUAGE CREATION
+Users can create projects by typing prompts such as:
+“Build a mechanic shop management system.”
+or
+“Create an open world survival game on an alien planet.”
+The AI must generate the entire project automatically.
+BUILT-IN AI IDE
+Include a browser IDE similar to:
+Replit.
+Features:
+• code editor
+• live preview
+• AI code suggestions
+• debugging tools
+MARKETPLACE SYSTEM
+Users can publish and sell:
+• apps
+• SaaS products
+• game templates
+• AI tools
+Payments via:
+• Stripe
+• PayPal
+SAAS SUBSCRIPTION SYSTEM
+Plans include:
+Free Plan
+• limited builds
+• limited deployment
+• limited AI usage
+Pro Plan
+• unlimited app builds
+• deployment access
+• advanced AI tools
+Enterprise Plan
+• team collaboration
+• private infrastructure
+VIP ACCESS SYSTEM
+The platform owner receives full free access.
+The owner can assign VIP access to selected users.
+VIP users receive:
+• unlimited usage
+• full feature access
+• free deployments
+All other users must pay subscription plans.
+ADMIN DASHBOARD
+Include an admin system for:
+• user management
+• subscription control
+• revenue analytics
+• AI usage tracking
+• agent logs
+SELF HOSTED INFRASTRUCTURE
+The platform must run entirely on the user's own servers.
+Installation method:
+Docker deployment.
+Recommended infrastructure providers:
+• DigitalOcean
+• Vultr
+• Linode
+TECHNOLOGY STACK
+Frontend
+React + Next.js
+Backend
+Node.js or Python
+Database
+PostgreSQL
+Caching
+Redis
+Infrastructure
+Docker + Kubernetes
+AI orchestration
+Python agent system
+PROJECT STRUCTURE
+Generate the complete platform including:
+/frontend
+/backend
+/agents
+/game_studio
+/ai_models
+/database
+/deployment
+/marketplace
+/admin
+/plugins
+/docs
+FINAL OBJECTIVE
+Create a self-hosted AI platform capable of building software, launching SaaS products, and generating fully playable video games including procedural 3D open worlds.
+The system must be production-ready, scalable, monetizable, and independent from third-party builder platforms.

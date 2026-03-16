@@ -1,22 +1,38 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: AI Studio Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: projects
+    description: Project management
+  - name: agents
+    description: AI agent operations
+  - name: builds
+    description: Build and deployment operations
+  - name: marketplace
+    description: Marketplace operations
+  - name: users
+    description: User management
+  - name: admin
+    description: Admin operations
+  - name: plans
+    description: Subscription plans
+  - name: analytics
+    description: Analytics operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +40,373 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List all projects for user
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [website, mobile_app, saas, automation, ai_tool, game, all]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [building, ready, deployed, failed, all]
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a new project from prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get project by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Delete a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /projects/{id}/build-logs:
+    get:
+      operationId: getProjectBuildLogs
+      tags: [projects]
+      summary: Get build logs for a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Build logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BuildLog"
+
+  /projects/{id}/files:
+    get:
+      operationId: getProjectFiles
+      tags: [projects]
+      summary: Get file tree for a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File tree
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileNode"
+
+  /agents:
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List available agents
+      responses:
+        "200":
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Agent"
+
+  /agents/{id}/run:
+    post:
+      operationId: runAgent
+      tags: [agents]
+      summary: Run an agent task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRunRequest"
+      responses:
+        "200":
+          description: Agent run result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRunResult"
+
+  /builds:
+    get:
+      operationId: listBuilds
+      tags: [builds]
+      summary: List builds
+      parameters:
+        - name: projectId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of builds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Build"
+
+  /marketplace/listings:
+    get:
+      operationId: listMarketplaceListings
+      tags: [marketplace]
+      summary: List marketplace items
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [app, saas, game_template, ai_tool, all]
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Marketplace listings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketplaceListing"
+    post:
+      operationId: createMarketplaceListing
+      tags: [marketplace]
+      summary: Publish project to marketplace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateListingRequest"
+      responses:
+        "201":
+          description: Listing created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketplaceListing"
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [admin]
+      summary: List all users (admin only)
+      parameters:
+        - name: plan
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{id}:
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get user by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /users/{id}/grant-vip:
+    post:
+      operationId: grantVip
+      tags: [admin]
+      summary: Grant VIP access to user (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: VIP granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /plans:
+    get:
+      operationId: listPlans
+      tags: [plans]
+      summary: List subscription plans
+      responses:
+        "200":
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Plan"
+
+  /analytics/overview:
+    get:
+      operationId: getAnalyticsOverview
+      tags: [analytics]
+      summary: Get platform analytics overview
+      responses:
+        "200":
+          description: Analytics overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsOverview"
+
+  /analytics/user:
+    get:
+      operationId: getUserAnalytics
+      tags: [analytics]
+      summary: Get current user analytics
+      responses:
+        "200":
+          description: User analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAnalytics"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +417,464 @@ components:
       required:
         - status
 
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        plan:
+          type: string
+          enum: [free, pro, enterprise, vip, admin]
+        isAdmin:
+          type: boolean
+        isVip:
+          type: boolean
+        projectCount:
+          type: integer
+        buildsThisMonth:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - username
+        - plan
+        - isAdmin
+        - isVip
+        - projectCount
+        - buildsThisMonth
+        - createdAt
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        plan:
+          type: string
+          enum: [free, pro, enterprise, vip]
+        isAdmin:
+          type: boolean
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [website, mobile_app, saas, automation, ai_tool, game]
+        status:
+          type: string
+          enum: [building, ready, deployed, failed]
+        prompt:
+          type: string
+        framework:
+          type: string
+        gameEngine:
+          type: string
+        userId:
+          type: string
+        thumbnailUrl:
+          type: string
+        deployedUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        agentLogs:
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - name
+        - type
+        - status
+        - prompt
+        - userId
+        - createdAt
+        - updatedAt
+        - agentLogs
+
+    CreateProjectRequest:
+      type: object
+      properties:
+        prompt:
+          type: string
+        type:
+          type: string
+          enum: [website, mobile_app, saas, automation, ai_tool, game]
+        name:
+          type: string
+      required:
+        - prompt
+        - type
+        - name
+
+    BuildLog:
+      type: object
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        level:
+          type: string
+          enum: [info, warn, error, success]
+        message:
+          type: string
+        agentName:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - id
+        - projectId
+        - level
+        - message
+        - agentName
+        - timestamp
+
+    FileNode:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [file, directory]
+        content:
+          type: string
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileNode"
+      required:
+        - name
+        - path
+        - type
+
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [software, game_studio, business, devops, design, security, database]
+        status:
+          type: string
+          enum: [idle, running, completed, error]
+        capabilities:
+          type: array
+          items:
+            type: string
+        icon:
+          type: string
+        color:
+          type: string
+      required:
+        - id
+        - name
+        - description
+        - category
+        - status
+        - capabilities
+        - icon
+        - color
+
+    AgentRunRequest:
+      type: object
+      properties:
+        projectId:
+          type: string
+        task:
+          type: string
+        parameters:
+          type: object
+      required:
+        - task
+
+    AgentRunResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        output:
+          type: string
+        agentId:
+          type: string
+        duration:
+          type: integer
+      required:
+        - success
+        - output
+        - agentId
+        - duration
+
+    Build:
+      type: object
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        status:
+          type: string
+          enum: [queued, building, success, failed]
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        logs:
+          type: array
+          items:
+            type: string
+        deployedUrl:
+          type: string
+      required:
+        - id
+        - projectId
+        - status
+        - startedAt
+        - logs
+
+    MarketplaceListing:
+      type: object
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [app, saas, game_template, ai_tool]
+        price:
+          type: number
+        isFree:
+          type: boolean
+        sellerId:
+          type: string
+        sellerName:
+          type: string
+        downloads:
+          type: integer
+        rating:
+          type: number
+        thumbnailUrl:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - projectId
+        - title
+        - description
+        - category
+        - price
+        - isFree
+        - sellerId
+        - sellerName
+        - downloads
+        - rating
+        - tags
+        - createdAt
+
+    CreateListingRequest:
+      type: object
+      properties:
+        projectId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [app, saas, game_template, ai_tool]
+        price:
+          type: number
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - projectId
+        - title
+        - description
+        - category
+        - price
+        - tags
+
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          enum: [free, pro, enterprise, vip]
+        displayName:
+          type: string
+        price:
+          type: number
+        billingPeriod:
+          type: string
+          enum: [monthly, yearly]
+        features:
+          type: array
+          items:
+            type: string
+        limits:
+          $ref: "#/components/schemas/PlanLimits"
+      required:
+        - id
+        - name
+        - displayName
+        - price
+        - billingPeriod
+        - features
+        - limits
+
+    PlanLimits:
+      type: object
+      properties:
+        buildsPerMonth:
+          type: integer
+        deployments:
+          type: integer
+        aiUsageTokens:
+          type: integer
+        projects:
+          type: integer
+        teamMembers:
+          type: integer
+      required:
+        - buildsPerMonth
+        - deployments
+        - aiUsageTokens
+        - projects
+        - teamMembers
+
+    AnalyticsOverview:
+      type: object
+      properties:
+        totalUsers:
+          type: integer
+        totalProjects:
+          type: integer
+        totalBuilds:
+          type: integer
+        totalRevenue:
+          type: number
+        activeAgents:
+          type: integer
+        marketplaceListings:
+          type: integer
+        buildsToday:
+          type: integer
+        newUsersThisWeek:
+          type: integer
+        revenueByPlan:
+          type: object
+          additionalProperties:
+            type: number
+        buildsOverTime:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+      required:
+        - totalUsers
+        - totalProjects
+        - totalBuilds
+        - totalRevenue
+        - activeAgents
+        - marketplaceListings
+        - buildsToday
+        - newUsersThisWeek
+        - revenueByPlan
+        - buildsOverTime
+
+    UserAnalytics:
+      type: object
+      properties:
+        projectsCreated:
+          type: integer
+        buildsThisMonth:
+          type: integer
+        buildsRemaining:
+          type: integer
+        totalDeployments:
+          type: integer
+        aiTokensUsed:
+          type: integer
+        aiTokensRemaining:
+          type: integer
+        projectsByType:
+          type: object
+          additionalProperties:
+            type: integer
+        activityTimeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimeSeriesPoint"
+      required:
+        - projectsCreated
+        - buildsThisMonth
+        - buildsRemaining
+        - totalDeployments
+        - aiTokensUsed
+        - aiTokensRemaining
+        - projectsByType
+        - activityTimeline
+
+    TimeSeriesPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        value:
+          type: number
+      required:
+        - date
+        - value
