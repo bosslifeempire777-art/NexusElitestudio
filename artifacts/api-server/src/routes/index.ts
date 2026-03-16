@@ -8,6 +8,7 @@ import usersRouter from "./users.js";
 import plansRouter from "./plans.js";
 import analyticsRouter from "./analytics.js";
 import buildsRouter from "./builds.js";
+import stripeRouter from "./stripe.js";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use("/users", usersRouter);
 router.use("/plans", plansRouter);
 router.use("/analytics", analyticsRouter);
 router.use("/builds", buildsRouter);
+router.use("/stripe", stripeRouter);
 
 export default router;

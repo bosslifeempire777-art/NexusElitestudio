@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, timestamp, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -11,6 +11,8 @@ export const usersTable = pgTable("users", {
   isVip: boolean("is_vip").notNull().default(false),
   projectCount: integer("project_count").notNull().default(0),
   buildsThisMonth: integer("builds_this_month").notNull().default(0),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
