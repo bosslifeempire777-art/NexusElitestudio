@@ -63,7 +63,8 @@ export default function Dashboard() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {projects?.map(project => (
-                <Card key={project.id} className="group hover:border-primary/50 transition-colors flex flex-col">
+                <Link href={`/projects/${project.id}`} className="block">
+                <Card key={project.id} className="group hover:border-primary/50 transition-colors flex flex-col cursor-pointer">
                   <CardHeader className="pb-3 border-b border-border/30">
                     <div className="flex justify-between items-start">
                       <CardTitle className="text-lg truncate pr-2 group-hover:text-glow transition-all">{project.name}</CardTitle>
@@ -82,12 +83,11 @@ export default function Dashboard() {
                       <span className="text-xs font-mono text-muted-foreground opacity-50">
                         {format(new Date(project.createdAt), 'MMM dd, HH:mm')}
                       </span>
-                      <Button variant="outline" size="sm" asChild className="opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Link href={`/projects/${project.id}`}>ACCESS</Link>
-                      </Button>
+                      <span className="text-xs font-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity">ACCESS →</span>
                     </div>
                   </CardContent>
                 </Card>
+                </Link>
               ))}
             </div>
           )}
