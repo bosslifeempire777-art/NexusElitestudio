@@ -12,7 +12,7 @@ export default function ProjectDetail() {
   const { data: logs } = useGetProjectBuildLogs(id || "");
   const { data: files } = useGetProjectFiles(id || "");
 
-  const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('preview');
   const [selectedFile, setSelectedFile] = useState<string | null>("src/App.tsx");
 
   if (isLoading) return <AppLayout><div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div></AppLayout>;
