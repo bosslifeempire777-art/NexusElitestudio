@@ -1,4 +1,7 @@
 import { Router, type IRouter } from "express";
+import { db } from "@workspace/db";
+import { projectsTable, buildsTable } from "@workspace/db/schema";
+import { eq, count, gte } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -24,33 +27,43 @@ router.get("/overview", (_req, res) => {
     marketplaceListings: 156,
     buildsToday: 342,
     newUsersThisWeek: 89,
-    revenueByPlan: {
-      free: 0,
-      pro: 87200,
-      enterprise: 56000,
-      vip: 0,
-    },
+    revenueByPlan: { free: 0, pro: 87200, enterprise: 56000, vip: 0 },
     buildsOverTime: genTimeSeries(30, 300, 150),
   });
 });
 
-router.get("/user", (_req, res) => {
+router.get("/user", async (req, res) => {
+  const userId = req.headers["x-user-id"] as string || "demo-user";
+
+  const projects = await db.select().from(projectsTable).where(eq(projectsTable.userId, userId));
+
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const projectsByType: Record<string, number> = {
+    website: 0, saas: 0, game: 0, mobile_app: 0, ai_tool: 0, automation: 0,
+  };
+  let totalDeployments = 0;
+
+  for (const p of projects) {
+    if (p.type in projectsByType) projectsByType[p.type]++;
+    if (p.status === "deployed") totalDeployments++;
+  }
+
+  const buildsThisMonth = projects.filter(
+    (p) => new Date(p.createdAt) >= startOfMonth
+  ).length;
+
   res.json({
-    projectsCreated: 12,
-    buildsThisMonth: 47,
+    projectsCreated: projects.length,
+    buildsThisMonth,
     buildsRemaining: -1,
-    totalDeployments: 8,
-    aiTokensUsed: 1240000,
+    totalDeployments,
+    aiTokensUsed: projects.length * 62000,
     aiTokensRemaining: -1,
-    projectsByType: {
-      website: 3,
-      saas: 4,
-      game: 2,
-      mobile_app: 1,
-      ai_tool: 2,
-      automation: 0,
-    },
-    activityTimeline: genTimeSeries(30, 2, 3),
+    projectsByType,
+    activityTimeline: genTimeSeries(30, Math.max(1, projects.length / 10), 2),
   });
 });
 

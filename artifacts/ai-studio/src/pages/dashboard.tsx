@@ -1,13 +1,14 @@
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge } from "@/components/ui/cyber-ui";
 import { useListProjects, useGetUserAnalytics } from "@workspace/api-client-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Plus, Terminal, Activity, Zap, Database } from "lucide-react";
 import { format } from "date-fns";
 
 export default function Dashboard() {
   const { data: projects, isLoading: projectsLoading } = useListProjects();
   const { data: analytics } = useGetUserAnalytics();
+  const [, navigate] = useLocation();
 
   const getStatusColor = (status: string) => {
     switch(status) {
@@ -63,8 +64,11 @@ export default function Dashboard() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {projects?.map(project => (
-                <Link href={`/projects/${project.id}`} className="block">
-                <Card key={project.id} className="group hover:border-primary/50 transition-colors flex flex-col cursor-pointer">
+                <Card
+                  key={project.id}
+                  className="group hover:border-primary/50 transition-colors flex flex-col cursor-pointer select-none"
+                  onClick={() => navigate(`/projects/${project.id}`)}
+                >
                   <CardHeader className="pb-3 border-b border-border/30">
                     <div className="flex justify-between items-start">
                       <CardTitle className="text-lg truncate pr-2 group-hover:text-glow transition-all">{project.name}</CardTitle>
@@ -83,11 +87,10 @@ export default function Dashboard() {
                       <span className="text-xs font-mono text-muted-foreground opacity-50">
                         {format(new Date(project.createdAt), 'MMM dd, HH:mm')}
                       </span>
-                      <span className="text-xs font-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity">ACCESS →</span>
+                      <span className="text-xs font-mono text-primary group-hover:opacity-100 opacity-50 transition-opacity">OPEN →</span>
                     </div>
                   </CardContent>
                 </Card>
-                </Link>
               ))}
             </div>
           )}
