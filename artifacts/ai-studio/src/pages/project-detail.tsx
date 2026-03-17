@@ -76,11 +76,21 @@ export default function ProjectDetail() {
                 />
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center bg-background relative">
-                 <div className="absolute inset-4 border-2 border-dashed border-primary/20 rounded-lg flex items-center justify-center flex-col text-muted-foreground font-mono">
-                    <Play className="w-12 h-12 text-primary/40 mb-4" />
-                    Preview Env: {project.deployedUrl || 'localhost:3000'}
-                 </div>
+              <div className="flex-1 flex flex-col bg-background relative overflow-hidden">
+                {project.status === 'building' ? (
+                  <div className="flex-1 flex items-center justify-center flex-col gap-3 text-muted-foreground font-mono">
+                    <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                    <p className="text-sm">Agents are building your project...</p>
+                  </div>
+                ) : (
+                  <iframe
+                    key={project.id}
+                    src={`/api/projects/${project.id}/preview`}
+                    className="flex-1 w-full border-0"
+                    title={`Preview: ${project.name}`}
+                    sandbox="allow-scripts"
+                  />
+                )}
               </div>
             )}
           </div>
