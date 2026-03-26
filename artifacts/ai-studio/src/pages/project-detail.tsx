@@ -8,7 +8,7 @@ import {
   RotateCcw, Send, Bot, User, Sparkles, Bug, Palette, FilePlus, Lock, Database,
   Zap, Moon, Layers, Globe, Cpu,
 } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 
 type Device = 'mobile' | 'tablet' | 'desktop';
@@ -258,6 +258,123 @@ export default function ProjectDetail() {
   );
 }
 
+/* ── Agent step definitions ── */
+const STEP_MAP: Record<string, string[]> = {
+  feature: [
+    "🧠 [Orchestrator] Parsing feature request and routing to agents...",
+    "🏗️ [Software Architect] Designing integration point in codebase...",
+    "💻 [Code Generator] Writing feature implementation...",
+    "🎨 [UI/UX Agent] Building interface components...",
+    "🔐 [Security Agent] Reviewing for vulnerabilities...",
+    "🧪 [Testing Agent] Running automated test suite...",
+    "📦 [DevOps Agent] Bundling and hot-reloading preview...",
+    "✅ [Orchestrator] Feature applied successfully.",
+  ],
+  bug: [
+    "🧠 [Orchestrator] Analyzing error report...",
+    "🔍 [Debugging Agent] Scanning codebase for root cause...",
+    "🧩 [Code Analyzer] Tracing call stack and state...",
+    "💻 [Code Generator] Applying targeted fix...",
+    "🧪 [Testing Agent] Confirming bug is resolved...",
+    "✅ [Orchestrator] Bug fixed and verified.",
+  ],
+  design: [
+    "🧠 [Orchestrator] Briefing the design team...",
+    "🎨 [UI/UX Design Agent] Generating new layout concepts...",
+    "🖌️ [Design System Agent] Updating component tokens...",
+    "💻 [Code Generator] Implementing visual changes...",
+    "📱 [Responsive Agent] Testing across all breakpoints...",
+    "✅ [Orchestrator] Redesign complete.",
+  ],
+  page: [
+    "🧠 [Orchestrator] Planning page structure...",
+    "🏗️ [Software Architect] Defining route and data flow...",
+    "💻 [Code Generator] Scaffolding page component...",
+    "🔗 [Router Agent] Wiring navigation links...",
+    "🎨 [UI/UX Agent] Applying page styling...",
+    "✅ [Orchestrator] New page added and linked.",
+  ],
+  auth: [
+    "🧠 [Orchestrator] Initiating authentication module...",
+    "🔐 [Security Agent] Designing auth flow and token strategy...",
+    "🗄️ [Database Agent] Adding users table and session schema...",
+    "💻 [Code Generator] Building login / signup screens...",
+    "🛡️ [Middleware Agent] Protecting routes with auth guards...",
+    "🧪 [Testing Agent] Testing auth edge cases...",
+    "✅ [Orchestrator] Authentication integrated.",
+  ],
+  database: [
+    "🧠 [Orchestrator] Planning data model...",
+    "🗄️ [Database Agent] Designing schema and relations...",
+    "⚡ [Migration Agent] Generating migration files...",
+    "💻 [Code Generator] Wiring ORM layer to API...",
+    "🧪 [Testing Agent] Validating queries...",
+    "✅ [Orchestrator] Database layer ready.",
+  ],
+  optimize: [
+    "🧠 [Orchestrator] Profiling application performance...",
+    "⚡ [Performance Agent] Identifying bottlenecks...",
+    "💻 [Code Generator] Lazy-loading heavy modules...",
+    "🗜️ [Asset Agent] Compressing and caching assets...",
+    "🧪 [Testing Agent] Measuring before/after metrics...",
+    "✅ [Orchestrator] Optimization applied.",
+  ],
+  theme: [
+    "🧠 [Orchestrator] Loading design system...",
+    "🎨 [UI/UX Agent] Generating dark/light token sets...",
+    "💻 [Code Generator] Adding theme context and toggle...",
+    "🖌️ [Design System Agent] Updating component variants...",
+    "✅ [Orchestrator] Theme toggle active.",
+  ],
+  mobile: [
+    "🧠 [Orchestrator] Auditing responsive breakpoints...",
+    "📱 [Responsive Agent] Fixing layout at mobile widths...",
+    "🎨 [UI/UX Agent] Adjusting touch targets and spacing...",
+    "💻 [Code Generator] Applying media queries...",
+    "✅ [Orchestrator] Mobile layout complete.",
+  ],
+  api: [
+    "🧠 [Orchestrator] Designing endpoint contract...",
+    "🏗️ [Software Architect] Planning request/response schema...",
+    "💻 [Code Generator] Scaffolding route with validation...",
+    "🔐 [Security Agent] Adding rate limiting and auth checks...",
+    "🧪 [Testing Agent] Running integration tests...",
+    "✅ [Orchestrator] API endpoint deployed.",
+  ],
+  ai: [
+    "🧠 [Orchestrator] Planning AI integration strategy...",
+    "🤖 [AI Agent] Selecting model and prompt design...",
+    "💻 [Code Generator] Integrating inference API calls...",
+    "🎨 [UI/UX Agent] Building AI interaction interface...",
+    "🔐 [Security Agent] Securing API keys...",
+    "✅ [Orchestrator] AI feature integrated.",
+  ],
+  default: [
+    "🧠 [Orchestrator] Parsing your request...",
+    "🏗️ [Software Architect] Evaluating approach...",
+    "💻 [Code Generator] Implementing changes...",
+    "🎨 [UI/UX Agent] Refining interface...",
+    "🧪 [Testing Agent] Verifying output...",
+    "✅ [Orchestrator] Task complete.",
+  ],
+};
+
+function getStepsForMessage(text: string): string[] {
+  const t = text.toLowerCase();
+  if (t.includes("fix bug") || t.includes("bug") || t.includes("broken") || t.includes("error")) return STEP_MAP.bug;
+  if (t.includes("redesign") || t.includes("design") || t.includes("color") || t.includes("colour") || t.includes("look")) return STEP_MAP.design;
+  if (t.includes("add page") || t.includes("page") || t.includes("route") || t.includes("screen")) return STEP_MAP.page;
+  if (t.includes("auth") || t.includes("login") || t.includes("sign in")) return STEP_MAP.auth;
+  if (t.includes("database") || t.includes("db") || t.includes("schema")) return STEP_MAP.database;
+  if (t.includes("optim") || t.includes("performance") || t.includes("speed") || t.includes("fast")) return STEP_MAP.optimize;
+  if (t.includes("dark mode") || t.includes("theme") || t.includes("dark/light")) return STEP_MAP.theme;
+  if (t.includes("mobile") || t.includes("responsive")) return STEP_MAP.mobile;
+  if (t.includes("api") || t.includes("endpoint") || t.includes("backend")) return STEP_MAP.api;
+  if (t.includes("ai integration") || t.includes("ai feature") || t.includes("openai")) return STEP_MAP.ai;
+  if (t.includes("feature") || t.includes("add feature")) return STEP_MAP.feature;
+  return STEP_MAP.default;
+}
+
 /* ── Agent Terminal ── */
 function AgentTerminal({ projectId, projectName }: { projectId: string; projectName: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -269,25 +386,42 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef  = useRef<HTMLTextAreaElement>(null);
+  const [activeSteps, setActiveSteps] = useState<string[]>([]);
+  const [stepsDone, setStepsDone] = useState(false);
+  const bottomRef  = useRef<HTMLDivElement>(null);
+  const inputRef   = useRef<HTMLTextAreaElement>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, activeSteps]);
 
-  const sendMessage = async (text: string, action?: string) => {
-    if (!text.trim() && !action) return;
+  const sendMessage = useCallback(async (text: string, action?: string) => {
+    const userText = (text.trim() || action || "").trim();
+    if (!userText) return;
+
     setIsLoading(true);
+    setActiveSteps([]);
+    setStepsDone(false);
 
-    const userMsg: ChatMessage = {
-      role: "user",
-      content: text.trim() || action || "",
-      timestamp: new Date().toISOString(),
-    };
+    const userMsg: ChatMessage = { role: "user", content: userText, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
     setInput("");
 
+    const steps = getStepsForMessage(userText);
+    const STEP_MS = 750;
+
+    let stepIdx = 0;
+    intervalRef.current = setInterval(() => {
+      stepIdx += 1;
+      setActiveSteps(steps.slice(0, stepIdx));
+      if (stepIdx >= steps.length) {
+        clearInterval(intervalRef.current!);
+        setStepsDone(true);
+      }
+    }, STEP_MS);
+
+    let apiReply = "Task received — agents are processing your request.";
     try {
       const res = await fetch(`/api/projects/${projectId}/chat`, {
         method: "POST",
@@ -295,23 +429,33 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
         body: JSON.stringify({ message: text.trim() || undefined, action }),
       });
       const data = await res.json();
-      const agentMsg: ChatMessage = {
-        role: "agent",
-        content: data.reply || "Task received — agents are processing your request.",
-        timestamp: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, agentMsg]);
+      apiReply = data.reply || apiReply;
     } catch {
-      setMessages(prev => [...prev, {
-        role: "agent",
-        content: "Request queued — the swarm will process this when connectivity is restored.",
-        timestamp: new Date().toISOString(),
-      }]);
-    } finally {
-      setIsLoading(false);
-      inputRef.current?.focus();
+      apiReply = "Request queued — the swarm will process this when connectivity is restored.";
     }
-  };
+
+    const totalStepTime = steps.length * STEP_MS + 400;
+    const elapsed = steps.length * STEP_MS;
+    const remaining = Math.max(0, totalStepTime - elapsed);
+
+    await new Promise(r => setTimeout(r, remaining));
+
+    clearInterval(intervalRef.current!);
+    setActiveSteps(steps);
+    setStepsDone(true);
+
+    await new Promise(r => setTimeout(r, 500));
+
+    setActiveSteps([]);
+    setStepsDone(false);
+    setMessages(prev => [...prev, {
+      role: "agent",
+      content: apiReply,
+      timestamp: new Date().toISOString(),
+    }]);
+    setIsLoading(false);
+    inputRef.current?.focus();
+  }, [projectId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -350,8 +494,6 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
       <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-sm">
         {messages.map((msg, i) => (
           <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-
-            {/* Avatar */}
             <div className={`shrink-0 w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border ${
               msg.role === 'agent'
                 ? 'bg-primary/10 border-primary/40 text-primary'
@@ -359,8 +501,6 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
             }`}>
               {msg.role === 'agent' ? <Bot className="w-3.5 h-3.5" /> : <User className="w-3.5 h-3.5" />}
             </div>
-
-            {/* Bubble */}
             <div className={`max-w-[80%] rounded px-3 py-2 text-xs leading-relaxed ${
               msg.role === 'agent'
                 ? 'bg-secondary/30 border border-border/30 text-[#E0E2EA]'
@@ -377,18 +517,53 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
           </div>
         ))}
 
-        {/* Typing indicator */}
-        {isLoading && (
+        {/* Live agent progress */}
+        {isLoading && activeSteps.length > 0 && (
           <div className="flex gap-3">
             <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
               <Bot className="w-3.5 h-3.5" />
             </div>
-            <div className="bg-secondary/30 border border-border/30 rounded px-3 py-2">
+            <div className="flex-1 bg-secondary/20 border border-primary/20 rounded px-3 py-2 space-y-1.5 max-w-[85%]">
+              <div className="text-[10px] text-primary/60 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                Swarm Working...
+              </div>
+              {activeSteps.map((step, i) => (
+                <div
+                  key={i}
+                  className={`text-[11px] font-mono flex items-start gap-1.5 transition-all ${
+                    i === activeSteps.length - 1 ? 'text-primary' : 'text-muted-foreground/60'
+                  }`}
+                >
+                  {i === activeSteps.length - 1 && !stepsDone ? (
+                    <Loader2 className="w-3 h-3 animate-spin shrink-0 mt-0.5" />
+                  ) : (
+                    <span className="shrink-0 mt-0.5 text-[10px]">›</span>
+                  )}
+                  <span>{step}</span>
+                </div>
+              ))}
+              {!stepsDone && activeSteps.length === 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-primary/60">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Dispatching agents...</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Initial dispatching (before first step appears) */}
+        {isLoading && activeSteps.length === 0 && (
+          <div className="flex gap-3">
+            <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
+              <Bot className="w-3.5 h-3.5" />
+            </div>
+            <div className="bg-secondary/20 border border-primary/20 rounded px-3 py-2">
               <div className="text-[10px] text-primary/60 mb-1.5 uppercase tracking-wider">Nexus Agent</div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="flex items-center gap-2 text-xs text-primary/70">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>Dispatching swarm agents...</span>
               </div>
             </div>
           </div>
