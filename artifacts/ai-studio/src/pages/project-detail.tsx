@@ -8,8 +8,19 @@ import { format } from "date-fns";
 
 export default function ProjectDetail() {
   const { id } = useParams();
-  const { data: project, isLoading } = useGetProject(id || "");
-  const { data: logs } = useGetProjectBuildLogs(id || "");
+  const { data: project, isLoading } = useGetProject(id || "", {
+    query: {
+      refetchInterval: (query) => {
+        const status = query.state.data?.status;
+        return status === 'building' ? 2000 : false;
+      },
+    },
+  });
+  const { data: logs } = useGetProjectBuildLogs(id || "", {
+    query: {
+      refetchInterval: project?.status === 'building' ? 2000 : false,
+    },
+  });
   const { data: files } = useGetProjectFiles(id || "");
 
   const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('preview');
@@ -78,9 +89,28 @@ export default function ProjectDetail() {
             ) : (
               <div className="flex-1 flex flex-col bg-background relative overflow-hidden">
                 {project.status === 'building' ? (
-                  <div className="flex-1 flex items-center justify-center flex-col gap-3 text-muted-foreground font-mono">
-                    <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                    <p className="text-sm">Agents are building your project...</p>
+                  <div className="flex-1 flex items-center justify-center flex-col gap-6 text-muted-foreground font-mono p-8">
+                    <div className="relative">
+                      <div className="w-20 h-20 rounded-full border-2 border-primary/20 flex items-center justify-center">
+                        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                      </div>
+                      <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-ping" style={{ animationDuration: '2s' }} />
+                    </div>
+                    <div className="text-center space-y-2">
+                      <p className="text-primary text-sm font-semibold tracking-widest uppercase">Agent Swarm Active</p>
+                      <p className="text-xs text-muted-foreground">Building your application — preview will appear automatically when done</p>
+                    </div>
+                    <div className="w-full max-w-sm space-y-2">
+                      {(logs || []).slice(-4).map((log, i) => (
+                        <div key={i} className="text-xs font-mono text-muted-foreground/70 truncate">
+                          <span className="text-primary/60">&gt;</span> {log.message}
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2 text-xs text-primary/80">
+                        <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                        <span className="animate-pulse">Processing...</span>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <iframe
