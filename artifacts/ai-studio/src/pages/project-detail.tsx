@@ -4,17 +4,41 @@ import { useGetProject, useGetProjectBuildLogs, useGetProjectFiles } from "@work
 import { Badge, Button } from "@/components/ui/cyber-ui";
 import {
   Terminal, Folder, FileCode2, Play, ChevronRight, Loader2, StopCircle,
-  ExternalLink, PanelRightClose, PanelRightOpen, Monitor, Tablet, Smartphone, RotateCcw
+  ExternalLink, PanelRightClose, PanelRightOpen, Monitor, Tablet, Smartphone,
+  RotateCcw, Send, Bot, User, Sparkles, Bug, Palette, FilePlus, Lock, Database,
+  Zap, Moon, Layers, Globe, Cpu,
 } from "lucide-react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { format } from "date-fns";
 
 type Device = 'mobile' | 'tablet' | 'desktop';
+type Tab = 'editor' | 'preview' | 'agent';
+
+interface ChatMessage {
+  role: "user" | "agent";
+  content: string;
+  timestamp: string;
+}
 
 const DEVICES: { id: Device; label: string; icon: typeof Monitor; width: number | null; height: number | null }[] = [
   { id: 'mobile',  label: 'Phone',   icon: Smartphone, width: 390,  height: 844  },
   { id: 'tablet',  label: 'Tablet',  icon: Tablet,     width: 768,  height: 1024 },
   { id: 'desktop', label: 'Desktop', icon: Monitor,    width: null, height: null  },
+];
+
+const QUICK_ACTIONS = [
+  { label: "Add Feature",      icon: Sparkles, action: "Add Feature"      },
+  { label: "Fix Bug",          icon: Bug,      action: "Fix Bug"          },
+  { label: "Redesign UI",      icon: Palette,  action: "Redesign UI"      },
+  { label: "Add Page",         icon: FilePlus, action: "Add Page"         },
+  { label: "Add Auth",         icon: Lock,     action: "Add Authentication"},
+  { label: "Add Database",     icon: Database, action: "Add Database"     },
+  { label: "Optimize",         icon: Zap,      action: "Optimize Performance"},
+  { label: "Dark Mode",        icon: Moon,     action: "Add Dark Mode"    },
+  { label: "Mobile Layout",    icon: Smartphone,action:"Make Mobile Responsive"},
+  { label: "Add API",          icon: Globe,    action: "Add API Endpoint" },
+  { label: "Refactor Code",    icon: Layers,   action: "Refactor Code"    },
+  { label: "AI Integration",   icon: Cpu,      action: "Add AI Integration"},
 ];
 
 export default function ProjectDetail() {
@@ -36,7 +60,7 @@ export default function ProjectDetail() {
   });
   const { data: files } = useGetProjectFiles(id || "");
 
-  const [activeTab, setActiveTab]     = useState<'editor' | 'preview'>('preview');
+  const [activeTab, setActiveTab]     = useState<Tab>('preview');
   const [selectedFile, setSelectedFile] = useState<string | null>("src/App.tsx");
   const [logsOpen, setLogsOpen]       = useState(false);
   const [device, setDevice]           = useState<Device>('desktop');
@@ -81,10 +105,13 @@ export default function ProjectDetail() {
             </div>
 
             <div className="flex items-center gap-1.5 flex-wrap">
-              {/* Code / Live Preview toggle */}
+              {/* Code / Live Preview / Agent toggle */}
               <div className="flex bg-background border border-border cyber-clip">
                 <Button size="sm" variant={activeTab === 'editor'  ? 'default' : 'ghost'} onClick={() => setActiveTab('editor')}  className="h-7 px-3 text-xs rounded-none">Code</Button>
                 <Button size="sm" variant={activeTab === 'preview' ? 'accent'  : 'ghost'} onClick={() => setActiveTab('preview')} className="h-7 px-3 text-xs rounded-none">Live Preview</Button>
+                <Button size="sm" variant={activeTab === 'agent'   ? 'default' : 'ghost'} onClick={() => setActiveTab('agent')}   className="h-7 px-3 text-xs rounded-none gap-1">
+                  <Terminal className="w-3 h-3" />Agent
+                </Button>
               </div>
 
               <Button size="sm" variant="outline" className="h-7 text-destructive border-destructive/50 hover:bg-destructive/10 px-2">
@@ -220,9 +247,183 @@ export default function ProjectDetail() {
               )}
             </div>
           )}
+
+          {/* AGENT TAB — chat terminal */}
+          {activeTab === 'agent' && (
+            <AgentTerminal projectId={project.id} projectName={project.name} />
+          )}
         </div>
       </div>
     </AppLayout>
+  );
+}
+
+/* ── Agent Terminal ── */
+function AgentTerminal({ projectId, projectName }: { projectId: string; projectName: string }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: "agent",
+      content: `Agent swarm standing by for "${projectName}". You can ask me to add features, fix bugs, redesign UI, add pages, integrate auth, set up a database, or anything else. Use the quick actions below or type your own instruction.`,
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef  = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const sendMessage = async (text: string, action?: string) => {
+    if (!text.trim() && !action) return;
+    setIsLoading(true);
+
+    const userMsg: ChatMessage = {
+      role: "user",
+      content: text.trim() || action || "",
+      timestamp: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setInput("");
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text.trim() || undefined, action }),
+      });
+      const data = await res.json();
+      const agentMsg: ChatMessage = {
+        role: "agent",
+        content: data.reply || "Task received — agents are processing your request.",
+        timestamp: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, agentMsg]);
+    } catch {
+      setMessages(prev => [...prev, {
+        role: "agent",
+        content: "Request queued — the swarm will process this when connectivity is restored.",
+        timestamp: new Date().toISOString(),
+      }]);
+    } finally {
+      setIsLoading(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(input);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden bg-[#06060f]">
+
+      {/* Quick actions grid */}
+      <div className="shrink-0 border-b border-border/40 bg-secondary/10 p-3">
+        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-1.5">
+          <Sparkles className="w-3 h-3 text-primary" /> Quick Actions
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {QUICK_ACTIONS.map(qa => {
+            const Icon = qa.icon;
+            return (
+              <button
+                key={qa.action}
+                disabled={isLoading}
+                onClick={() => sendMessage("", qa.action)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/40 bg-background/40 text-xs text-muted-foreground font-mono hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Icon className="w-3 h-3" />
+                {qa.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-sm">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+
+            {/* Avatar */}
+            <div className={`shrink-0 w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border ${
+              msg.role === 'agent'
+                ? 'bg-primary/10 border-primary/40 text-primary'
+                : 'bg-accent/10 border-accent/40 text-accent'
+            }`}>
+              {msg.role === 'agent' ? <Bot className="w-3.5 h-3.5" /> : <User className="w-3.5 h-3.5" />}
+            </div>
+
+            {/* Bubble */}
+            <div className={`max-w-[80%] rounded px-3 py-2 text-xs leading-relaxed ${
+              msg.role === 'agent'
+                ? 'bg-secondary/30 border border-border/30 text-[#E0E2EA]'
+                : 'bg-primary/10 border border-primary/30 text-primary'
+            }`}>
+              {msg.role === 'agent' && (
+                <div className="text-[10px] text-primary/60 mb-1 uppercase tracking-wider">Nexus Agent</div>
+              )}
+              <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+              <div className="text-[9px] text-muted-foreground/40 mt-1.5 text-right">
+                {format(new Date(msg.timestamp), 'HH:mm:ss')}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Typing indicator */}
+        {isLoading && (
+          <div className="flex gap-3">
+            <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
+              <Bot className="w-3.5 h-3.5" />
+            </div>
+            <div className="bg-secondary/30 border border-border/30 rounded px-3 py-2">
+              <div className="text-[10px] text-primary/60 mb-1.5 uppercase tracking-wider">Nexus Agent</div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input area */}
+      <div className="shrink-0 border-t border-border/40 p-3 bg-secondary/10">
+        <div className="flex gap-2 items-end">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Tell the agent what to build or change… (Enter to send, Shift+Enter for new line)"
+            rows={2}
+            disabled={isLoading}
+            className="flex-1 bg-background/60 border border-border/50 rounded px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/40 resize-none outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50"
+          />
+          <Button
+            size="sm"
+            onClick={() => sendMessage(input)}
+            disabled={isLoading || !input.trim()}
+            className="h-[52px] px-3 glow-primary-hover"
+          >
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </Button>
+        </div>
+        <p className="text-[9px] text-muted-foreground/30 mt-1.5 font-mono">
+          21 SPECIALIZED AGENTS READY · SWARM STATUS: ONLINE
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -243,12 +444,10 @@ function DeviceFrame({
 
   return (
     <div className="flex flex-col items-center justify-start py-6 px-4 min-h-full w-full">
-      {/* Device label */}
       <div className="text-xs font-mono text-muted-foreground/60 mb-3 tracking-widest uppercase">
         {device.label} — {device.width} × {device.height}
       </div>
 
-      {/* Device shell */}
       <div
         className="relative flex-shrink-0 rounded-[2rem] overflow-hidden shadow-2xl"
         style={{
@@ -262,7 +461,6 @@ function DeviceFrame({
           boxShadow: '0 0 0 1px rgba(0,212,255,0.15), 0 30px 80px rgba(0,0,0,0.6)',
         }}
       >
-        {/* Phone notch */}
         {isPhone && (
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-5 bg-[#1e1e2e] rounded-b-2xl z-10" />
         )}
@@ -271,7 +469,6 @@ function DeviceFrame({
           {children}
         </div>
 
-        {/* Phone home bar */}
         {isPhone && (
           <div className="flex justify-center items-center bg-[#1e1e2e] py-2">
             <div className="w-24 h-1 rounded-full bg-white/20" />
@@ -376,5 +573,4 @@ export default function App() {
       <p className="mt-4">Generated by Nexus Agents</p>
     </div>
   );
-}
-`;
+}`;

@@ -4,7 +4,7 @@ import { projectsTable, buildLogsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
-import { generateProjectCode } from "../lib/openrouter.js";
+import { generateProjectCode, generateChatResponse } from "../lib/openrouter.js";
 
 const router: IRouter = Router();
 
@@ -444,6 +444,43 @@ nav{background:${t.nav};border-bottom:1px solid #1e1e3e;padding:.75rem 1.5rem;di
 </div>
 </body></html>`;
 }
+
+router.post("/:id/chat", async (req, res) => {
+  const userId = req.headers["x-user-id"] as string || "demo-user";
+  const { message, action } = req.body as { message?: string; action?: string };
+
+  if (!message && !action) {
+    return res.status(400).json({ error: "bad_request", message: "message or action is required" });
+  }
+
+  const project = await db.query.projectsTable.findFirst({
+    where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+  });
+
+  if (!project) return res.status(404).json({ error: "not_found", message: "Project not found" });
+
+  const userText = action && !message ? action : `${action ? `[${action}] ` : ""}${message || ""}`.trim();
+
+  const agentReply = await generateChatResponse(
+    project.type,
+    project.name,
+    userText,
+    project.prompt,
+  );
+
+  const history = ((project.chatHistory as any[]) || []);
+  const newHistory = [
+    ...history,
+    { role: "user",  content: userText,   timestamp: new Date().toISOString() },
+    { role: "agent", content: agentReply, timestamp: new Date().toISOString() },
+  ];
+
+  await db.update(projectsTable)
+    .set({ chatHistory: newHistory, updatedAt: new Date() })
+    .where(eq(projectsTable.id, req.params.id));
+
+  res.json({ reply: agentReply, history: newHistory });
+});
 
 router.get("/:id/files", async (req, res) => {
   const project = await db.query.projectsTable.findFirst({

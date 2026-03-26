@@ -15,6 +15,7 @@ export const projectsTable = pgTable("projects", {
   thumbnailUrl: text("thumbnail_url"),
   deployedUrl: text("deployed_url"),
   agentLogs: jsonb("agent_logs").notNull().default([]),
+  chatHistory: jsonb("chat_history").notNull().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

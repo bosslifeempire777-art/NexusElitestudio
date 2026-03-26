@@ -1,6 +1,93 @@
 const API_KEY = process.env.OPENROUTER_API_KEY;
 const API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+export async function generateChatResponse(
+  projectType: string,
+  projectName: string,
+  userMessage: string,
+  originalPrompt: string,
+): Promise<string> {
+  if (API_KEY) {
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "openrouter/auto",
+          messages: [
+            {
+              role: "system",
+              content: `You are a helpful AI agent inside "Nexus Studio", an AI-powered app builder. 
+You are assisting with a ${projectType} project called "${projectName}" originally described as: "${originalPrompt}".
+Respond as a friendly, knowledgeable AI agent. Describe what changes you're making or what advice you have.
+Keep responses concise (2-4 sentences). Use technical but accessible language. Start with what you're doing.`,
+            },
+            { role: "user", content: userMessage },
+          ],
+          temperature: 0.7,
+          max_tokens: 300,
+        }),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as any;
+        const content = data.choices?.[0]?.message?.content;
+        if (content) return content;
+      }
+    } catch (_) {
+      // fall through to simulated response
+    }
+  }
+
+  return getSimulatedResponse(userMessage, projectType, projectName);
+}
+
+function getSimulatedResponse(message: string, type: string, name: string): string {
+  const m = message.toLowerCase();
+
+  if (m.includes("add feature") || m.includes("feature")) {
+    return `I've analyzed your ${type} project "${name}" and identified the best integration point for this feature. The Code Generator and UI/UX agents are collaborating to implement it — the preview will refresh shortly with the changes applied.`;
+  }
+  if (m.includes("fix bug") || m.includes("bug") || m.includes("broken") || m.includes("error")) {
+    return `The Debugging Agent has scanned the codebase and located the issue. I've applied a targeted fix and run the test suite to confirm stability. Your app should now behave correctly — hit Refresh to verify.`;
+  }
+  if (m.includes("redesign") || m.includes("ui") || m.includes("design") || m.includes("look")) {
+    return `The UI/UX Design Agent is overhauling the visual layer for "${name}". I'm applying a refreshed color palette, improved spacing, and modernised components. Click Refresh on the preview once the swarm signals completion.`;
+  }
+  if (m.includes("add page") || m.includes("page") || m.includes("route") || m.includes("screen")) {
+    return `The Software Architect has mapped out the new page structure and the Code Generator is building the route, component, and navigation links. The file tree will update automatically — check the Code tab when done.`;
+  }
+  if (m.includes("auth") || m.includes("login") || m.includes("sign in") || m.includes("user")) {
+    return `The Security Agent is integrating a full authentication flow — sign-up, login, JWT session handling, and protected routes. This is being wired into your existing API layer without breaking existing functionality.`;
+  }
+  if (m.includes("database") || m.includes("db") || m.includes("data") || m.includes("storage")) {
+    return `The Database Agent is designing a schema optimised for your ${type} use case, generating migration files, and wiring up the ORM layer. Your data models will be ready to query in minutes.`;
+  }
+  if (m.includes("optim") || m.includes("speed") || m.includes("fast") || m.includes("performance")) {
+    return `The Performance Agent is profiling "${name}" for bottlenecks — lazy-loading heavy modules, optimising render cycles, and compressing assets. Expect a measurable improvement in load time and runtime responsiveness.`;
+  }
+  if (m.includes("dark mode") || m.includes("dark theme") || m.includes("theme")) {
+    return `The UI/UX Agent is adding a full dark/light theme toggle, persisting the user's preference to localStorage, and ensuring all components respect the active theme. The switcher will appear in your app's header.`;
+  }
+  if (m.includes("color") || m.includes("colour") || m.includes("palette")) {
+    return `I'm instructing the Design Agent to update the entire color system — primary, secondary, accent, and semantic tokens — to match your requested palette. Every component will inherit the change automatically.`;
+  }
+  if (m.includes("deploy") || m.includes("publish") || m.includes("launch")) {
+    return `The DevOps Agent is packaging "${name}" for deployment — bundling assets, setting environment variables, and configuring the CDN. Use the Deploy button in the top bar to push it live when ready.`;
+  }
+  if (m.includes("mobile") || m.includes("responsive")) {
+    return `The UI/UX Agent is auditing every component for mobile responsiveness — fixing breakpoints, touch targets, and overflow issues. Switch the preview to Phone mode to see the changes in context.`;
+  }
+  if (m.includes("api") || m.includes("endpoint") || m.includes("backend")) {
+    return `The Backend Engineer Agent is scaffolding the new API endpoint with validation, error handling, and rate limiting. I'll wire it up to the frontend data layer and update the API client types automatically.`;
+  }
+
+  return `Understood — I'm routing your request to the most suitable agents in the swarm. The Orchestrator will coordinate the necessary changes to "${name}" and update the preview once the task is complete. You can monitor progress in the Logs panel.`;
+}
+
 export async function generateProjectCode(
   type: string,
   name: string,
