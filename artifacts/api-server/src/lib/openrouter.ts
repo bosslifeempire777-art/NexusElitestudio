@@ -1,5 +1,8 @@
-const API_KEY = process.env.OPENROUTER_API_KEY;
 const API_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+function getApiKey(): string | undefined {
+  return process.env.OPENROUTER_API_KEY;
+}
 
 /** Generate a complete self-contained HTML app for the preview iframe */
 export async function generateProjectCode(
@@ -7,6 +10,7 @@ export async function generateProjectCode(
   name: string,
   prompt: string,
 ): Promise<string> {
+  const API_KEY = getApiKey();
   if (!API_KEY) {
     return getDefaultHtml(type, name, prompt);
   }
@@ -113,6 +117,7 @@ export async function generateChatResponse(
   userMessage: string,
   originalPrompt: string,
 ): Promise<string> {
+  const API_KEY = getApiKey();
   if (API_KEY) {
     try {
       const response = await fetch(API_URL, {

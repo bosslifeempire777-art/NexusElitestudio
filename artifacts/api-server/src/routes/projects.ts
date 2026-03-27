@@ -193,13 +193,12 @@ router.get("/:id/preview", async (req, res) => {
 
   if (!project) return res.status(404).send("<h1>Project not found</h1>");
 
-  // Serve AI-generated code if available; fallback to template
+  // Serve AI-generated code if available; show rebuild prompt if missing
   const html = project.generatedCode
     ? project.generatedCode
-    : generatePreviewHtml(project.name, project.type, project.description || project.prompt || "");
+    : buildMissingCodeHtml(project.name, project.type, project.id);
 
   res.setHeader("Content-Type", "text/html");
-  res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.send(html);
 });
 
@@ -242,6 +241,32 @@ router.post("/:id/rebuild", async (req, res) => {
 
   res.json({ ok: true, message: "Rebuild started" });
 });
+
+function buildMissingCodeHtml(name: string, type: string, id: string): string {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${name} — Build Required</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;color:#e2e8f0;font-family:'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center;padding:2rem}
+.icon{font-size:3rem;margin-bottom:1.5rem;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+h1{font-size:1.25rem;font-weight:700;color:#00d4ff;margin-bottom:.5rem;letter-spacing:.05em}
+p{font-size:.875rem;color:#64748b;margin-bottom:2rem;max-width:360px;line-height:1.6}
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.75rem 1.75rem;background:linear-gradient(135deg,#00d4ff,#7c3aed);color:#0f0f1a;border:none;border-radius:8px;font-size:.875rem;font-weight:700;cursor:pointer;letter-spacing:.05em;text-decoration:none;transition:opacity .2s}
+.btn:hover{opacity:.85}
+.tag{margin-top:1.5rem;font-size:.7rem;color:#374151;font-family:monospace;letter-spacing:.1em}
+</style>
+</head><body>
+<div class="icon">⚡</div>
+<h1>CODE GENERATION INCOMPLETE</h1>
+<p>The AI swarm didn't finish building <strong>${name}</strong>. This can happen if the API key wasn't ready when the project was created. Click Rebuild to generate it now.</p>
+<a class="btn" href="javascript:void(0)" onclick="this.textContent='⟳ Rebuilding…';fetch('/api/projects/${id}/rebuild',{method:'POST'}).then(()=>{this.textContent='✓ Rebuilding — close and reopen in 20s';})">
+  ⚡ Rebuild with AI
+</a>
+<div class="tag">PROJECT ID: ${id} · TYPE: ${type.toUpperCase()}</div>
+</body></html>`;
+}
 
 function generatePreviewHtml(name: string, type: string, description: string): string {
   const shortName = name.length > 30 ? name.slice(0, 30) + "…" : name;
