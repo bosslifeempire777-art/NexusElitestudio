@@ -1,27 +1,51 @@
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useGetAnalyticsOverview, useListUsers } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle, Badge } from "@/components/ui/cyber-ui";
+import { Card, CardContent, CardHeader, CardTitle, Badge, Button, Input, Textarea } from "@/components/ui/cyber-ui";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Users, Database, DollarSign, Activity } from "lucide-react";
+import {
+  Users, Database, DollarSign, Activity, Terminal, Send, Loader2,
+  Wrench, AlertTriangle, CheckCircle2, RefreshCw, FileCode2, Cpu,
+  ChevronRight, RotateCcw, ShieldAlert,
+} from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+
+type RepairMode = "platform" | "project";
+
+interface TerminalLine {
+  id: string;
+  type: "user" | "ai" | "system" | "error" | "success" | "file" | "warn";
+  text: string;
+  timestamp: string;
+}
+
+function now() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
+function nanoid6() {
+  return Math.random().toString(36).slice(2, 8);
+}
 
 export default function Admin() {
-  const { data: analytics, isLoading: analyticsLoading } = useGetAnalyticsOverview();
-  const { data: users, isLoading: usersLoading } = useListUsers();
+  const { data: analytics } = useGetAnalyticsOverview();
+  const { data: users } = useListUsers();
 
   return (
     <AppLayout>
       <div className="max-w-7xl mx-auto space-y-8">
         <div>
-          <h1 className="text-3xl font-display font-bold text-glow text-destructive">OVERSEER TERMINAL</h1>
-          <p className="text-muted-foreground font-mono mt-1">Platform-wide telemetry and access control.</p>
+          <h1 className="text-3xl font-display font-bold text-glow text-destructive flex items-center gap-3">
+            <ShieldAlert className="w-8 h-8" /> OVERSEER TERMINAL
+          </h1>
+          <p className="text-muted-foreground font-mono mt-1">Platform-wide telemetry, access control, and AI self-repair.</p>
         </div>
 
-        {/* Top Stats */}
+        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <StatBox title="Total Users" value={analytics?.totalUsers || 0} icon={Users} color="text-primary" />
-          <StatBox title="Constructs Built" value={analytics?.totalProjects || 0} icon={Database} color="text-accent" />
-          <StatBox title="Active Agents" value={analytics?.activeAgents || 0} icon={Activity} color="text-green-400" />
-          <StatBox title="MRR" value={`$${analytics?.totalRevenue || 0}`} icon={DollarSign} color="text-yellow-400" />
+          <StatBox title="Total Users" value={analytics?.totalUsers ?? 0} icon={Users} color="text-primary" />
+          <StatBox title="Constructs Built" value={analytics?.totalProjects ?? 0} icon={Database} color="text-accent" />
+          <StatBox title="Active Agents" value={analytics?.activeAgents ?? 0} icon={Activity} color="text-green-400" />
+          <StatBox title="MRR" value={`$${analytics?.totalRevenue ?? 0}`} icon={DollarSign} color="text-yellow-400" />
         </div>
 
         {/* Charts */}
@@ -30,36 +54,29 @@ export default function Admin() {
             <CardHeader>
               <CardTitle className="text-muted-foreground text-sm font-mono">BUILD VOLUME (30 DAYS)</CardTitle>
             </CardHeader>
-            <CardContent className="h-72">
+            <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={analytics?.buildsOverTime || []}>
+                <LineChart data={analytics?.buildsOverTime ?? []}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={10} tickFormatter={(t) => t.substring(5,10)} />
+                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={10} tickFormatter={(t) => t.substring(5, 10)} />
                   <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
-                    itemStyle={{ color: 'hsl(var(--primary))' }}
-                  />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }} itemStyle={{ color: 'hsl(var(--primary))' }} />
                   <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
-
           <Card className="border-border">
-             <CardHeader>
+            <CardHeader>
               <CardTitle className="text-muted-foreground text-sm font-mono">REVENUE BY PLAN</CardTitle>
             </CardHeader>
-            <CardContent className="h-72">
+            <CardContent className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={Object.entries(analytics?.revenueByPlan || {}).map(([name, value]) => ({ name, value }))}>
+                <BarChart data={Object.entries(analytics?.revenueByPlan ?? {}).map(([name, value]) => ({ name, value }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={10} />
                   <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
-                    cursor={{fill: 'hsl(var(--secondary))'}}
-                  />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }} cursor={{ fill: 'hsl(var(--secondary))' }} />
                   <Bar dataKey="value" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -67,10 +84,10 @@ export default function Admin() {
           </Card>
         </div>
 
-        {/* Users Table */}
+        {/* Users */}
         <Card>
           <CardHeader>
-             <CardTitle className="text-muted-foreground text-sm font-mono">USER DIRECTORY</CardTitle>
+            <CardTitle className="text-muted-foreground text-sm font-mono">USER DIRECTORY</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -85,11 +102,11 @@ export default function Admin() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/30">
-                  {users?.slice(0,10).map(user => (
+                  {users?.slice(0, 10).map((user) => (
                     <tr key={user.id} className="hover:bg-secondary/30 transition-colors">
                       <td className="px-4 py-3">
                         <div className="font-semibold text-foreground">{user.username}</div>
-                        <div className="text-[10px] text-muted-foreground">{user.id.substring(0,8)}...</div>
+                        <div className="text-[10px] text-muted-foreground">{user.id.substring(0, 8)}…</div>
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={user.plan === 'vip' ? 'accent' : user.plan === 'enterprise' ? 'primary' : 'outline'} className="text-[10px]">
@@ -99,7 +116,7 @@ export default function Admin() {
                       <td className="px-4 py-3 text-primary">{user.projectCount}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center">
-                           <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-2"></span> Active
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-2" /> Active
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -112,12 +129,15 @@ export default function Admin() {
             </div>
           </CardContent>
         </Card>
+
+        {/* AI Repair Terminal */}
+        <RepairTerminal />
       </div>
     </AppLayout>
   );
 }
 
-function StatBox({ title, value, icon: Icon, color }: any) {
+function StatBox({ title, value, icon: Icon, color }: { title: string; value: string | number; icon: any; color: string }) {
   return (
     <div className="bg-secondary/20 border border-border/50 p-4 cyber-clip relative overflow-hidden group hover:border-primary/30 transition-colors">
       <div className="absolute -right-4 -top-4 opacity-5 group-hover:opacity-10 transition-opacity">
@@ -128,3 +148,285 @@ function StatBox({ title, value, icon: Icon, color }: any) {
     </div>
   );
 }
+
+function RepairTerminal() {
+  const [mode, setMode] = useState<RepairMode>("platform");
+  const [projectId, setProjectId] = useState("");
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [lines, setLines] = useState<TerminalLine[]>([
+    {
+      id: "boot",
+      type: "system",
+      text: "NEXUS REPAIR CORE v2.0 — AI self-repair system online. Platform code and project apps can be edited via natural language.",
+      timestamp: now(),
+    },
+    {
+      id: "boot2",
+      type: "system",
+      text: 'Select a mode: [Platform Code] to edit the studio\'s own source, or [Project App] to fix a specific generated app. Then type your instruction below.',
+      timestamp: now(),
+    },
+  ]);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [lines]);
+
+  function addLine(line: Omit<TerminalLine, "id" | "timestamp">) {
+    setLines((prev) => [...prev, { ...line, id: nanoid6(), timestamp: now() }]);
+  }
+
+  async function handleSend() {
+    const msg = input.trim();
+    if (!msg || loading) return;
+
+    if (mode === "project" && !projectId.trim()) {
+      addLine({ type: "error", text: "ERROR: Project ID is required for Project App mode. Enter the project ID above." });
+      return;
+    }
+
+    setInput("");
+    addLine({ type: "user", text: `> ${msg}` });
+    addLine({ type: "system", text: `[${mode === "platform" ? "Platform Repair" : `Project: ${projectId}`}] Scanning codebase and generating patch…` });
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/admin/repair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: msg,
+          mode,
+          projectId: mode === "project" ? projectId.trim() : undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        addLine({ type: "error", text: `ERROR ${res.status}: ${data.error ?? "Unknown error"}` });
+        return;
+      }
+
+      addLine({ type: "ai", text: data.message });
+
+      if (data.changes?.length) {
+        for (const c of data.changes) {
+          addLine({ type: "system", text: `  • ${c}` });
+        }
+      }
+
+      if (data.applied?.length) {
+        for (const a of data.applied) {
+          addLine({ type: "file", text: `  ✓ ${a}` });
+        }
+      }
+
+      if (data.errors?.length) {
+        for (const e of data.errors) {
+          addLine({ type: "error", text: `  ✗ ${e}` });
+        }
+      }
+
+      if (data.requiresRestart) {
+        addLine({ type: "warn", text: "⚠  Platform files changed — restart the API Server workflow for changes to take effect." });
+      }
+
+      if (mode === "project" && data.applied?.length) {
+        addLine({ type: "success", text: `✓ Project app updated. Navigate to the project and click Refresh in the preview to see changes.` });
+      }
+
+      if (!data.applied?.length && !data.errors?.length && !data.changes?.length) {
+        addLine({ type: "system", text: "No file changes were written. See the message above for details." });
+      }
+    } catch (err: any) {
+      addLine({ type: "error", text: `NETWORK ERROR: ${err.message}` });
+    } finally {
+      setLoading(false);
+      inputRef.current?.focus();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }
+
+  function clearTerminal() {
+    setLines([{ id: "clear", type: "system", text: "Terminal cleared.", timestamp: now() }]);
+  }
+
+  return (
+    <Card className="border-destructive/40">
+      {/* Header */}
+      <CardHeader className="border-b border-border/50 pb-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <CardTitle className="text-destructive font-display font-bold text-lg flex items-center gap-2">
+            <Terminal className="w-5 h-5" />
+            NEXUS REPAIR CORE
+            <span className="text-xs font-mono font-normal text-green-400 border border-green-400/30 px-2 py-0.5 rounded">ONLINE</span>
+          </CardTitle>
+          <button onClick={clearTerminal} className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+            <RotateCcw className="w-3 h-3" /> Clear
+          </button>
+        </div>
+        <p className="text-xs font-mono text-muted-foreground mt-1">
+          AI-powered self-repair — describe what to fix, add, or change in plain language.
+        </p>
+      </CardHeader>
+
+      <CardContent className="pt-4 space-y-4">
+        {/* Mode selector */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Mode:</span>
+          <button
+            onClick={() => setMode("platform")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border transition-all ${
+              mode === "platform"
+                ? "border-destructive/60 bg-destructive/10 text-destructive"
+                : "border-border/50 text-muted-foreground hover:border-border"
+            }`}
+          >
+            <Cpu className="w-3 h-3" /> Platform Code
+          </button>
+          <button
+            onClick={() => setMode("project")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border transition-all ${
+              mode === "project"
+                ? "border-accent/60 bg-accent/10 text-accent"
+                : "border-border/50 text-muted-foreground hover:border-border"
+            }`}
+          >
+            <FileCode2 className="w-3 h-3" /> Project App
+          </button>
+
+          {mode === "platform" && (
+            <span className="text-xs font-mono text-muted-foreground ml-2">
+              Edits <span className="text-destructive">api-server</span> and <span className="text-destructive">ai-studio</span> source files
+            </span>
+          )}
+        </div>
+
+        {mode === "project" && (
+          <div className="flex gap-2 items-center">
+            <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">Project ID:</span>
+            <Input
+              placeholder="e.g. rqPwThyu7y4x — find in the project URL"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="font-mono text-xs h-8 max-w-sm"
+            />
+          </div>
+        )}
+
+        {/* Terminal output */}
+        <div className="bg-black/80 border border-border/40 rounded font-mono text-xs leading-relaxed h-80 overflow-y-auto p-4 space-y-1 scroll-smooth">
+          {lines.map((line) => (
+            <div key={line.id} className="flex gap-2">
+              <span className="text-muted-foreground/40 shrink-0 select-none">{line.timestamp}</span>
+              <span className={lineColor(line.type)}>{line.text}</span>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex gap-2 items-center">
+              <span className="text-muted-foreground/40 shrink-0">{now()}</span>
+              <span className="text-yellow-400 flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                AI is analyzing and writing code
+                <span className="animate-pulse">…</span>
+              </span>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input */}
+        <div className="flex gap-2 items-end">
+          <div className="flex-1 relative">
+            <ChevronRight className="absolute left-3 top-3 w-3 h-3 text-primary opacity-60 pointer-events-none" />
+            <Textarea
+              ref={inputRef}
+              placeholder={
+                mode === "platform"
+                  ? "e.g. Fix the rebuild button not working on mobile  |  Add a dark/light mode toggle to the sidebar  |  The preview iframe is blank — debug and fix it"
+                  : "e.g. Add a high score leaderboard  |  Fix the enemy collision detection  |  Add a pause menu"
+              }
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              rows={2}
+              className="pl-8 font-mono text-sm resize-none"
+              disabled={loading}
+            />
+          </div>
+          <Button
+            onClick={handleSend}
+            disabled={loading || !input.trim()}
+            className="h-full px-4 glow-primary-hover"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </Button>
+        </div>
+
+        {/* Help */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {EXAMPLE_COMMANDS[mode].map((ex) => (
+            <button
+              key={ex}
+              onClick={() => setInput(ex)}
+              disabled={loading}
+              className="text-left text-xs font-mono text-muted-foreground border border-border/30 rounded px-3 py-2 hover:border-primary/40 hover:text-foreground transition-all truncate"
+            >
+              <ChevronRight className="inline w-3 h-3 mr-1 text-primary/60" />
+              {ex}
+            </button>
+          ))}
+        </div>
+
+        {/* Warnings */}
+        {mode === "platform" && (
+          <div className="flex items-start gap-2 bg-yellow-500/5 border border-yellow-500/20 rounded p-3 text-xs font-mono text-yellow-400/80">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <strong>Platform mode</strong> writes directly to source files. After changes, restart the <em>API Server</em> workflow
+              (or <em>Web</em> workflow for frontend edits) for them to take effect. Hot-reload may pick up frontend changes automatically.
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function lineColor(type: TerminalLine["type"]) {
+  switch (type) {
+    case "user":    return "text-cyan-400";
+    case "ai":      return "text-green-300";
+    case "system":  return "text-gray-400";
+    case "error":   return "text-red-400";
+    case "success": return "text-green-400";
+    case "file":    return "text-blue-400";
+    case "warn":    return "text-yellow-400";
+    default:        return "text-gray-300";
+  }
+}
+
+const EXAMPLE_COMMANDS: Record<RepairMode, string[]> = {
+  platform: [
+    "Fix the deploy button so it shows a success modal after clicking",
+    "Add a 'Copy Project ID' button next to the project name",
+    "Make the sidebar collapse on mobile screens automatically",
+    "Add an error boundary so crashes show a helpful message instead of blank screen",
+  ],
+  project: [
+    "Add a high score board that saves the top 5 scores",
+    "Fix the game so enemies don't stack on top of each other",
+    "Make the UI dark-themed with neon cyan accents",
+    "Add a pause menu when the player presses Escape",
+  ],
+};
