@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, Button, Input, Textarea, Badge } from "@/components/ui/cyber-ui";
 import { useCreateProject, CreateProjectRequestType } from "@workspace/api-client-react";
-import { Bot, Code2, Smartphone, Cloud, Cpu, Gamepad2, Settings2, PlaySquare } from "lucide-react";
+import { Bot, Code2, Smartphone, Cloud, Cpu, Gamepad2, Settings2, PlaySquare, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const projectTypes = [
@@ -58,6 +58,12 @@ export default function NewProject() {
             <Settings2 className="mr-3 text-primary" /> NEW CONSTRUCT
           </h1>
           <p className="text-muted-foreground font-mono mt-2">Define parameters and engage the agent swarm.</p>
+          <div className="mt-4 flex items-center gap-2 border border-primary/20 bg-primary/5 rounded px-4 py-2.5 text-xs font-mono text-primary/80 w-fit">
+            <Zap className="w-3.5 h-3.5 text-primary shrink-0" />
+            <span>
+              <span className="text-primary font-bold">659+ AI models</span> available — the swarm automatically selects the best model for each step of your build, keeping costs low and quality high.
+            </span>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">

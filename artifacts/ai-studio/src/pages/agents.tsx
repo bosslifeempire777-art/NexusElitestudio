@@ -1,7 +1,7 @@
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useListAgents } from "@workspace/api-client-react";
 import { Card, CardHeader, CardContent, Badge } from "@/components/ui/cyber-ui";
-import { BrainCircuit, Cpu, Database, LayoutTemplate, ShieldCheck, Gamepad2, LineChart, Server } from "lucide-react";
+import { BrainCircuit, Cpu, Database, LayoutTemplate, ShieldCheck, Gamepad2, LineChart, Server, Zap } from "lucide-react";
 
 const iconMap: Record<string, any> = {
   software: Cpu,
@@ -20,16 +20,42 @@ export default function Agents() {
   return (
     <AppLayout>
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8 border-b border-border/50 pb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-display font-bold text-glow uppercase">Agent Swarm</h1>
-            <p className="text-muted-foreground font-mono mt-2">Active intelligence units available for deployment.</p>
+        <div className="mb-8 border-b border-border/50 pb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h1 className="text-3xl font-display font-bold text-glow uppercase">Agent Swarm</h1>
+              <p className="text-muted-foreground font-mono mt-2">21 specialized intelligence units — nothing like this exists anywhere else.</p>
+            </div>
+            <img 
+              src={`${import.meta.env.BASE_URL}images/agent-core.png`} 
+              alt="Core" 
+              className="w-16 h-16 object-contain mix-blend-screen opacity-80" 
+            />
           </div>
-          <img 
-            src={`${import.meta.env.BASE_URL}images/agent-core.png`} 
-            alt="Core" 
-            className="w-16 h-16 object-contain mix-blend-screen opacity-80" 
-          />
+          {/* Model intelligence callout */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="flex items-start gap-3 border border-primary/20 bg-primary/5 rounded px-4 py-3">
+              <Zap className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+              <div>
+                <div className="text-xs font-display font-bold text-primary uppercase tracking-wider">659+ AI Models</div>
+                <div className="text-xs font-mono text-muted-foreground mt-0.5">Every agent has access to the full library — Claude Opus 4.5, GPT-4o, Gemini, Mistral, DeepSeek &amp; more.</div>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 border border-accent/20 bg-accent/5 rounded px-4 py-3">
+              <BrainCircuit className="w-5 h-5 text-accent shrink-0 mt-0.5" />
+              <div>
+                <div className="text-xs font-display font-bold text-accent uppercase tracking-wider">Auto Best-Model Routing</div>
+                <div className="text-xs font-mono text-muted-foreground mt-0.5">The Orchestrator picks the right model for each task automatically — no configuration needed.</div>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 border border-border/40 bg-secondary/30 rounded px-4 py-3">
+              <LineChart className="w-5 h-5 text-green-400 shrink-0 mt-0.5" />
+              <div>
+                <div className="text-xs font-display font-bold text-green-400 uppercase tracking-wider">Saves Money</div>
+                <div className="text-xs font-mono text-muted-foreground mt-0.5">Lightweight tasks use smaller models. Frontier models fire only when they're genuinely needed.</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Group by category */}
