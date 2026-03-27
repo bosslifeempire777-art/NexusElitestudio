@@ -32,8 +32,12 @@ export default function NewProject() {
       return;
     }
 
+    const finalPrompt = type === 'game' && engine
+      ? `[Game Genre: ${engine}] ${prompt}`
+      : prompt;
+
     createMutation.mutate(
-      { data: { name, prompt, type } },
+      { data: { name, prompt: finalPrompt, type } },
       {
         onSuccess: (data) => {
           toast({ title: "Construct Initialized", description: "Agents are deploying..." });
@@ -93,19 +97,27 @@ export default function NewProject() {
 
               {type === 'game' && (
                 <div className="pt-4 animate-in fade-in slide-in-from-top-4">
-                  <label className="text-xs font-mono text-accent mb-2 block uppercase tracking-widest">Game Engine</label>
-                  <div className="flex space-x-4">
-                    {['Unity', 'Unreal', 'Godot'].map(eng => (
-                      <Badge 
-                        key={eng}
-                        variant={engine === eng.toLowerCase() ? 'default' : 'outline'}
-                        className="cursor-pointer px-4 py-2 text-sm"
-                        onClick={() => setEngine(eng.toLowerCase())}
+                  <label className="text-xs font-mono text-accent mb-2 block uppercase tracking-widest">Game Genre</label>
+                  <div className="flex flex-wrap gap-3">
+                    {[
+                      { id: 'arcade', label: '🕹️ Arcade', desc: 'Shoot \'em up, dodger, classic action' },
+                      { id: 'platformer', label: '🏃 Platformer', desc: 'Side-scroll, jump & run' },
+                      { id: 'puzzle', label: '🧩 Puzzle', desc: 'Match-3, logic, brain teaser' },
+                      { id: 'rpg', label: '⚔️ RPG', desc: 'Stats, inventory, exploration' },
+                      { id: 'strategy', label: '🗺️ Strategy', desc: 'Tower defense, resource mgmt' },
+                    ].map(g => (
+                      <Badge
+                        key={g.id}
+                        variant={engine === g.id ? 'default' : 'outline'}
+                        className="cursor-pointer px-4 py-2 text-sm flex flex-col items-start h-auto"
+                        onClick={() => setEngine(g.id)}
+                        title={g.desc}
                       >
-                        {eng}
+                        {g.label}
                       </Badge>
                     ))}
                   </div>
+                  <p className="text-xs text-muted-foreground font-mono mt-2">Games run in the browser using HTML5 Canvas — fully playable in the preview.</p>
                 </div>
               )}
 

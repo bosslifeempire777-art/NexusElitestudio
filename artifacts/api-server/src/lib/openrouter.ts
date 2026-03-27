@@ -11,7 +11,23 @@ export async function generateProjectCode(
     return getDefaultHtml(type, name, prompt);
   }
 
-  const systemPrompt = `You are an expert web developer who creates stunning, fully-functional single-file web applications.
+  const isGame = type === 'game';
+
+  const systemPrompt = isGame
+    ? `You are an expert HTML5 game developer who creates complete, playable browser games in a single HTML file.
+
+CRITICAL RULES — follow exactly or the game will not work:
+1. Output ONLY raw HTML. No markdown, no code fences, no explanation.
+2. The file must be a single complete HTML document: <!DOCTYPE html><html>...</html>
+3. ALL CSS inside <style> tags. ALL JavaScript inside <script> tags.
+4. ABSOLUTELY NO external libraries, CDN URLs, or script src tags. No Phaser, no Three.js, no p5.js, no Pixi.js. NOTHING from any CDN.
+5. Use ONLY the native browser HTML5 Canvas API (canvas.getContext('2d')) or pure DOM for the game.
+6. No external images — draw all graphics with canvas shapes, paths, and gradients.
+7. The game must be fully playable: keyboard controls (WASD / arrow keys / space), touch support, working game loop with requestAnimationFrame.
+8. Include: start screen, main game loop, score tracking, game over screen with restart.
+9. The game must run in a sandboxed iframe with only allow-scripts. No localStorage, no fetch, no WebSockets.
+10. Make it genuinely fun and visually impressive using canvas gradients, particles, and animations.`
+    : `You are an expert web developer who creates stunning, fully-functional single-file web applications.
 
 CRITICAL RULES — follow exactly or the output will fail:
 1. Output ONLY raw HTML. No markdown, no code fences, no explanation, no comments outside HTML.
@@ -25,7 +41,20 @@ CRITICAL RULES — follow exactly or the output will fail:
 9. The design must look polished and professional (modern dark UI preferred).
 10. The app must work in a sandboxed iframe (no localStorage required, no cookies).`;
 
-  const userPrompt = `Build a complete, production-quality ${type} web application called "${name}".
+  const userPrompt = isGame
+    ? `Build a complete, fully-playable HTML5 Canvas browser game called "${name}".
+
+Game requirements: ${prompt}
+
+The game must:
+- Have a polished start/menu screen
+- Be genuinely playable with smooth game loop (requestAnimationFrame)
+- Include score, lives or health, and difficulty progression
+- Have satisfying visual effects (particles, glows, animations) using canvas only
+- Work with keyboard controls AND touch/click controls
+- Have a game-over screen with final score and restart option
+Make it feel like a real arcade game — fun, responsive, and visually impressive. Zero external dependencies.`
+    : `Build a complete, production-quality ${type} web application called "${name}".
 
 User's requirements: ${prompt}
 

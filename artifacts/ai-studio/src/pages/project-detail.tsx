@@ -242,16 +242,23 @@ export default function ProjectDetail() {
                 {project.status === 'building' ? (
                   <BuildingState logs={logs} />
                 ) : (
-                  <DeviceFrame device={currentDevice}>
-                    <iframe
-                      ref={iframeRef}
-                      key={project.id}
-                      src={previewUrl}
-                      className="w-full h-full border-0 block"
-                      title={`Preview: ${project.name}`}
-                      sandbox="allow-scripts allow-forms allow-modals"
-                    />
-                  </DeviceFrame>
+                  <>
+                    {project.type === 'game' && (
+                      <div className="w-full text-center py-1.5 bg-accent/10 border-b border-accent/20 text-xs font-mono text-accent/70">
+                        🎮 Click inside the game to activate keyboard controls
+                      </div>
+                    )}
+                    <DeviceFrame device={currentDevice}>
+                      <iframe
+                        ref={iframeRef}
+                        key={project.id}
+                        src={previewUrl}
+                        className="w-full h-full border-0 block"
+                        title={`Preview: ${project.name}`}
+                        sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock"
+                      />
+                    </DeviceFrame>
+                  </>
                 )}
               </div>
 
