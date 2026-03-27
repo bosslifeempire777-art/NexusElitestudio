@@ -23,7 +23,7 @@ export default function NewProject() {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [type, setType] = useState<CreateProjectRequestType>('saas');
-  const [engine, setEngine] = useState("unity");
+  const [engine, setEngine] = useState("arcade");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

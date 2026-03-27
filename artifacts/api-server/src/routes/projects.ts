@@ -13,9 +13,11 @@ const PROJECT_TYPES = ["website", "mobile_app", "saas", "automation", "ai_tool",
 function inferFramework(type: string, prompt: string): string {
   const p = prompt.toLowerCase();
   if (type === "game") {
-    if (p.includes("unity")) return "Unity";
-    if (p.includes("unreal")) return "Unreal Engine";
-    return "Godot Engine";
+    if (p.includes("rpg")) return "HTML5 Canvas (RPG)";
+    if (p.includes("platformer")) return "HTML5 Canvas (Platformer)";
+    if (p.includes("puzzle")) return "HTML5 Canvas (Puzzle)";
+    if (p.includes("strategy")) return "HTML5 Canvas (Strategy)";
+    return "HTML5 Canvas (Arcade)";
   }
   if (type === "mobile_app") return "React Native";
   if (type === "saas") return "Next.js + Express";
@@ -37,9 +39,10 @@ function generateAgentLogs(type: string, name: string): string[] {
   if (type === "game") {
     logs.push(
       `[Game Designer] 🎮 Creating game concept and mechanics...`,
-      `[Game Engine Agent] 🕹️ Initializing Godot project...`,
-      `[Asset Generator] 🖼️ Generating game assets...`,
-      `[Level Builder] 🗺️ Building initial levels...`,
+      `[Canvas Renderer] 🖥️ Setting up HTML5 Canvas game engine...`,
+      `[Asset Generator] 🖼️ Generating sprites and visual effects...`,
+      `[Level Builder] 🗺️ Building game world and levels...`,
+      `[Physics Engine] ⚡ Wiring collision detection and movement...`,
     );
   }
 
