@@ -8,8 +8,19 @@ import { eq } from "drizzle-orm";
 const router: IRouter = Router();
 
 const WORKSPACE_ROOT = "/home/runner/workspace";
-const API_KEY = process.env.OPENROUTER_API_KEY;
 const API_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+function getApiKey(): string | undefined {
+  return process.env.OPENROUTER_API_KEY;
+}
+
+function extractJson(raw: string): string {
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1].trim();
+  const objMatch = raw.match(/\{[\s\S]*\}/);
+  if (objMatch) return objMatch[0];
+  return raw;
+}
 
 const ALLOWED_PATHS = [
   "artifacts/api-server/src",
@@ -84,8 +95,9 @@ router.post("/repair", async (req, res) => {
     focusPaths?: string[];
   };
 
+  const API_KEY = getApiKey();
   if (!message?.trim()) return res.status(400).json({ error: "message is required" });
-  if (!API_KEY) return res.status(503).json({ error: "AI not configured — OPENROUTER_API_KEY missing" });
+  if (!API_KEY) return res.status(503).json({ error: "AI not configured — OPENROUTER_API_KEY missing. Ensure the secret is set and restart the API Server workflow." });
 
   try {
     let contextBlock = "";
@@ -177,7 +189,7 @@ Rules:
 
     let parsed: any;
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(extractJson(raw));
     } catch {
       return res.json({ message: raw, files: [], changes: [], applied: [], errors: [], requiresRestart: false });
     }

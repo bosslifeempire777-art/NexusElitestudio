@@ -45,12 +45,14 @@ export default function ProjectDetail() {
   const { id } = useParams();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const { data: project, isLoading } = useGetProject(id || "", {
+  const { data: project, isLoading, isError, error, refetch } = useGetProject(id || "", {
     query: {
       refetchInterval: (query) => {
         const status = query.state.data?.status;
         return status === 'building' ? 2000 : false;
       },
+      retry: 3,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     },
   });
   const { data: logs } = useGetProjectBuildLogs(id || "", {
@@ -81,16 +83,44 @@ export default function ProjectDetail() {
 
   if (isLoading) return (
     <AppLayout>
-      <div className="flex items-center justify-center h-full">
+      <div className="flex flex-col items-center justify-center h-full gap-4">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-sm font-mono text-muted-foreground">Loading construct…</p>
       </div>
     </AppLayout>
   );
-  if (!project) return (
-    <AppLayout>
-      <div className="text-center mt-20 text-destructive font-mono">CONSTRUCT NOT FOUND</div>
-    </AppLayout>
-  );
+
+  if (isError || (!project && !isLoading)) {
+    const errMsg = (error as any)?.message ?? "Project not found or failed to load.";
+    return (
+      <AppLayout>
+        <div className="flex flex-col items-center justify-center h-full gap-6 text-center px-4">
+          <div className="w-16 h-16 rounded-full bg-destructive/10 border border-destructive/30 flex items-center justify-center">
+            <span className="text-2xl">⚠</span>
+          </div>
+          <div>
+            <h2 className="text-xl font-display font-bold text-destructive mb-2">CONSTRUCT UNAVAILABLE</h2>
+            <p className="text-sm font-mono text-muted-foreground max-w-md">{errMsg}</p>
+            <p className="text-xs font-mono text-muted-foreground mt-1">Project ID: {id}</p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => refetch()}
+              className="flex items-center gap-2 px-4 py-2 border border-primary/40 text-primary text-sm font-mono hover:bg-primary/10 transition-colors rounded"
+            >
+              <RefreshCw className="w-4 h-4" /> Retry
+            </button>
+            <a
+              href="/dashboard"
+              className="flex items-center gap-2 px-4 py-2 border border-border/50 text-muted-foreground text-sm font-mono hover:text-foreground transition-colors rounded"
+            >
+              ← Back to Dashboard
+            </a>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
 
   const previewUrl   = `/api/projects/${project.id}/preview`;
   const currentDevice = DEVICES.find(d => d.id === device)!;
