@@ -6,7 +6,7 @@ import {
   Terminal, Folder, FileCode2, Play, ChevronRight, Loader2, StopCircle,
   ExternalLink, PanelRightClose, PanelRightOpen, Monitor, Tablet, Smartphone,
   RotateCcw, Send, Bot, User, Sparkles, Bug, Palette, FilePlus, Lock, Database,
-  Zap, Moon, Layers, Globe, Cpu,
+  Zap, Moon, Layers, Globe, Cpu, RefreshCw,
 } from "lucide-react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
@@ -64,6 +64,20 @@ export default function ProjectDetail() {
   const [selectedFile, setSelectedFile] = useState<string | null>("src/App.tsx");
   const [logsOpen, setLogsOpen]       = useState(false);
   const [device, setDevice]           = useState<Device>('desktop');
+  const [isRebuilding, setIsRebuilding] = useState(false);
+
+  const rebuild = useCallback(async () => {
+    if (!id || isRebuilding) return;
+    setIsRebuilding(true);
+    try {
+      await fetch(`/api/projects/${id}/rebuild`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+    } finally {
+      setIsRebuilding(false);
+    }
+  }, [id, isRebuilding]);
 
   if (isLoading) return (
     <AppLayout>
@@ -114,8 +128,16 @@ export default function ProjectDetail() {
                 </Button>
               </div>
 
-              <Button size="sm" variant="outline" className="h-7 text-destructive border-destructive/50 hover:bg-destructive/10 px-2">
-                <StopCircle className="w-3.5 h-3.5" />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={rebuild}
+                disabled={isRebuilding || project.status === 'building'}
+                title="Rebuild with AI"
+                className="h-7 px-2 gap-1 text-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRebuilding || project.status === 'building' ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{isRebuilding || project.status === 'building' ? 'Building...' : 'Rebuild'}</span>
               </Button>
               <Button size="sm" className="h-7 px-3 text-xs glow-primary-hover gap-1">
                 <Play className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Deploy</span>
@@ -227,7 +249,7 @@ export default function ProjectDetail() {
                       src={previewUrl}
                       className="w-full h-full border-0 block"
                       title={`Preview: ${project.name}`}
-                      sandbox="allow-scripts"
+                      sandbox="allow-scripts allow-forms allow-modals"
                     />
                   </DeviceFrame>
                 )}

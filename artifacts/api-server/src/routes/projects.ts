@@ -105,16 +105,17 @@ router.post("/", async (req, res) => {
     try {
       const generatedCode = await generateProjectCode(type, name, prompt);
       
-      const agentLogs = Array.isArray(project.agentLogs) ? project.agentLogs : [];
+      const currentLogs = Array.isArray(project.agentLogs) ? project.agentLogs : [];
       const updatedLogs = [
-        ...agentLogs,
+        ...currentLogs,
         `[Code Generator] ✅ Generated production-ready code (${generatedCode.length} bytes)`,
         `[Orchestrator] 🎉 Project generation complete!`,
       ];
 
       await db.update(projectsTable)
         .set({ 
-          status: "ready", 
+          status: "ready",
+          generatedCode,
           updatedAt: new Date(),
           agentLogs: updatedLogs,
         })
@@ -189,9 +190,54 @@ router.get("/:id/preview", async (req, res) => {
 
   if (!project) return res.status(404).send("<h1>Project not found</h1>");
 
-  const html = generatePreviewHtml(project.name, project.type, project.description || project.prompt || "");
+  // Serve AI-generated code if available; fallback to template
+  const html = project.generatedCode
+    ? project.generatedCode
+    : generatePreviewHtml(project.name, project.type, project.description || project.prompt || "");
+
   res.setHeader("Content-Type", "text/html");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.send(html);
+});
+
+// Rebuild a project (regenerate from scratch using AI)
+router.post("/:id/rebuild", async (req, res) => {
+  const userId = req.headers["x-user-id"] as string || "demo-user";
+
+  const project = await db.query.projectsTable.findFirst({
+    where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+  });
+
+  if (!project) return res.status(404).json({ error: "not_found", message: "Project not found" });
+
+  const newLogs = generateAgentLogs(project.type, project.name);
+
+  await db.update(projectsTable)
+    .set({ status: "building", agentLogs: newLogs, generatedCode: null, updatedAt: new Date() })
+    .where(eq(projectsTable.id, project.id));
+
+  setImmediate(async () => {
+    try {
+      const generatedCode = await generateProjectCode(project.type, project.name, project.prompt);
+
+      const updatedLogs = [
+        ...newLogs,
+        `[Code Generator] ✅ Rebuilt production-ready code (${generatedCode.length} bytes)`,
+        `[Orchestrator] 🎉 Rebuild complete!`,
+      ];
+
+      await db.update(projectsTable)
+        .set({ status: "ready", generatedCode, agentLogs: updatedLogs, updatedAt: new Date() })
+        .where(eq(projectsTable.id, project.id));
+    } catch (err) {
+      console.error("Rebuild failed:", err);
+      await db.update(projectsTable)
+        .set({ status: "error", updatedAt: new Date() })
+        .where(eq(projectsTable.id, project.id));
+    }
+  });
+
+  res.json({ ok: true, message: "Rebuild started" });
 });
 
 function generatePreviewHtml(name: string, type: string, description: string): string {
