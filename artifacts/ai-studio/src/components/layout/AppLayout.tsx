@@ -61,14 +61,19 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           sidebarOpen ? "w-64" : "w-0 border-r-0",
         )}
       >
-        {/* Logo */}
-        <div className="h-16 flex items-center px-4 border-b border-border/50 overflow-hidden">
-          <img
-            src={`${import.meta.env.BASE_URL}images/nexuselite-logo.png`}
-            alt="NexusElite AI Studio"
-            style={{ height: '44px', width: 'auto', maxWidth: '220px' }}
-          />
-        </div>
+        {/* Logo — crops to show left wordmark panel of the combined image */}
+        <div
+          style={{
+            height: '64px',
+            backgroundImage: `url('${import.meta.env.BASE_URL}images/nexuselite-logo.png')`,
+            backgroundSize: '200% auto',
+            backgroundPosition: 'left center',
+            backgroundRepeat: 'no-repeat',
+            borderBottom: '1px solid hsl(var(--border) / 0.5)',
+          }}
+          role="img"
+          aria-label="NexusElite AI Studio"
+        />
 
         {/* Nav */}
         <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto whitespace-nowrap">
