@@ -62,15 +62,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         )}
       >
         {/* Logo */}
-        <div className="h-16 flex items-center px-4 gap-3 border-b border-border/50 whitespace-nowrap">
+        <div className="h-16 flex items-center border-b border-border/50 overflow-hidden">
           <img
-            src={`${import.meta.env.BASE_URL}images/nexuselite-icon.jpg`}
-            alt="NexusElite icon"
-            style={{ width: '40px', height: '40px', objectFit: 'cover', objectPosition: 'center 30%', borderRadius: '8px', flexShrink: 0 }}
+            src={`${import.meta.env.BASE_URL}images/nexuselite-logo.png`}
+            alt="NexusElite AI Studio"
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
           />
-          <span className="font-display font-bold text-sm tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent leading-tight">
-            NEXUSELITE<br />AI STUDIO
-          </span>
         </div>
 
         {/* Nav */}
