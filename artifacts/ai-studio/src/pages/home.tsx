@@ -22,7 +22,7 @@ export default function Home() {
       <nav className="relative z-10 flex items-center justify-between px-6 lg:px-12 py-6">
         <div className="flex items-center">
           <img
-            src={`${import.meta.env.BASE_URL}images/nexuselite-logo.png`}
+            src={`${import.meta.env.BASE_URL}images/nexuselite-logo.jpg`}
             alt="NexusElite AI Studio"
             style={{ height: '48px', width: 'auto' }}
           />
