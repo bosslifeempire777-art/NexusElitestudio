@@ -11,7 +11,6 @@ import {
   ShieldAlert,
   CreditCard,
   LogOut,
-  TerminalSquare,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -63,11 +62,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         )}
       >
         {/* Logo */}
-        <div className="h-16 flex items-center px-6 border-b border-border/50 whitespace-nowrap">
-          <TerminalSquare className="w-6 h-6 text-primary mr-3 shrink-0" />
-          <span className="font-display font-bold text-xl tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">
-            NEXUS
-          </span>
+        <div className="h-16 flex items-center px-4 border-b border-border/50 overflow-hidden">
+          <img
+            src={`${import.meta.env.BASE_URL}images/nexuselite-logo.png`}
+            alt="NexusElite AI Studio"
+            style={{ height: '44px', width: 'auto', maxWidth: '220px' }}
+          />
         </div>
 
         {/* Nav */}

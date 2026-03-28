@@ -60,9 +60,9 @@
   --muted: 240 10% 15%;
   --muted-foreground: 240 5% 65%;
   
-  /* Neon Magenta */
-  --accent: 320 100% 50%;
-  --accent-foreground: 0 0% 100%;
+  /* Silver / Chrome */
+  --accent: 210 15% 75%;
+  --accent-foreground: 240 10% 4%;
   
   /* Neon Red/Orange */
   --destructive: 0 100% 55%;
@@ -73,7 +73,7 @@
   --ring: 185 100% 50%;
 
   --chart-1: 185 100% 50%; /* Cyan */
-  --chart-2: 320 100% 50%; /* Magenta */
+  --chart-2: 210 15% 75%; /* Silver */
   --chart-3: 280 100% 60%; /* Purple */
   --chart-4: 120 100% 50%; /* Green */
   --chart-5: 45 100% 50%;  /* Yellow */

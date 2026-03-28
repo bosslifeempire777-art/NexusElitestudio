@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/cyber-ui";
-import { Terminal, Cpu, Rocket, Code, Gamepad2, Shield, BrainCircuit, Zap, TrendingDown, Layers } from "lucide-react";
+import { Cpu, Rocket, Code, Shield, BrainCircuit, Zap, TrendingDown, Layers } from "lucide-react";
 import { useGetMe } from "@workspace/api-client-react";
 
 export default function Home() {
@@ -20,11 +20,12 @@ export default function Home() {
 
       {/* Navbar */}
       <nav className="relative z-10 flex items-center justify-between px-6 lg:px-12 py-6">
-        <div className="flex items-center space-x-3">
-          <Terminal className="w-8 h-8 text-primary" />
-          <span className="font-display font-bold text-2xl tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">
-            NEXUS STUDIO
-          </span>
+        <div className="flex items-center">
+          <img
+            src={`${import.meta.env.BASE_URL}images/nexuselite-logo.png`}
+            alt="NexusElite AI Studio"
+            style={{ height: '48px', width: 'auto' }}
+          />
         </div>
         <div className="space-x-4">
           <Button variant="ghost" asChild>
