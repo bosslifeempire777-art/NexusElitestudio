@@ -1,10 +1,10 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/cyber-ui";
 import { Cpu, Rocket, Code, Shield, BrainCircuit, Zap, TrendingDown, Layers } from "lucide-react";
-import { useGetMe } from "@workspace/api-client-react";
+import { useAuth } from "@/context/AuthContext";
 
 export default function Home() {
-  const { data: user } = useGetMe({ query: { retry: false }});
+  const { user } = useAuth();
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">

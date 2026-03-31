@@ -13,8 +13,9 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Crown,
 } from "lucide-react";
-import { useGetMe } from "@workspace/api-client-react";
+import { useAuth } from "@/context/AuthContext";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -26,8 +27,8 @@ const navItems = [
 ];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
-  const { data: user } = useGetMe({ query: { retry: false }});
+  const [location, navigate] = useLocation();
+  const { user, logout } = useAuth();
 
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return localStorage.getItem("nexus-sidebar") !== "closed"; } catch { return true; }
@@ -41,7 +42,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const isAdmin = user?.isAdmin || true;
+  function handleLogout() {
+    logout();
+    navigate("/login");
+  }
+
+  const isAdmin = user?.isAdmin === true;
+  const isVip = user?.isVip === true;
+  const planLabel = user?.isAdmin ? "ADMIN" : user?.isVip ? "VIP" : (user?.plan?.toUpperCase() ?? "FREE");
+  const planColor = user?.isAdmin ? "text-destructive" : user?.isVip ? "text-yellow-400" : "text-primary";
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden relative">
@@ -92,20 +101,30 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             );
           })}
 
+          {/* VIP badge in nav */}
+          {(isVip || isAdmin) && (
+            <div className="mt-4 mb-1 px-3 flex items-center gap-2 text-xs font-mono text-yellow-400/70">
+              <Crown className="w-3 h-3" />
+              <span>{isAdmin ? "ADMIN ACCESS" : "VIP ACCESS"} — UNLIMITED</span>
+            </div>
+          )}
+
+          {/* Admin-only: Admin Console */}
           {isAdmin && (
             <>
-              <div className="mt-8 mb-2 px-3 text-xs font-display tracking-widest text-muted-foreground uppercase">System</div>
+              <div className="mt-4 mb-2 px-3 text-xs font-display tracking-widest text-muted-foreground uppercase">System</div>
               <Link
                 href="/admin"
                 className={cn(
                   "flex items-center px-3 py-2.5 text-sm font-medium transition-all group cyber-clip relative",
                   location.startsWith("/admin")
-                    ? "bg-accent/10 text-accent border border-accent/30 glow-accent"
+                    ? "bg-destructive/10 text-destructive border border-destructive/30"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground border border-transparent",
                 )}
               >
-                <ShieldAlert className={cn("w-5 h-5 mr-3 shrink-0", location.startsWith("/admin") ? "text-accent" : "group-hover:text-foreground")} />
+                <ShieldAlert className={cn("w-5 h-5 mr-3 shrink-0", location.startsWith("/admin") ? "text-destructive" : "group-hover:text-foreground")} />
                 Admin Console
+                {location.startsWith("/admin") && <div className="absolute left-0 top-0 bottom-0 w-1 bg-destructive" />}
               </Link>
             </>
           )}
@@ -114,14 +133,23 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         {/* User footer */}
         <div className="p-4 border-t border-border/50 whitespace-nowrap">
           <div className="flex items-center p-3 bg-secondary/30 rounded cyber-clip border border-border/50">
-            <div className="w-8 h-8 rounded bg-primary/20 flex items-center justify-center text-primary font-display font-bold border border-primary/30 shrink-0">
-              {user?.username?.[0]?.toUpperCase() || "U"}
+            <div className={cn(
+              "w-8 h-8 rounded flex items-center justify-center font-display font-bold border shrink-0 text-sm",
+              isAdmin ? "bg-destructive/20 text-destructive border-destructive/30" :
+              isVip ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" :
+              "bg-primary/20 text-primary border-primary/30"
+            )}>
+              {user?.username?.[0]?.toUpperCase() || "?"}
             </div>
             <div className="ml-3 flex-1 overflow-hidden">
-              <p className="text-sm font-medium truncate">{user?.username || "Guest_User"}</p>
-              <p className="text-xs text-primary font-mono">{user?.plan?.toUpperCase() || "FREE"} TIER</p>
+              <p className="text-sm font-medium truncate">{user?.username || "—"}</p>
+              <p className={cn("text-xs font-mono", planColor)}>{planLabel} TIER</p>
             </div>
-            <button className="text-muted-foreground hover:text-destructive transition-colors ml-2 shrink-0">
+            <button
+              onClick={handleLogout}
+              title="Log out"
+              className="text-muted-foreground hover:text-destructive transition-colors ml-2 shrink-0"
+            >
               <LogOut className="w-4 h-4" />
             </button>
           </div>
@@ -132,7 +160,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden z-10 relative">
         <header className="h-16 border-b border-border/50 bg-background/50 backdrop-blur-md flex items-center justify-between px-4 shrink-0">
           <div className="flex items-center gap-3 text-sm font-mono text-muted-foreground min-w-0">
-            {/* Sidebar toggle */}
             <button
               onClick={toggleSidebar}
               title={sidebarOpen ? "Collapse sidebar" : "Open sidebar"}
@@ -146,6 +173,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="truncate">{location === "/" ? "/home" : location}</span>
           </div>
           <div className="flex items-center space-x-4 shrink-0">
+            {isAdmin && (
+              <span className="text-xs font-mono text-destructive border border-destructive/30 px-2 py-0.5 rounded hidden sm:inline">
+                ADMIN
+              </span>
+            )}
+            {isVip && !isAdmin && (
+              <span className="text-xs font-mono text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded hidden sm:inline">
+                VIP
+              </span>
+            )}
             <div className="flex items-center space-x-2 text-xs font-mono">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
               <span className="text-muted-foreground hidden sm:inline">SYSTEM_ONLINE</span>

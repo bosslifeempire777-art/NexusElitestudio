@@ -4,8 +4,11 @@ import { join, dirname } from "path";
 import { db } from "@workspace/db";
 import { projectsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { requireAdmin } from "../middleware/auth.js";
 
 const router: IRouter = Router();
+
+router.use(requireAdmin);
 
 const WORKSPACE_ROOT = "/home/runner/workspace";
 const API_URL = "https://openrouter.ai/api/v1/chat/completions";

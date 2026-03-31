@@ -1,11 +1,12 @@
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useGetMe, useUpdateUser } from "@workspace/api-client-react";
+import { useUpdateUser } from "@workspace/api-client-react";
+import { useAuth } from "@/context/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Badge } from "@/components/ui/cyber-ui";
 import { User, Key, Shield, HardDrive } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Settings() {
-  const { data: user } = useGetMe();
+  const { user } = useAuth();
   const updateMutation = useUpdateUser();
   const { toast } = useToast();
 
