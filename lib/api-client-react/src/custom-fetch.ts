@@ -271,6 +271,15 @@ async function parseSuccessBody(
   }
 }
 
+function getAuthHeader(): Record<string, string> {
+  try {
+    const token = typeof localStorage !== "undefined" ? localStorage.getItem("nexus-token") : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function customFetch<T = unknown>(
   input: RequestInfo | URL,
   options: CustomFetchOptions = {},
@@ -283,7 +292,7 @@ export async function customFetch<T = unknown>(
     throw new TypeError(`customFetch: ${method} requests cannot have a body.`);
   }
 
-  const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, headersInit);
+  const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, getAuthHeader(), headersInit);
 
   if (
     typeof init.body === "string" &&
