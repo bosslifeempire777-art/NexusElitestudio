@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { generateProjectCode, generateChatResponse } from "../lib/openrouter.js";
 import { requireAuth } from "../middleware/auth.js";
+import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
 
 const router: IRouter = Router();
 
@@ -113,24 +114,28 @@ router.post("/", requireAuth, async (req, res) => {
     agentLogs,
   }).returning();
 
-  // Generate code asynchronously using OpenRouter
+  // Generate code asynchronously with streaming logs
+  const buildSteps = agentLogs;
   setImmediate(async () => {
     try {
-      const generatedCode = await generateProjectCode(type, name, prompt);
-      const currentLogs = Array.isArray(project.agentLogs) ? project.agentLogs : [];
-      const updatedLogs = [
-        ...currentLogs,
-        `[Code Generator] ✅ Generated production-ready code (${generatedCode.length} bytes)`,
+      const generatedCode = await streamBuild(
+        project.id,
+        buildSteps,
+        () => generateProjectCode(type, name, prompt),
+      );
+      const finalLogs = [...buildSteps,
+        `[Code Generator] ✅ Generated ${generatedCode.length.toLocaleString()} bytes`,
         `[Orchestrator] 🎉 Project generation complete!`,
       ];
       await db.update(projectsTable).set({
         status: "ready",
         generatedCode,
         updatedAt: new Date(),
-        agentLogs: updatedLogs,
+        agentLogs: finalLogs,
       }).where(eq(projectsTable.id, project.id));
     } catch (err) {
       console.error("Code generation failed:", err);
+      completeBuild(project.id);
       await db.update(projectsTable)
         .set({ status: "ready", updatedAt: new Date() })
         .where(eq(projectsTable.id, project.id));
@@ -259,19 +264,24 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
     .set({ status: "building", agentLogs: newLogs, generatedCode: null, updatedAt: new Date() })
     .where(eq(projectsTable.id, project.id));
 
+  const { type: pType, name: pName, prompt: pPrompt } = project;
   setImmediate(async () => {
     try {
-      const generatedCode = await generateProjectCode(project.type, project.name, project.prompt);
-      const updatedLogs = [
-        ...newLogs,
-        `[Code Generator] ✅ Rebuilt production-ready code (${generatedCode.length} bytes)`,
+      const generatedCode = await streamBuild(
+        project.id,
+        newLogs,
+        () => generateProjectCode(pType, pName, pPrompt),
+      );
+      const finalLogs = [...newLogs,
+        `[Code Generator] ✅ Rebuilt ${generatedCode.length.toLocaleString()} bytes`,
         `[Orchestrator] 🎉 Rebuild complete!`,
       ];
       await db.update(projectsTable)
-        .set({ status: "ready", generatedCode, agentLogs: updatedLogs, updatedAt: new Date() })
+        .set({ status: "ready", generatedCode, agentLogs: finalLogs, updatedAt: new Date() })
         .where(eq(projectsTable.id, project.id));
     } catch (err) {
       console.error("Rebuild failed:", err);
+      completeBuild(project.id);
       await db.update(projectsTable)
         .set({ status: "error", updatedAt: new Date() })
         .where(eq(projectsTable.id, project.id));
@@ -279,6 +289,51 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
   });
 
   res.json({ ok: true, message: "Rebuild started" });
+});
+
+// SSE — real-time build log stream (no auth required so iframe previews work)
+router.get("/:id/build-stream", async (req, res) => {
+  const projectId = req.params.id;
+
+  // Check project exists
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, projectId),
+  });
+  if (!project) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  // If already done, stream stored logs and close
+  if (project.status !== "building") {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    const logs = Array.isArray(project.agentLogs) ? project.agentLogs as string[] : [];
+    for (const msg of logs) {
+      res.write(`data: ${JSON.stringify({ msg, ts: Date.now() })}\n\n`);
+    }
+    res.write(`data: ${JSON.stringify({ msg: "__DONE__", ts: Date.now() })}\n\n`);
+    res.end();
+    return;
+  }
+
+  // Live stream
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const session = subscribe(projectId, res);
+
+  // Flush already-emitted logs immediately
+  for (const entry of session.logs) {
+    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+  }
+  if (session.done) {
+    res.write(`data: ${JSON.stringify({ msg: "__DONE__", ts: Date.now() })}\n\n`);
+    res.end();
+  }
 });
 
 // Deploy project — sets status to deployed and generates a shareable URL
@@ -345,7 +400,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   }
 
   try {
-    const reply = await generateChatResponse(project, userMessage);
+    const reply = await generateChatResponse(project.type, project.name, userMessage, project.prompt);
     res.json({ reply });
   } catch (err) {
     console.error("Chat failed:", err);

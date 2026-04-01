@@ -24,26 +24,28 @@ CRITICAL RULES — follow exactly or the game will not work:
 1. Output ONLY raw HTML. No markdown, no code fences, no explanation.
 2. The file must be a single complete HTML document: <!DOCTYPE html><html>...</html>
 3. ALL CSS inside <style> tags. ALL JavaScript inside <script> tags.
-4. ABSOLUTELY NO external libraries, CDN URLs, or script src tags. No Phaser, no Three.js, no p5.js, no Pixi.js. NOTHING from any CDN.
-5. Use ONLY the native browser HTML5 Canvas API (canvas.getContext('2d')) or pure DOM for the game.
-6. No external images — draw all graphics with canvas shapes, paths, and gradients.
-7. The game must be fully playable: keyboard controls (WASD / arrow keys / space), touch support, working game loop with requestAnimationFrame.
-8. Include: start screen, main game loop, score tracking, game over screen with restart.
-9. The game must run in a sandboxed iframe with only allow-scripts. No localStorage, no fetch, no WebSockets.
-10. Make it genuinely fun and visually impressive using canvas gradients, particles, and animations.`
+4. ABSOLUTELY NO external resources of any kind: no script src, no link href, no @import, no fetch(), no CDN URLs. NOTHING external.
+5. NO GOOGLE FONTS. NO 'Press Start 2P'. NO web fonts at all. Use ONLY system fonts: -apple-system, Arial, monospace, sans-serif, or serif.
+6. Use ONLY the native browser HTML5 Canvas API (canvas.getContext('2d')) or pure DOM for the game.
+7. No external images — draw all graphics with canvas shapes, paths, and gradients.
+8. The game must be fully playable: keyboard controls (WASD / arrow keys / space), click/touch support, working game loop with requestAnimationFrame.
+9. Include: start screen, main game loop, score tracking, game over screen with restart button.
+10. Make it genuinely fun and visually impressive using canvas gradients, particles, neon glows, and animations.
+11. All buttons, menus, and UI must be clickable and work correctly.`
     : `You are an expert web developer who creates stunning, fully-functional single-file web applications.
 
 CRITICAL RULES — follow exactly or the output will fail:
 1. Output ONLY raw HTML. No markdown, no code fences, no explanation, no comments outside HTML.
 2. The file must be a single complete HTML document: <!DOCTYPE html><html>...</html>
-3. ALL CSS must be inside <style> tags in <head>. No external stylesheets.
-4. ALL JavaScript must be inside <script> tags. No external scripts, no CDN URLs.
-5. No external images, no Google Fonts, no Font Awesome, nothing from any CDN.
-6. For icons use Unicode emoji or SVG drawn inline.
-7. The app must be fully interactive — buttons do things, forms submit, navigation switches views.
-8. Use realistic, plausible data — not placeholder "Lorem ipsum" or empty states.
-9. The design must look polished and professional (modern dark UI preferred).
-10. The app must work in a sandboxed iframe (no localStorage required, no cookies).`;
+3. ALL CSS must be inside <style> tags in <head>. ALL JavaScript inside <script> tags.
+4. ABSOLUTELY NO external resources: no CDN, no Google Fonts, no Font Awesome, no external images, no fetch() to outside URLs, no script src.
+5. Use ONLY system fonts: -apple-system, 'Segoe UI', Arial, monospace, or sans-serif. NO @import.
+6. For icons use Unicode emoji or inline SVG only.
+7. The app must be fully interactive — every button must do something, forms must work, navigation must switch views using JavaScript.
+8. Use realistic, plausible data — no placeholder "Lorem ipsum". Make it feel like a real product.
+9. Design must be polished and professional: dark background preferred, smooth animations, hover effects.
+10. localStorage IS available — use it to persist state (settings, items, user data) between interactions.
+11. Every interactive element MUST have working onclick/event handlers. Dead buttons are not acceptable.`;
 
   const userPrompt = isGame
     ? `Build a complete, fully-playable HTML5 Canvas browser game called "${name}".

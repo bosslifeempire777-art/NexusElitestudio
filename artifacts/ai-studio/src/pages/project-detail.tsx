@@ -384,7 +384,7 @@ export default function ProjectDetail() {
                         src={previewUrl}
                         className="w-full h-full border-0 block"
                         title={`Preview: ${project.name}`}
-                        sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock"
+                        sandbox="allow-scripts allow-forms allow-same-origin allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox"
                       />
                     </DeviceFrame>
                   </>
@@ -408,7 +408,7 @@ export default function ProjectDetail() {
 
           {/* AGENT TAB — chat terminal */}
           {activeTab === 'agent' && (
-            <AgentTerminal projectId={project.id} projectName={project.name} />
+            <AgentTerminal projectId={project.id} projectName={project.name} projectStatus={project.status} onBuildComplete={refetch} />
           )}
         </div>
       </div>
@@ -534,7 +534,14 @@ function getStepsForMessage(text: string): string[] {
 }
 
 /* ── Agent Terminal ── */
-function AgentTerminal({ projectId, projectName }: { projectId: string; projectName: string }) {
+function AgentTerminal({
+  projectId, projectName, projectStatus, onBuildComplete,
+}: {
+  projectId: string;
+  projectName: string;
+  projectStatus: string;
+  onBuildComplete?: () => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "agent",
@@ -542,17 +549,56 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
       timestamp: new Date().toISOString(),
     },
   ]);
+  const [buildLogs, setBuildLogs] = useState<string[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeSteps, setActiveSteps] = useState<string[]>([]);
   const [stepsDone, setStepsDone] = useState(false);
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const inputRef   = useRef<HTMLTextAreaElement>(null);
+  const bottomRef   = useRef<HTMLDivElement>(null);
+  const inputRef    = useRef<HTMLTextAreaElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const esRef       = useRef<EventSource | null>(null);
+
+  // Subscribe to SSE build stream
+  useEffect(() => {
+    if (!projectId) return;
+
+    setIsStreaming(projectStatus === "building");
+    setBuildLogs([]);
+
+    const es = new EventSource(`/api/projects/${projectId}/build-stream`);
+    esRef.current = es;
+
+    es.onmessage = (e) => {
+      try {
+        const { msg } = JSON.parse(e.data) as { msg: string; ts: number };
+        if (msg === "__DONE__") {
+          setIsStreaming(false);
+          es.close();
+          onBuildComplete?.();
+          return;
+        }
+        setBuildLogs(prev => [...prev, msg]);
+      } catch {
+        // ignore malformed
+      }
+    };
+
+    es.onerror = () => {
+      setIsStreaming(false);
+      es.close();
+    };
+
+    return () => {
+      es.close();
+      esRef.current = null;
+    };
+  }, [projectId, projectStatus]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, activeSteps]);
+  }, [messages, activeSteps, buildLogs]);
 
   const sendMessage = useCallback(async (text: string, action?: string) => {
     const userText = (text.trim() || action || "").trim();
@@ -626,6 +672,38 @@ function AgentTerminal({ projectId, projectName }: { projectId: string; projectN
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#06060f]">
+
+      {/* Live Build Log Panel — visible during builds */}
+      {buildLogs.length > 0 && (
+        <div className="shrink-0 border-b border-primary/20 bg-primary/5 max-h-48 overflow-y-auto">
+          <div className="sticky top-0 bg-[#06060f]/90 backdrop-blur px-3 pt-2 pb-1 border-b border-primary/10">
+            <p className="text-[10px] font-mono text-primary uppercase tracking-widest flex items-center gap-1.5">
+              {isStreaming
+                ? <><span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse inline-block" /> Agents Building Live…</>
+                : <><span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" /> Build Complete</>
+              }
+            </p>
+          </div>
+          <div className="px-3 pb-2 pt-1 space-y-0.5">
+            {buildLogs.map((log, i) => {
+              const isSuccess = log.includes("✅") || log.includes("🎉");
+              const isError   = log.includes("❌") || log.includes("Error");
+              const agent     = log.match(/\[([^\]]+)\]/)?.[1] || "";
+              const msgBody   = log.replace(/\[[^\]]+\]\s?/, "");
+              return (
+                <div key={i} className={`flex items-start gap-2 text-[11px] font-mono py-0.5 ${
+                  isError ? "text-red-400" : isSuccess ? "text-green-400" : "text-muted-foreground"
+                }`}>
+                  <span className={`shrink-0 text-[10px] font-bold min-w-[120px] ${
+                    isError ? "text-red-400/80" : isSuccess ? "text-green-400/80" : "text-primary/70"
+                  }`}>{agent || "System"}</span>
+                  <span className="flex-1 leading-relaxed">{msgBody}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quick actions grid */}
       <div className="shrink-0 border-b border-border/40 bg-secondary/10 p-3">
