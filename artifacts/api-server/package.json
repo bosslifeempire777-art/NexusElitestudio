@@ -18,7 +18,8 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "jsonwebtoken": "^9.0.3",
-    "stripe": "^20.4.1"
+    "stripe": "^20.0.0",
+    "stripe-replit-sync": "1.0.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
