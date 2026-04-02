@@ -70,17 +70,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           sidebarOpen ? "w-64" : "w-0 border-r-0",
         )}
       >
-        {/* Logo */}
-        <div className="h-16 flex items-center border-b border-border/50 overflow-hidden">
+        {/* Logo — centered, large */}
+        <div className="flex flex-col items-center justify-center py-6 px-4 border-b border-border/50">
           <img
             src={`${import.meta.env.BASE_URL}images/nexuselite-logo.png`}
             alt="NexusElite AI Studio"
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            className="w-full max-w-[200px] h-auto object-contain drop-shadow-[0_0_18px_rgba(0,212,255,0.45)]"
           />
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto whitespace-nowrap">
+        <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto whitespace-nowrap">
           {navItems.map((item) => {
             const isActive = location === item.href || location.startsWith(`${item.href}/`);
             return (
