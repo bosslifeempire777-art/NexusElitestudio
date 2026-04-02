@@ -7,7 +7,9 @@ import {
   ExternalLink, PanelRightClose, PanelRightOpen, Monitor, Tablet, Smartphone,
   RotateCcw, Send, Bot, User, Sparkles, Bug, Palette, FilePlus, Lock, Database,
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
+  Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
 } from "lucide-react";
+import { useLocation } from "wouter";
 import { getToken } from "@/lib/auth";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
@@ -28,18 +30,33 @@ const DEVICES: { id: Device; label: string; icon: typeof Monitor; width: number 
 ];
 
 const QUICK_ACTIONS = [
-  { label: "Add Feature",      icon: Sparkles, action: "Add Feature"      },
-  { label: "Fix Bug",          icon: Bug,      action: "Fix Bug"          },
-  { label: "Redesign UI",      icon: Palette,  action: "Redesign UI"      },
-  { label: "Add Page",         icon: FilePlus, action: "Add Page"         },
-  { label: "Add Auth",         icon: Lock,     action: "Add Authentication"},
-  { label: "Add Database",     icon: Database, action: "Add Database"     },
-  { label: "Optimize",         icon: Zap,      action: "Optimize Performance"},
-  { label: "Dark Mode",        icon: Moon,     action: "Add Dark Mode"    },
-  { label: "Mobile Layout",    icon: Smartphone,action:"Make Mobile Responsive"},
-  { label: "Add API",          icon: Globe,    action: "Add API Endpoint" },
-  { label: "Refactor Code",    icon: Layers,   action: "Refactor Code"    },
-  { label: "AI Integration",   icon: Cpu,      action: "Add AI Integration"},
+  { label: "Add Feature",      icon: Sparkles,   action: "Add Feature"      },
+  { label: "Fix Bug",          icon: Bug,        action: "Fix Bug"          },
+  { label: "Redesign UI",      icon: Palette,    action: "Redesign UI"      },
+  { label: "Add Page",         icon: FilePlus,   action: "Add Page"         },
+  { label: "Add Auth",         icon: Lock,       action: "Add Authentication"},
+  { label: "Add Database",     icon: Database,   action: "Add Database"     },
+  { label: "Optimize",         icon: Zap,        action: "Optimize Performance"},
+  { label: "Dark Mode",        icon: Moon,       action: "Add Dark Mode"    },
+  { label: "Mobile Layout",    icon: Smartphone, action: "Make Mobile Responsive"},
+  { label: "Add API",          icon: Globe,      action: "Add API Endpoint" },
+  { label: "Refactor Code",    icon: Layers,     action: "Refactor Code"    },
+  { label: "AI Integration",   icon: Cpu,        action: "Add AI Integration"},
+];
+
+const GAME_QUICK_ACTIONS = [
+  { label: "Add Enemy AI",     icon: Crosshair,  action: "Add enemy AI with pathfinding and attack behavior" },
+  { label: "Add Power-Up",     icon: Star,       action: "Add collectible power-ups with visual effects"    },
+  { label: "Add Score System", icon: Trophy,     action: "Add score tracking, high score, and leaderboard"  },
+  { label: "Add Level",        icon: Map,        action: "Add a new game level or stage"                    },
+  { label: "Add Sound FX",     icon: Music,      action: "Add sound effects and background music"           },
+  { label: "Add Boss Fight",   icon: Shield,     action: "Add a boss enemy with special attack patterns"    },
+  { label: "Add Inventory",    icon: Layers,     action: "Add an inventory or item collection system"       },
+  { label: "Add Multiplayer",  icon: Gamepad2,   action: "Add local 2-player multiplayer support"           },
+  { label: "Add Animations",   icon: Sparkles,   action: "Add character and object animations"              },
+  { label: "Add Game Menu",    icon: FilePlus,   action: "Add a main menu, pause menu, and game over screen"},
+  { label: "Add Particles",    icon: Zap,        action: "Add particle effects for explosions and impacts"  },
+  { label: "Optimize FPS",     icon: Cpu,        action: "Optimize game loop and rendering for better FPS"  },
 ];
 
 export default function ProjectDetail() {
@@ -408,7 +425,7 @@ export default function ProjectDetail() {
 
           {/* AGENT TAB — chat terminal */}
           {activeTab === 'agent' && (
-            <AgentTerminal projectId={project.id} projectName={project.name} projectStatus={project.status} onBuildComplete={refetch} />
+            <AgentTerminal projectId={project.id} projectName={project.name} projectStatus={project.status} projectType={project.type} onBuildComplete={refetch} />
           )}
         </div>
       </div>
@@ -535,13 +552,16 @@ function getStepsForMessage(text: string): string[] {
 
 /* ── Agent Terminal ── */
 function AgentTerminal({
-  projectId, projectName, projectStatus, onBuildComplete,
+  projectId, projectName, projectStatus, projectType, onBuildComplete,
 }: {
   projectId: string;
   projectName: string;
   projectStatus: string;
+  projectType?: string;
   onBuildComplete?: () => void;
 }) {
+  const [, navigate] = useLocation();
+  const isGame = projectType === "game";
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "agent",
@@ -705,20 +725,50 @@ function AgentTerminal({
         </div>
       )}
 
+      {/* Character Studio widget — game projects only */}
+      {isGame && (
+        <div className="shrink-0 border-b border-primary/20 bg-gradient-to-r from-primary/8 via-primary/5 to-transparent p-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
+              <Sword className="w-5 h-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-primary font-display tracking-wide">Character Studio</p>
+              <p className="text-[10px] text-muted-foreground/70 leading-snug">
+                Create, generate &amp; customize characters for this game — AI art, pixel sprites, uploads &amp; manual editing
+              </p>
+            </div>
+            <button
+              onClick={() => navigate("/characters")}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-primary text-background text-[11px] font-bold rounded hover:brightness-110 transition-all"
+            >
+              <Sword className="w-3 h-3" /> Open Studio
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Quick actions grid */}
       <div className="shrink-0 border-b border-border/40 bg-secondary/10 p-3">
         <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-1.5">
-          <Sparkles className="w-3 h-3 text-primary" /> Quick Actions
+          {isGame
+            ? <><Gamepad2 className="w-3 h-3 text-primary" /> Game Actions</>
+            : <><Sparkles className="w-3 h-3 text-primary" /> Quick Actions</>
+          }
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {QUICK_ACTIONS.map(qa => {
+          {(isGame ? GAME_QUICK_ACTIONS : QUICK_ACTIONS).map(qa => {
             const Icon = qa.icon;
             return (
               <button
                 key={qa.action}
                 disabled={isLoading}
                 onClick={() => sendMessage("", qa.action)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/40 bg-background/40 text-xs text-muted-foreground font-mono hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isGame
+                    ? "border-accent/30 bg-background/40 text-muted-foreground hover:border-accent/60 hover:text-accent hover:bg-accent/5"
+                    : "border-border/40 bg-background/40 text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5"
+                }`}
               >
                 <Icon className="w-3 h-3" />
                 {qa.label}
@@ -726,6 +776,30 @@ function AgentTerminal({
             );
           })}
         </div>
+        {/* Also show standard actions toggle for game projects */}
+        {isGame && (
+          <details className="mt-2">
+            <summary className="text-[9px] text-muted-foreground/40 cursor-pointer hover:text-muted-foreground/70 transition-colors select-none">
+              + show general actions
+            </summary>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {QUICK_ACTIONS.map(qa => {
+                const Icon = qa.icon;
+                return (
+                  <button
+                    key={qa.action}
+                    disabled={isLoading}
+                    onClick={() => sendMessage("", qa.action)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border/30 bg-background/30 text-[11px] text-muted-foreground/60 font-mono hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40"
+                  >
+                    <Icon className="w-3 h-3" />
+                    {qa.label}
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+        )}
       </div>
 
       {/* Messages */}
