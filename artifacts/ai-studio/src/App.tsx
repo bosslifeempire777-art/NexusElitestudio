@@ -17,6 +17,7 @@ import Admin from "@/pages/admin";
 import Settings from "@/pages/settings";
 import Pricing from "@/pages/pricing";
 import NotFound from "@/pages/not-found";
+import Characters from "@/pages/characters";
 
 const queryClient = new QueryClient();
 
@@ -69,6 +70,9 @@ function Router() {
       </Route>
       <Route path="/settings">
         <ProtectedRoute component={Settings} />
+      </Route>
+      <Route path="/characters">
+        <ProtectedRoute component={Characters} />
       </Route>
       <Route path="/pricing" component={Pricing} />
       <Route path="/admin">

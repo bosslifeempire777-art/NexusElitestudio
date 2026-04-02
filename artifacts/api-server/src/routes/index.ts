@@ -10,6 +10,7 @@ import analyticsRouter from "./analytics.js";
 import buildsRouter from "./builds.js";
 import stripeRouter from "./stripe.js";
 import adminRouter from "./admin.js";
+import charactersRouter from "./characters.js";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use("/analytics", analyticsRouter);
 router.use("/builds", buildsRouter);
 router.use("/stripe", stripeRouter);
 router.use("/admin", adminRouter);
+router.use("/characters", charactersRouter);
 
 export default router;

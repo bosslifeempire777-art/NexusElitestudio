@@ -14,16 +14,18 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Crown,
+  Sword,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/projects/new", label: "Project Builder", icon: Code2 },
-  { href: "/agents", label: "Agent Swarm", icon: Bot },
-  { href: "/marketplace", label: "Marketplace", icon: Store },
-  { href: "/pricing", label: "Plans & Pricing", icon: CreditCard },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard",   label: "Dashboard",        icon: LayoutDashboard },
+  { href: "/projects/new",label: "Project Builder",  icon: Code2 },
+  { href: "/characters",  label: "Character Studio",  icon: Sword },
+  { href: "/agents",      label: "Agent Swarm",       icon: Bot },
+  { href: "/marketplace", label: "Marketplace",       icon: Store },
+  { href: "/pricing",     label: "Plans & Pricing",   icon: CreditCard },
+  { href: "/settings",    label: "Settings",          icon: Settings },
 ];
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
