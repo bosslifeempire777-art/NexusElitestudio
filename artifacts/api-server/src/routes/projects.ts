@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { projectsTable } from "@workspace/db/schema";
+import { projectsTable, usersTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { generateProjectCode, generateChatResponse } from "../lib/openrouter.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
+import { getPlanLimits } from "./plans.js";
 
 const router: IRouter = Router();
 
@@ -90,12 +91,50 @@ router.get("/", requireAuth, async (req, res) => {
 
 // Create project
 router.post("/", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
   const { prompt, type, name } = req.body;
 
   if (!prompt || !type || !name) {
     res.status(400).json({ error: "bad_request", message: "prompt, type, name are required" });
     return;
+  }
+
+  // ── Enforce plan limits (skip for admins & VIP) ──
+  if (!isAdmin && !isVip) {
+    const limits = getPlanLimits(userPlan);
+    const user   = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+
+    if (limits.projects !== -1 && (user?.projectCount ?? 0) >= limits.projects) {
+      res.status(402).json({
+        error: "plan_limit",
+        code: "PROJECT_LIMIT",
+        message: `Your ${userPlan} plan allows ${limits.projects} projects. Delete a project or upgrade to create more.`,
+        currentPlan: userPlan,
+        limit: limits.projects,
+        current: user?.projectCount ?? 0,
+      });
+      return;
+    }
+
+    if (limits.buildsPerMonth !== -1 && (user?.buildsThisMonth ?? 0) >= limits.buildsPerMonth) {
+      const overageAllowed = (limits as any).overage === true;
+      res.status(402).json({
+        error: "plan_limit",
+        code: "BUILD_LIMIT",
+        message: overageAllowed
+          ? `You've used all ${limits.buildsPerMonth} builds this month. Additional builds are $${(limits as any).overagePricePerBuild}/each, or upgrade your plan for more included builds.`
+          : `You've used all ${limits.buildsPerMonth} builds this month. Upgrade your plan to build more.`,
+        currentPlan: userPlan,
+        limit: limits.buildsPerMonth,
+        current: user?.buildsThisMonth ?? 0,
+        overageAllowed,
+        overagePricePerBuild: (limits as any).overagePricePerBuild ?? null,
+      });
+      return;
+    }
   }
 
   const framework = inferFramework(type, prompt);
@@ -113,6 +152,11 @@ router.post("/", requireAuth, async (req, res) => {
     userId,
     agentLogs,
   }).returning();
+
+  // Increment project count immediately
+  await db.update(usersTable)
+    .set({ projectCount: (await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) }))!.projectCount + 1 })
+    .where(eq(usersTable.id, userId));
 
   // Generate code asynchronously with streaming logs
   const buildSteps = agentLogs;
@@ -133,6 +177,11 @@ router.post("/", requireAuth, async (req, res) => {
         updatedAt: new Date(),
         agentLogs: finalLogs,
       }).where(eq(projectsTable.id, project.id));
+
+      // Increment builds this month on success
+      await db.update(usersTable)
+        .set({ buildsThisMonth: (await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) }))!.buildsThisMonth + 1 })
+        .where(eq(usersTable.id, userId));
     } catch (err) {
       console.error("Code generation failed:", err);
       completeBuild(project.id);

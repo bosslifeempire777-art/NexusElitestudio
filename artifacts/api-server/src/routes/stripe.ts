@@ -71,13 +71,29 @@ router.get('/products/:productId/prices', async (req, res) => {
 
 /* ── Auth-protected: checkout, portal, subscription ─────────── */
 
+/* ── Stripe price ID lookup from env (set these after creating Stripe products) ── */
+const STRIPE_PRICE_IDS: Record<string, string> = {
+  starter: process.env.STRIPE_PRICE_STARTER || "",
+  pro:     process.env.STRIPE_PRICE_PRO     || "",
+  elite:   process.env.STRIPE_PRICE_ELITE   || "",
+};
+
 router.post('/checkout', requireAuth, async (req, res) => {
   try {
     const userId = req.auth!.userId;
-    const { priceId, planName } = req.body;
+    const { planName } = req.body;
 
-    if (!priceId && !planName) {
-      res.status(400).json({ error: 'priceId or planName is required' });
+    if (!planName) {
+      res.status(400).json({ error: 'planName is required' });
+      return;
+    }
+
+    const priceId = STRIPE_PRICE_IDS[planName];
+    if (!priceId) {
+      res.status(400).json({
+        error: 'stripe_not_configured',
+        message: `Stripe price ID for plan "${planName}" is not configured. Set STRIPE_PRICE_${planName.toUpperCase()} in environment secrets.`,
+      });
       return;
     }
 
