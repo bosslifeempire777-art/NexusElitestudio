@@ -18,7 +18,15 @@ declare global {
 }
 
 function getJwtSecret(): string {
-  return process.env["JWT_SECRET"] || "nexuselite-fallback-secret-change-in-prod";
+  const secret = process.env["JWT_SECRET"];
+  if (!secret) {
+    if (process.env["NODE_ENV"] === "production") {
+      throw new Error("JWT_SECRET environment variable is required in production");
+    }
+    console.warn("[AUTH] WARNING: JWT_SECRET not set — using dev fallback. Set this before deploying.");
+    return "nexuselite-dev-fallback-do-not-use-in-prod";
+  }
+  return secret;
 }
 
 export function signToken(payload: AuthPayload): string {

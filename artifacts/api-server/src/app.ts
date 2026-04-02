@@ -5,6 +5,10 @@ import router from "./routes";
 const app: Express = express();
 
 app.use(cors());
+
+// Stripe webhook MUST receive raw body — register before express.json()
+app.use("/api/stripe/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
