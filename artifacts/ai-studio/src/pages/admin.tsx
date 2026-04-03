@@ -5,9 +5,10 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import {
   Users, Database, DollarSign, Activity, Terminal, Send, Loader2,
   Wrench, AlertTriangle, CheckCircle2, RefreshCw, FileCode2, Cpu,
-  ChevronRight, RotateCcw, ShieldAlert,
+  ChevronRight, RotateCcw, ShieldAlert, Crown, Search, UserCheck, UserX,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import { getToken } from "@/lib/auth";
 
 type RepairMode = "platform" | "project";
 
@@ -26,9 +27,45 @@ function nanoid6() {
   return Math.random().toString(36).slice(2, 8);
 }
 
+async function patchUser(userId: string, payload: Record<string, any>) {
+  const token = getToken();
+  const res = await fetch(`/api/users/${userId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "Failed");
+  return res.json();
+}
+
 export default function Admin() {
   const { data: analytics } = useGetAnalyticsOverview();
-  const { data: users } = useListUsers();
+  const { data: users, refetch: refetchUsers } = useListUsers();
+  const [search, setSearch] = useState("");
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
+
+  const filtered = (users ?? []).filter((u: any) =>
+    u.username?.toLowerCase().includes(search.toLowerCase()) ||
+    u.email?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  async function handlePlanChange(userId: string, plan: string, isVip: boolean) {
+    setActionLoading(userId);
+    setActionMsg(null);
+    try {
+      await patchUser(userId, { plan, isVip });
+      await refetchUsers();
+      setActionMsg({ id: userId, text: isVip ? "VIP granted!" : `Plan set to ${plan}`, ok: true });
+    } catch (e: any) {
+      setActionMsg({ id: userId, text: e.message, ok: false });
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   return (
     <AppLayout>
@@ -84,46 +121,109 @@ export default function Admin() {
           </Card>
         </div>
 
-        {/* Users */}
+        {/* User Management */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-muted-foreground text-sm font-mono">USER DIRECTORY</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-muted-foreground text-sm font-mono flex items-center gap-2">
+              <Crown className="w-4 h-4 text-yellow-400" /> USER MANAGEMENT &amp; VIP ACCESS
+            </CardTitle>
+            <div className="relative w-56">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search username or email…"
+                className="pl-8 h-7 text-xs"
+              />
+            </div>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm font-mono text-left">
                 <thead className="text-xs text-muted-foreground uppercase border-b border-border/50">
                   <tr>
-                    <th className="px-4 py-3">ID / Username</th>
+                    <th className="px-4 py-3">Username</th>
+                    <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Plan</th>
                     <th className="px-4 py-3">Projects</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
+                    <th className="px-4 py-3">Builds</th>
+                    <th className="px-4 py-3 text-right">Access Control</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/30">
-                  {users?.slice(0, 10).map((user) => (
-                    <tr key={user.id} className="hover:bg-secondary/30 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-foreground">{user.username}</div>
-                        <div className="text-[10px] text-muted-foreground">{user.id.substring(0, 8)}…</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={user.plan === 'vip' ? 'accent' : user.plan === 'enterprise' ? 'primary' : 'outline'} className="text-[10px]">
-                          {user.plan}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-primary">{user.projectCount}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-2" /> Active
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button className="text-xs text-muted-foreground hover:text-primary transition-colors uppercase tracking-wider">Inspect</button>
+                  {filtered.map((user: any) => {
+                    const isLoading = actionLoading === user.id;
+                    const msg = actionMsg?.id === user.id ? actionMsg : null;
+                    const isVip = user.isVip || user.plan === "vip";
+                    return (
+                      <tr key={user.id} className="hover:bg-secondary/20 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            {isVip && <Crown className="w-3 h-3 text-yellow-400 shrink-0" />}
+                            <span className={`font-semibold ${isVip ? "text-yellow-400" : "text-foreground"}`}>{user.username}</span>
+                            {user.isAdmin && <Badge variant="outline" className="text-[9px] px-1 py-0 border-destructive/50 text-destructive">ADMIN</Badge>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-xs">{user.email || "—"}</td>
+                        <td className="px-4 py-3">
+                          <Badge
+                            variant={isVip ? "accent" : user.plan === "elite" ? "primary" : "outline"}
+                            className={`text-[10px] uppercase ${isVip ? "border-yellow-400/50 text-yellow-400 bg-yellow-400/10" : ""}`}
+                          >
+                            {user.plan}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-primary">{user.projectCount ?? 0}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{user.buildsThisMonth ?? 0}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {msg && (
+                              <span className={`text-[10px] font-mono ${msg.ok ? "text-green-400" : "text-destructive"}`}>
+                                {msg.text}
+                              </span>
+                            )}
+                            {isLoading ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                            ) : isVip ? (
+                              <button
+                                onClick={() => handlePlanChange(user.id, "free", false)}
+                                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors border border-border/30 rounded px-2 py-1"
+                                title="Revoke VIP"
+                              >
+                                <UserX className="w-3 h-3" /> Revoke VIP
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handlePlanChange(user.id, "vip", true)}
+                                className="flex items-center gap-1 text-[10px] text-yellow-400 hover:text-yellow-300 transition-colors border border-yellow-400/30 rounded px-2 py-1 bg-yellow-400/5 hover:bg-yellow-400/10"
+                                title="Grant VIP — free Elite access"
+                              >
+                                <Crown className="w-3 h-3" /> Grant VIP
+                              </button>
+                            )}
+                            <select
+                              className="text-[10px] font-mono bg-secondary border border-border/40 rounded px-1.5 py-1 text-muted-foreground hover:border-primary/40 transition-colors cursor-pointer"
+                              value={user.plan}
+                              disabled={isLoading}
+                              onChange={e => handlePlanChange(user.id, e.target.value, e.target.value === "vip")}
+                              title="Change plan"
+                            >
+                              {["free","starter","pro","elite","vip"].map(p => (
+                                <option key={p} value={p}>{p.toUpperCase()}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-xs">
+                        No users found{search ? ` matching "${search}"` : ""}
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
