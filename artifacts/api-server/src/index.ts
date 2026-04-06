@@ -1,4 +1,5 @@
 import app from "./app";
+import { ensureAdminAccount } from "./seed-admin.js";
 
 const rawPort = process.env["PORT"];
 
@@ -14,6 +15,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, () => {
+app.listen(port, async () => {
   console.log(`Server listening on port ${port}`);
+  await ensureAdminAccount();
 });
