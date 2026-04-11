@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { apiBase } from "@/lib/api";
+import { apiFetch } from "@/lib/auth";
 import { cn } from "@/components/ui/cyber-ui";
 import {
   Gift, Copy, Check, Users, TrendingUp, Zap, Star,
@@ -19,7 +19,7 @@ interface ReferralStats {
 }
 
 export default function ReferPage() {
-  const { user } = useAuth();
+  useAuth();
   const [data, setData] = useState<ReferralStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -29,10 +29,7 @@ export default function ReferPage() {
   async function load() {
     setLoading(true);
     try {
-      const token = localStorage.getItem("nexus-token");
-      const r = await fetch(`${apiBase}/api/referrals/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const r = await apiFetch("/referrals/me");
       if (r.ok) setData(await r.json());
     } finally {
       setLoading(false);
@@ -53,10 +50,9 @@ export default function ReferPage() {
     setRedeeming(optionId);
     setRedeemMsg(null);
     try {
-      const token = localStorage.getItem("nexus-token");
-      const r = await fetch(`${apiBase}/api/referrals/redeem`, {
+      const r = await apiFetch("/referrals/redeem", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ optionId }),
       });
       const json = await r.json();
