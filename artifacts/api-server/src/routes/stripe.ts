@@ -110,7 +110,10 @@ router.post('/checkout', requireAuth, async (req, res) => {
       customerId = customer.id;
     }
 
-    const domain = process.env.REPLIT_DOMAINS?.split(',')[0] || process.env.REPLIT_DEV_DOMAIN || 'localhost';
+    const domain = process.env.CUSTOM_DOMAIN
+      || process.env.REPLIT_DOMAINS?.split(',')[0]
+      || process.env.REPLIT_DEV_DOMAIN
+      || 'localhost';
     const baseUrl = `https://${domain}`;
 
     const session = await stripeService.createCheckoutSession(
@@ -138,7 +141,10 @@ router.post('/portal', requireAuth, async (req, res) => {
       return;
     }
 
-    const domain = process.env.REPLIT_DOMAINS?.split(',')[0] || process.env.REPLIT_DEV_DOMAIN || 'localhost';
+    const domain = process.env.CUSTOM_DOMAIN
+      || process.env.REPLIT_DOMAINS?.split(',')[0]
+      || process.env.REPLIT_DEV_DOMAIN
+      || 'localhost';
     const session = await stripeService.createCustomerPortalSession(
       customerId,
       `https://${domain}/settings`,
