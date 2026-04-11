@@ -19,7 +19,7 @@ interface AuthContextValue {
   tokenPayload: TokenPayload | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
+  register: (username: string, email: string, password: string, referralCode?: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -71,10 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
   }, []);
 
-  const register = useCallback(async (username: string, email: string, password: string) => {
+  const register = useCallback(async (username: string, email: string, password: string, referralCode?: string) => {
     const res = await apiFetch("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username, email, password }),
+      body: JSON.stringify({ username, email, password, ...(referralCode ? { referralCode } : {}) }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Registration failed");

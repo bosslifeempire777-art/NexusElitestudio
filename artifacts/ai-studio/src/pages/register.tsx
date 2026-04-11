@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
-import { Loader2, UserPlus, Eye, EyeOff } from "lucide-react";
+import { Loader2, UserPlus, Eye, EyeOff, Gift } from "lucide-react";
 
 export default function Register() {
   const { register } = useAuth();
@@ -13,6 +13,16 @@ export default function Register() {
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref") || localStorage.getItem("nexus-ref");
+    if (ref) {
+      setReferralCode(ref);
+      localStorage.setItem("nexus-ref", ref);
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -27,7 +37,8 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await register(username, email, password);
+      await register(username, email, password, referralCode ?? undefined);
+      localStorage.removeItem("nexus-ref");
       navigate("/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");
@@ -61,6 +72,13 @@ export default function Register() {
 
         <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-lg p-8 cyber-clip">
           <h2 className="text-xl font-display font-bold mb-6 text-center">JOIN THE NETWORK</h2>
+
+          {referralCode && (
+            <div className="mb-4 p-3 bg-primary/10 border border-primary/30 rounded text-primary text-sm font-mono flex items-center gap-2">
+              <Gift className="w-4 h-4 shrink-0" />
+              Referred by a friend — you'll both earn credits when you join!
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 p-3 bg-destructive/10 border border-destructive/30 rounded text-destructive text-sm font-mono">

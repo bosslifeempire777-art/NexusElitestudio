@@ -2,8 +2,8 @@ import { Router, type IRouter } from "express";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { db } from "@workspace/db";
-import { projectsTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { projectsTable, referralsTable, creditTransactionsTable, usersTable } from "@workspace/db/schema";
+import { eq, count, sum, desc } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth.js";
 
 const router: IRouter = Router();
@@ -263,6 +263,38 @@ router.get("/files", (_req, res) => {
   }
   for (const p of ALLOWED_PATHS) walk(join(WORKSPACE_ROOT, p), p);
   res.json({ files });
+});
+
+router.get("/referrals", async (_req, res) => {
+  try {
+    const [{ total: totalReferrals }] = await db.select({ total: count() }).from(referralsTable);
+    const [{ total: totalConverted }]  = await db.select({ total: count() }).from(referralsTable)
+      .where(eq(referralsTable.status, "converted"));
+    const [{ total: totalCreditsAwarded }] = await db.select({ total: sum(creditTransactionsTable.amount) })
+      .from(creditTransactionsTable)
+      .where(eq(creditTransactionsTable.type, "referral_signup"));
+
+    const topReferrers = await db.select({
+      username: usersTable.username,
+      creditBalance: usersTable.creditBalance,
+      referralCount: count(referralsTable.id),
+    })
+      .from(usersTable)
+      .leftJoin(referralsTable, eq(referralsTable.referrerId, usersTable.id))
+      .groupBy(usersTable.id, usersTable.username, usersTable.creditBalance)
+      .orderBy(desc(count(referralsTable.id)))
+      .limit(10);
+
+    res.json({
+      totalReferrals: Number(totalReferrals),
+      totalConverted: Number(totalConverted),
+      totalCreditsAwarded: Number(totalCreditsAwarded ?? 0),
+      topReferrers: topReferrers.filter((r: any) => Number(r.referralCount) > 0),
+    });
+  } catch (err) {
+    console.error("Admin referrals error:", err);
+    res.status(500).json({ error: "Failed to load referral stats" });
+  }
 });
 
 export default router;

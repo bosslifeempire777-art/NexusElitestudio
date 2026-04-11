@@ -5,7 +5,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import {
   Users, Database, DollarSign, Activity, Terminal, Send, Loader2,
   Wrench, AlertTriangle, CheckCircle2, RefreshCw, FileCode2, Cpu,
-  ChevronRight, RotateCcw, ShieldAlert, Crown, Search, UserCheck, UserX,
+  ChevronRight, RotateCcw, ShieldAlert, Crown, Search, UserCheck, UserX, Gift,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { getToken } from "@/lib/auth";
@@ -230,10 +230,89 @@ export default function Admin() {
           </CardContent>
         </Card>
 
+        {/* Referral Overview */}
+        <AdminReferrals />
+
         {/* AI Repair Terminal */}
         <RepairTerminal />
       </div>
     </AppLayout>
+  );
+}
+
+function AdminReferrals() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const token = getToken();
+        const r = await fetch("/api/admin/referrals", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) setData(await r.json());
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  return (
+    <Card className="border-border">
+      <CardHeader>
+        <CardTitle className="text-sm font-mono text-muted-foreground flex items-center gap-2">
+          <Gift className="w-4 h-4 text-primary" />
+          REFERRAL PROGRAM OVERVIEW
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
+            <RefreshCw className="w-4 h-4 animate-spin" /> Loading referral data...
+          </div>
+        ) : !data ? (
+          <p className="text-muted-foreground text-sm">No referral data available.</p>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-primary">{data.totalReferrals}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Total Signups</div>
+              </div>
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-green-400">{data.totalConverted}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Paid Conversions</div>
+              </div>
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-yellow-400">{data.totalCreditsAwarded.toLocaleString()}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Credits Awarded</div>
+              </div>
+            </div>
+            {data.topReferrers?.length > 0 && (
+              <div>
+                <p className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-2">Top Referrers</p>
+                <div className="space-y-2">
+                  {data.topReferrers.map((r: any, i: number) => (
+                    <div key={r.username} className="flex items-center justify-between py-2 border-b border-border/30 last:border-0 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground font-mono w-5">#{i + 1}</span>
+                        <span className="font-medium">{r.username}</span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
+                        <span>{r.referralCount} signups</span>
+                        <span className="text-yellow-400">{r.creditBalance} credits</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

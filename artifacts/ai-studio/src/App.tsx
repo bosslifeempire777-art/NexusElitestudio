@@ -18,6 +18,7 @@ import Settings from "@/pages/settings";
 import Pricing from "@/pages/pricing";
 import NotFound from "@/pages/not-found";
 import Characters from "@/pages/characters";
+import Refer from "@/pages/refer";
 
 const queryClient = new QueryClient();
 
@@ -73,6 +74,9 @@ function Router() {
       </Route>
       <Route path="/characters">
         <ProtectedRoute component={Characters} />
+      </Route>
+      <Route path="/refer">
+        <ProtectedRoute component={Refer} />
       </Route>
       <Route path="/pricing" component={Pricing} />
       <Route path="/admin">

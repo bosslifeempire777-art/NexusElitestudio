@@ -1,12 +1,14 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db/schema";
+import { usersTable, referralsTable, creditTransactionsTable } from "@workspace/db/schema";
 import { eq, or } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { signToken, requireAuth } from "../middleware/auth.js";
 
 const router: IRouter = Router();
+
+const SIGNUP_CREDIT = 50;
 
 function userResponse(user: typeof usersTable.$inferSelect) {
   return {
@@ -18,15 +20,17 @@ function userResponse(user: typeof usersTable.$inferSelect) {
     isVip: user.isVip,
     projectCount: user.projectCount,
     buildsThisMonth: user.buildsThisMonth,
+    creditBalance: user.creditBalance ?? 0,
     createdAt: user.createdAt.toISOString(),
   };
 }
 
 router.post("/register", async (req, res) => {
-  const { username, email, password } = req.body as {
+  const { username, email, password, referralCode } = req.body as {
     username?: string;
     email?: string;
     password?: string;
+    referralCode?: string;
   };
 
   if (!username || !email || !password) {
@@ -58,6 +62,41 @@ router.post("/register", async (req, res) => {
     isAdmin: false,
     isVip: false,
   }).returning();
+
+  // Handle referral
+  if (referralCode) {
+    try {
+      const referrer = await db.query.usersTable.findFirst({
+        where: eq(usersTable.referralCode, referralCode),
+      });
+
+      if (referrer && referrer.id !== user.id) {
+        // Create referral record
+        await db.insert(referralsTable).values({
+          id:         nanoid(),
+          referrerId: referrer.id,
+          referredId: user.id,
+          status:     "pending",
+        });
+
+        // Award signup credits to referrer
+        await db.update(usersTable).set({
+          creditBalance: (referrer.creditBalance ?? 0) + SIGNUP_CREDIT,
+          updatedAt: new Date(),
+        }).where(eq(usersTable.id, referrer.id));
+
+        await db.insert(creditTransactionsTable).values({
+          id:          nanoid(),
+          userId:      referrer.id,
+          amount:      SIGNUP_CREDIT,
+          type:        "referral_signup",
+          description: `${username} signed up using your referral link`,
+        });
+      }
+    } catch (err) {
+      console.error("Referral signup error (non-fatal):", err);
+    }
+  }
 
   const token = signToken({
     userId: user.id,

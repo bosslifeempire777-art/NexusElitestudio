@@ -14,6 +14,8 @@ export const usersTable = pgTable("users", {
   buildsThisMonth: integer("builds_this_month").notNull().default(0),
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
+  referralCode: text("referral_code").unique(),
+  creditBalance: integer("credit_balance").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
