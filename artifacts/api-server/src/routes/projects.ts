@@ -167,26 +167,37 @@ router.post("/", requireAuth, async (req, res) => {
         buildSteps,
         () => generateProjectCode(type, name, prompt),
       );
-      const finalLogs = [...buildSteps,
-        `[Code Generator] ✅ Generated ${generatedCode.length.toLocaleString()} bytes`,
-        `[Orchestrator] 🎉 Project generation complete!`,
+      const hasCode = generatedCode && generatedCode.length > 100;
+      const finalLogs = [
+        ...buildSteps,
+        hasCode
+          ? `[Code Generator] ✅ Generated ${generatedCode.length.toLocaleString()} bytes`
+          : `[Orchestrator] ⚠️ Generation incomplete — click Rebuild to try again`,
+        `[Orchestrator] ${hasCode ? "🎉 Project generation complete!" : "⚠️ Build finished with warnings"}`,
       ];
       await db.update(projectsTable).set({
-        status: "ready",
-        generatedCode,
+        status: hasCode ? "ready" : "failed",
+        generatedCode: hasCode ? generatedCode : null,
         updatedAt: new Date(),
         agentLogs: finalLogs,
       }).where(eq(projectsTable.id, project.id));
 
-      // Increment builds this month on success
-      await db.update(usersTable)
-        .set({ buildsThisMonth: (await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) }))!.buildsThisMonth + 1 })
-        .where(eq(usersTable.id, userId));
+      if (hasCode) {
+        // Increment builds this month on success
+        const freshUser = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+        await db.update(usersTable)
+          .set({ buildsThisMonth: (freshUser?.buildsThisMonth ?? 0) + 1 })
+          .where(eq(usersTable.id, userId));
+      }
     } catch (err) {
-      console.error("Code generation failed:", err);
+      console.error("Code generation failed (unexpected):", err);
       completeBuild(project.id);
       await db.update(projectsTable)
-        .set({ status: "ready", updatedAt: new Date() })
+        .set({
+          status: "failed",
+          agentLogs: [...agentLogs, "[Orchestrator] ❌ Unexpected error — please click Rebuild to try again"],
+          updatedAt: new Date(),
+        })
         .where(eq(projectsTable.id, project.id));
     }
   });
@@ -321,18 +332,31 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
         newLogs,
         () => generateProjectCode(pType, pName, pPrompt),
       );
-      const finalLogs = [...newLogs,
-        `[Code Generator] ✅ Rebuilt ${generatedCode.length.toLocaleString()} bytes`,
-        `[Orchestrator] 🎉 Rebuild complete!`,
+      const hasCode = generatedCode && generatedCode.length > 100;
+      const finalLogs = [
+        ...newLogs,
+        hasCode
+          ? `[Code Generator] ✅ Rebuilt ${generatedCode.length.toLocaleString()} bytes`
+          : `[Orchestrator] ⚠️ Generation incomplete — click Rebuild to try again`,
+        `[Orchestrator] ${hasCode ? "🎉 Rebuild complete!" : "⚠️ Rebuild finished with warnings"}`,
       ];
       await db.update(projectsTable)
-        .set({ status: "ready", generatedCode, agentLogs: finalLogs, updatedAt: new Date() })
+        .set({
+          status: hasCode ? "ready" : "failed",
+          generatedCode: hasCode ? generatedCode : null,
+          agentLogs: finalLogs,
+          updatedAt: new Date(),
+        })
         .where(eq(projectsTable.id, project.id));
     } catch (err) {
-      console.error("Rebuild failed:", err);
+      console.error("Rebuild failed (unexpected):", err);
       completeBuild(project.id);
       await db.update(projectsTable)
-        .set({ status: "error", updatedAt: new Date() })
+        .set({
+          status: "failed",
+          agentLogs: [...newLogs, "[Orchestrator] ❌ Unexpected error — please click Rebuild to try again"],
+          updatedAt: new Date(),
+        })
         .where(eq(projectsTable.id, project.id));
     }
   });

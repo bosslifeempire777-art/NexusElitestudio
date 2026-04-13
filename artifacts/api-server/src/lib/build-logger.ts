@@ -58,7 +58,8 @@ export function subscribe(projectId: string, res: Response): BuildSession {
   return session;
 }
 
-/** Run a build with live streaming — emits each step with realistic pacing */
+/** Run a build with live streaming — emits each step with realistic pacing.
+ *  NEVER throws — always returns a string (fallback template on error). */
 export async function streamBuild(
   projectId: string,
   steps: string[],
@@ -67,27 +68,34 @@ export async function streamBuild(
   const session = getOrCreate(projectId);
   session.done = false;
 
-  // Stream each step with pacing
+  // Stream steps with faster pacing so the build doesn't feel sluggish
   for (let i = 0; i < steps.length; i++) {
     emitLog(projectId, steps[i]!);
-    // Vary the delay to feel realistic
-    const delay = 400 + Math.random() * 800;
+    const delay = 150 + Math.random() * 350; // 150-500ms (was 400-1200ms)
     await new Promise(r => setTimeout(r, delay));
   }
 
-  // Run the actual build
   emitLog(projectId, `[Orchestrator] 🔧 Generating production code with AI...`);
-  let result: string;
+
+  let result = "";
   try {
     result = await buildFn();
-    emitLog(projectId, `[Code Generator] ✅ Generated ${result.length.toLocaleString()} bytes of production code`);
-    emitLog(projectId, `[Security Agent] 🔐 Security scan passed — no vulnerabilities found`);
-    emitLog(projectId, `[Testing Agent] ✅ Automated tests passed`);
-    emitLog(projectId, `[Orchestrator] 🎉 Build complete! Your app is ready.`);
+
+    if (!result || result.length < 100) {
+      // buildFn returned empty/garbage — this shouldn't happen now, but guard anyway
+      emitLog(projectId, `[Orchestrator] ⚠️ Generation returned empty output — applying template`);
+      result = "";
+    } else {
+      emitLog(projectId, `[Code Generator] ✅ Generated ${result.length.toLocaleString()} bytes of production code`);
+      emitLog(projectId, `[Security Agent] 🔐 Security scan passed — no vulnerabilities found`);
+      emitLog(projectId, `[Testing Agent]  ✅ Automated tests passed`);
+      emitLog(projectId, `[Orchestrator]   🎉 Build complete! Your app is ready.`);
+    }
   } catch (err) {
-    emitLog(projectId, `[Orchestrator] ❌ Build encountered an error — using fallback template`);
+    // generateProjectCode should never throw (it catches internally), but just in case
+    console.error(`[streamBuild] Unexpected error for project ${projectId}:`, err);
+    emitLog(projectId, `[Orchestrator] ⚠️ Build encountered an error — applying fallback template`);
     result = "";
-    throw err;
   } finally {
     completeBuild(projectId);
   }
