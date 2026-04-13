@@ -276,7 +276,7 @@ function AdminReferrals() {
           <p className="text-muted-foreground text-sm">No referral data available.</p>
         ) : (
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
                 <div className="text-2xl font-display font-bold text-primary">{data.totalReferrals}</div>
                 <div className="text-xs font-mono text-muted-foreground mt-1">Total Signups</div>

@@ -334,7 +334,7 @@ export default function Characters() {
   /* ═══════════════════ RENDER ═══════════════════ */
   return (
     <AppLayout>
-      <div className="flex flex-col h-[calc(100vh-6rem)] -m-6 font-mono">
+      <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-4rem)] -m-4 md:-m-6 font-mono">
 
         {/* ── Top bar ── */}
         <div className="h-12 border-b border-border/50 bg-secondary/30 flex items-center px-4 gap-3 shrink-0">
@@ -369,7 +369,7 @@ export default function Characters() {
         <div className="flex flex-1 overflow-hidden">
 
           {/* ══ LEFT: Character Library ══ */}
-          <aside className="w-52 border-r border-border/50 bg-background/50 flex flex-col shrink-0 overflow-hidden">
+          <aside className="w-52 border-r border-border/50 bg-background/50 hidden md:flex flex-col shrink-0 overflow-hidden">
             <div className="px-3 py-2.5 border-b border-border/40 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-primary" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Library</span>
@@ -565,7 +565,7 @@ export default function Characters() {
           </div>
 
           {/* ══ RIGHT: Tools Panel ══ */}
-          <aside className="w-80 border-l border-border/50 bg-background/50 flex flex-col shrink-0 overflow-hidden">
+          <aside className="w-80 border-l border-border/50 bg-background/50 hidden md:flex flex-col shrink-0 overflow-hidden">
 
             {/* Tab selector */}
             <div className="grid grid-cols-4 border-b border-border/40 shrink-0">

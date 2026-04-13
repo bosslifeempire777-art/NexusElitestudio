@@ -230,7 +230,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <div className="flex flex-col h-[calc(100vh-6rem)] -m-6">
+      <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-4rem)] -m-4 md:-m-6">
 
         {/* ── Top Header ── */}
         <div className="border-b border-border/50 bg-secondary/30 px-4 py-2 shrink-0 flex flex-col gap-2">
@@ -344,7 +344,7 @@ export default function ProjectDetail() {
           {/* CODE TAB — 3-pane */}
           {activeTab === 'editor' && (
             <>
-              <div className="w-52 border-r border-border/50 bg-background/50 flex flex-col shrink-0">
+              <div className="w-52 border-r border-border/50 bg-background/50 hidden md:flex flex-col shrink-0">
                 <div className="p-2 border-b border-border/30 text-xs font-mono text-muted-foreground uppercase tracking-wider flex items-center">
                   <Folder className="w-3 h-3 mr-2 text-primary" /> Explorer
                 </div>
@@ -373,7 +373,7 @@ export default function ProjectDetail() {
                 />
               </div>
 
-              <div className="w-72 border-l border-border/50 bg-background/50 flex flex-col shrink-0">
+              <div className="w-72 border-l border-border/50 bg-background/50 hidden md:flex flex-col shrink-0">
                 <LogsPanel logs={logs} isBuilding={project.status === 'building'} />
               </div>
             </>
@@ -410,7 +410,7 @@ export default function ProjectDetail() {
 
               {/* Slide-in Swarm Logs */}
               {logsOpen && (
-                <div className="w-72 border-l border-border/50 bg-background/95 flex flex-col shrink-0 z-10 shadow-2xl">
+                <div className="fixed inset-0 md:static md:inset-auto md:w-72 border-l border-border/50 bg-background/95 flex flex-col shrink-0 z-20 shadow-2xl">
                   <div className="p-2 border-b border-border/30 flex items-center justify-between">
                     <span className="text-xs font-mono text-accent uppercase tracking-wider flex items-center gap-1.5">
                       <Terminal className="w-3 h-3" /> Swarm Logs
@@ -939,6 +939,7 @@ function DeviceFrame({
         className="relative flex-shrink-0 rounded-[2rem] overflow-hidden shadow-2xl"
         style={{
           width: Math.min(device.width, 600),
+          maxWidth: 'calc(100% - 2rem)',
           border: isPhone  ? '6px solid #1e1e2e' :
                   isTablet ? '8px solid #1e1e2e' :
                              '2px solid #2d2d4e',
