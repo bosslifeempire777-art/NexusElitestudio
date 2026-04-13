@@ -62,7 +62,11 @@ function generateAgentLogs(type: string, name: string): string[] {
 }
 
 function getBaseUrl(): string {
-  const domain = process.env["REPLIT_DEV_DOMAIN"] || process.env["REPLIT_DOMAINS"]?.split(",")[0];
+  // Prefer custom domain (e.g. nexuselitestudio.nexus) so deployed project URLs are on the branded domain
+  const domain =
+    process.env["CUSTOM_DOMAIN"] ||
+    process.env["REPLIT_DOMAINS"]?.split(",")[0] ||
+    process.env["REPLIT_DEV_DOMAIN"];
   if (domain) return `https://${domain}`;
   return "http://localhost:8080";
 }

@@ -59,7 +59,10 @@ export default function Pricing() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Checkout failed");
-      if (data.url) window.location.href = data.url;
+      if (data.url) {
+        // Open Stripe checkout in a new tab — works from both iframe previews and direct browser visits
+        window.open(data.url, "_blank", "noopener,noreferrer");
+      }
     } catch (err: any) {
       setCheckoutError(err.message || "Something went wrong. Please try again.");
     } finally {

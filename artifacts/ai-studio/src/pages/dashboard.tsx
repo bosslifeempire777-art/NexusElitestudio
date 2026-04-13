@@ -2,9 +2,10 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge } from "@/components/ui/cyber-ui";
 import { useListProjects, useGetUserAnalytics } from "@workspace/api-client-react";
 import { Link, useLocation } from "wouter";
-import { Plus, Terminal, Activity, Zap, Database, AlertTriangle } from "lucide-react";
+import { Plus, Terminal, Activity, Zap, Database, AlertTriangle, CheckCircle } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
+import { useEffect, useState } from "react";
 
 const PLAN_LIMITS: Record<string, { builds: number; projects: number; deployments: number }> = {
   free:    { builds: 3,  projects: 2,  deployments: 0 },
@@ -19,6 +20,27 @@ export default function Dashboard() {
   const { data: analytics } = useGetUserAnalytics();
   const { user } = useAuth();
   const [, navigate] = useLocation();
+
+  const [upgradeSuccess, setUpgradeSuccess] = useState(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("upgrade") === "success";
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (upgradeSuccess) {
+      const timer = setTimeout(() => {
+        setUpgradeSuccess(false);
+        // Remove query param from URL without refresh
+        const url = new URL(window.location.href);
+        url.searchParams.delete("upgrade");
+        window.history.replaceState({}, "", url.toString());
+      }, 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [upgradeSuccess]);
 
   const planLimits = PLAN_LIMITS[user?.plan ?? "free"] ?? PLAN_LIMITS.free;
   const isLimitedPlan = user?.plan === "free" || user?.plan === "starter";
@@ -54,6 +76,17 @@ export default function Dashboard() {
             <Link href="/projects/new"><Plus className="w-4 h-4 mr-2"/> New Construct</Link>
           </Button>
         </div>
+
+        {/* Upgrade Success Banner */}
+        {upgradeSuccess && (
+          <div className="flex items-center gap-3 px-5 py-4 bg-green-500/10 border border-green-500/40 rounded-lg">
+            <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />
+            <div>
+              <p className="text-sm font-mono font-bold text-green-400">Plan Upgraded Successfully!</p>
+              <p className="text-xs font-mono text-muted-foreground mt-0.5">Your new plan is active. You now have access to more builds, projects, and deployments.</p>
+            </div>
+          </div>
+        )}
 
         {/* Stats Row */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
