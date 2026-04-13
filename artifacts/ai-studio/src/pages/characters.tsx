@@ -155,7 +155,10 @@ export default function Characters() {
 
   useEffect(() => {
     if (currentImageUrl) {
-      setImageLoading(true);
+      // Data URLs load instantly — don't set imageLoading or onLoad will have already fired
+      if (!currentImageUrl.startsWith("data:")) {
+        setImageLoading(true);
+      }
       drawToCanvas(currentImageUrl);
     }
   }, [currentImageUrl]);
@@ -207,9 +210,17 @@ export default function Characters() {
 
   /* ── AI Modify ── */
   async function aiEdit() {
-    if (!editPrompt.trim() || !currentImageUrl) return;
+    if (!editPrompt.trim()) return;
     setEditLoading(true);
-    const newPrompt = `${prompt}. ${editPrompt}`;
+    // If the current image was uploaded (data URL), there's no AI prompt to build on —
+    // use the edit prompt alone as the character description.
+    // If it was AI-generated, combine the original prompt with the modification.
+    const isUploaded = currentImageUrl?.startsWith("data:");
+    const newPrompt = isUploaded
+      ? editPrompt.trim()
+      : prompt
+        ? `${prompt}, ${editPrompt.trim()}`
+        : editPrompt.trim();
     const { url } = buildPollinationsUrl(newPrompt, style);
     setPrompt(newPrompt);
     setCurrentImageUrl(url);
@@ -224,8 +235,13 @@ export default function Characters() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
+      // Clear any existing prompt — data URLs load instantly so we must NOT
+      // rely on useEffect setting imageLoading, and we don't want "uploaded image"
+      // as the prompt since it breaks AI Edit.
+      setImageLoading(false);
       setCurrentImageUrl(dataUrl);
-      setPrompt("uploaded image");
+      setPrompt(""); // Keep blank so AI Edit uses the user's own description
+      setActivePanel("adjust"); // Switch to Adjust panel automatically so the image is visible
     };
     reader.readAsDataURL(file);
   }
@@ -498,7 +514,7 @@ export default function Characters() {
                 </div>
               )}
 
-              {imageLoading && (
+              {imageLoading && !currentImageUrl?.startsWith("data:") && (
                 <div className="absolute inset-0 flex items-center justify-center z-20 bg-[#06060f]/80 backdrop-blur-sm">
                   <div className="text-center">
                     <Loader2 className="w-10 h-10 animate-spin text-primary mx-auto mb-3" />
@@ -781,10 +797,17 @@ export default function Characters() {
               {/* ── AI EDIT TAB ── */}
               {activePanel === "edit" && (
                 <div className="p-4 space-y-4">
-                  <div className="bg-primary/5 border border-primary/20 rounded p-3">
-                    <p className="text-[10px] text-primary/80 font-bold mb-1">AI Modification</p>
-                    <p className="text-[10px] text-muted-foreground/70">Describe what to change. The AI will regenerate the character with your modifications applied on top of the original concept.</p>
-                  </div>
+                  {currentImageUrl?.startsWith("data:") ? (
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-3">
+                      <p className="text-[10px] text-yellow-400 font-bold mb-1">📸 Uploaded Image Mode</p>
+                      <p className="text-[10px] text-muted-foreground/70">Describe the character you want to generate — the AI will create a new version based on your description. Use the brush tools above to paint directly on your uploaded image.</p>
+                    </div>
+                  ) : (
+                    <div className="bg-primary/5 border border-primary/20 rounded p-3">
+                      <p className="text-[10px] text-primary/80 font-bold mb-1">AI Modification</p>
+                      <p className="text-[10px] text-muted-foreground/70">Describe what to change. The AI will regenerate the character with your modifications applied on top of the original concept.</p>
+                    </div>
+                  )}
 
                   {!currentImageUrl && (
                     <div className="text-center py-6 text-muted-foreground/50 text-xs">
@@ -800,7 +823,9 @@ export default function Characters() {
                           value={editPrompt}
                           onChange={e => setEditPrompt(e.target.value)}
                           rows={4}
-                          placeholder={`e.g. "give her a red cloak and fire sword" or "make him look older with a beard"`}
+                          placeholder={currentImageUrl?.startsWith("data:")
+                            ? `Describe the character to generate, e.g. "fierce female warrior with silver armor and glowing blue eyes"`
+                            : `e.g. "give her a red cloak and fire sword" or "make him look older with a beard"`}
                           className="w-full bg-secondary/20 border border-border/50 rounded px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary/50 resize-none"
                         />
                       </div>
@@ -832,7 +857,11 @@ export default function Characters() {
                         className="w-full flex items-center justify-center gap-2 py-2.5 bg-primary text-background text-sm font-bold rounded hover:brightness-110 transition-all disabled:opacity-40"
                       >
                         {editLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                        {editLoading ? "Modifying…" : "Apply AI Modification"}
+                        {editLoading
+                          ? "Generating…"
+                          : currentImageUrl?.startsWith("data:")
+                            ? "Generate AI Character"
+                            : "Apply AI Modification"}
                       </button>
                     </>
                   )}
