@@ -2,13 +2,33 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge } from "@/components/ui/cyber-ui";
 import { useListProjects, useGetUserAnalytics } from "@workspace/api-client-react";
 import { Link, useLocation } from "wouter";
-import { Plus, Terminal, Activity, Zap, Database } from "lucide-react";
+import { Plus, Terminal, Activity, Zap, Database, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
+import { useAuth } from "@/context/AuthContext";
+
+const PLAN_LIMITS: Record<string, { builds: number; projects: number; deployments: number }> = {
+  free:    { builds: 3,  projects: 2,  deployments: 0 },
+  starter: { builds: 20, projects: 10, deployments: -1 },
+  pro:     { builds: 75, projects: -1, deployments: -1 },
+  elite:   { builds: -1, projects: -1, deployments: -1 },
+  vip:     { builds: -1, projects: -1, deployments: -1 },
+};
 
 export default function Dashboard() {
   const { data: projects, isLoading: projectsLoading } = useListProjects();
   const { data: analytics } = useGetUserAnalytics();
+  const { user } = useAuth();
   const [, navigate] = useLocation();
+
+  const planLimits = PLAN_LIMITS[user?.plan ?? "free"] ?? PLAN_LIMITS.free;
+  const isLimitedPlan = user?.plan === "free" || user?.plan === "starter";
+  const buildsUsed   = user?.buildsThisMonth ?? 0;
+  const projectsUsed = user?.projectCount ?? 0;
+  const buildsLimit   = planLimits.builds;
+  const projectsLimit = planLimits.projects;
+  const buildsNearLimit   = buildsLimit > 0 && buildsUsed >= Math.floor(buildsLimit * 0.8);
+  const projectsNearLimit = projectsLimit > 0 && projectsUsed >= Math.floor(projectsLimit * 0.8);
+  const showUsageBanner   = isLimitedPlan && !user?.isAdmin && !user?.isVip;
 
   const getStatusColor = (status: string) => {
     switch(status) {
@@ -42,6 +62,64 @@ export default function Dashboard() {
           <StatCard title="Total Deployments" value={analytics?.totalDeployments || 0} icon={Zap} color="text-green-400" />
           <StatCard title="AI Tokens Used" value={analytics?.aiTokensUsed?.toLocaleString() || 0} icon={Terminal} color="text-muted-foreground" />
         </div>
+
+        {/* Plan Usage Banner — shown only for limited plans */}
+        {showUsageBanner && (
+          <Card className={`border ${(buildsNearLimit || projectsNearLimit) ? 'border-yellow-500/50 bg-yellow-500/5' : 'border-border/40 bg-secondary/20'}`}>
+            <CardContent className="p-5">
+              <div className="flex flex-col md:flex-row md:items-center gap-4">
+                <div className="flex-1 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    {(buildsNearLimit || projectsNearLimit) && <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0" />}
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+                      Plan Usage · <span className="text-primary font-bold capitalize">{user?.plan} Plan</span>
+                      {planLimits.deployments === 0 && <span className="ml-2 text-yellow-400">· No Deployments</span>}
+                    </p>
+                  </div>
+                  {/* Builds bar */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-mono text-muted-foreground">
+                      <span>Builds this month</span>
+                      <span className={buildsNearLimit ? 'text-yellow-400 font-bold' : ''}>
+                        {buildsUsed} / {buildsLimit > 0 ? buildsLimit : '∞'}
+                      </span>
+                    </div>
+                    {buildsLimit > 0 && (
+                      <div className="w-full bg-secondary rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${buildsUsed >= buildsLimit ? 'bg-red-500' : buildsNearLimit ? 'bg-yellow-400' : 'bg-primary'}`}
+                          style={{ width: `${Math.min(100, (buildsUsed / buildsLimit) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  {/* Projects bar */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs font-mono text-muted-foreground">
+                      <span>Projects</span>
+                      <span className={projectsNearLimit ? 'text-yellow-400 font-bold' : ''}>
+                        {projectsUsed} / {projectsLimit > 0 ? projectsLimit : '∞'}
+                      </span>
+                    </div>
+                    {projectsLimit > 0 && (
+                      <div className="w-full bg-secondary rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${projectsUsed >= projectsLimit ? 'bg-red-500' : projectsNearLimit ? 'bg-yellow-400' : 'bg-primary'}`}
+                          style={{ width: `${Math.min(100, (projectsUsed / projectsLimit) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  <Button asChild size="sm" className="glow-primary-hover">
+                    <Link href="/pricing"><Zap className="w-3.5 h-3.5 mr-1.5" />Upgrade Plan</Link>
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Projects Grid */}
         <div className="space-y-4">

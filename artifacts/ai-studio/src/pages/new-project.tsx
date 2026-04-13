@@ -5,6 +5,7 @@ import { Card, CardContent, Button, Input, Textarea, Badge } from "@/components/
 import { useCreateProject, CreateProjectRequestType } from "@workspace/api-client-react";
 import { Bot, Code2, Smartphone, Cloud, Cpu, Gamepad2, Settings2, PlaySquare, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 
 const projectTypes = [
   { id: 'saas', label: 'SaaS Platform', icon: Cloud, desc: 'Full-stack web application with auth & db' },
@@ -44,7 +45,21 @@ export default function NewProject() {
           setLocation(`/projects/${data.id}`);
         },
         onError: (err: any) => {
-          toast({ title: "Initialization Failed", description: err.message || "Unknown error", variant: "destructive" });
+          if (err?.status === 402) {
+            const apiMessage = (err?.data as any)?.message || "Upgrade your plan to create more projects.";
+            toast({
+              title: "Plan Limit Reached",
+              description: (
+                <span>
+                  {apiMessage}{" "}
+                  <Link href="/pricing" className="underline font-bold text-primary">View Plans →</Link>
+                </span>
+              ) as any,
+              variant: "destructive",
+            });
+          } else {
+            toast({ title: "Initialization Failed", description: err.message || "Unknown error", variant: "destructive" });
+          }
         }
       }
     );

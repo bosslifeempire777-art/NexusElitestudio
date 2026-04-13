@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { getToken } from "@/lib/auth";
+import { useAuth } from "@/context/AuthContext";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 
@@ -61,6 +62,7 @@ const GAME_QUICK_ACTIONS = [
 
 export default function ProjectDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const { data: project, isLoading, isError, error, refetch } = useGetProject(id || "", {
@@ -88,6 +90,8 @@ export default function ProjectDetail() {
   const [isDeploying, setIsDeploying]   = useState(false);
   const [deployedUrl, setDeployedUrl]   = useState<string | null>(null);
   const [showDeployModal, setShowDeployModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeMessage, setUpgradeMessage]     = useState("");
   const [urlCopied, setUrlCopied]       = useState(false);
 
   function authHeaders(): Record<string, string> {
@@ -99,7 +103,12 @@ export default function ProjectDetail() {
     if (!id || isRebuilding) return;
     setIsRebuilding(true);
     try {
-      await fetch(`/api/projects/${id}/rebuild`, { method: "POST", headers: authHeaders() });
+      const res = await fetch(`/api/projects/${id}/rebuild`, { method: "POST", headers: authHeaders() });
+      if (res.status === 402) {
+        const data = await res.json();
+        setUpgradeMessage(data.message || "Upgrade your plan to rebuild projects.");
+        setShowUpgradeModal(true);
+      }
     } finally {
       setIsRebuilding(false);
     }
@@ -107,11 +116,22 @@ export default function ProjectDetail() {
 
   const deploy = useCallback(async () => {
     if (!id || isDeploying) return;
+
+    // Pre-flight: free plan users can't deploy — show upgrade modal immediately
+    if (user && user.plan === "free" && !user.isAdmin && !user.isVip) {
+      setUpgradeMessage("Deployments are not available on the Free plan. Upgrade to Starter or higher to make your apps publicly accessible.");
+      setShowUpgradeModal(true);
+      return;
+    }
+
     setIsDeploying(true);
     try {
       const res = await fetch(`/api/projects/${id}/deploy`, { method: "POST", headers: authHeaders() });
       const data = await res.json();
-      if (res.ok && data.deployedUrl) {
+      if (res.status === 402) {
+        setUpgradeMessage(data.message || "Upgrade your plan to deploy projects.");
+        setShowUpgradeModal(true);
+      } else if (res.ok && data.deployedUrl) {
         setDeployedUrl(data.deployedUrl);
         setShowDeployModal(true);
       }
@@ -120,7 +140,7 @@ export default function ProjectDetail() {
     } finally {
       setIsDeploying(false);
     }
-  }, [id, isDeploying]);
+  }, [id, isDeploying, user]);
 
   const copyUrl = useCallback(() => {
     if (!deployedUrl) return;
@@ -226,6 +246,45 @@ export default function ProjectDetail() {
             <p className="text-xs text-muted-foreground/40 font-mono mt-4 text-center">
               For a custom domain, deploy to production from the top menu.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Upgrade / Paywall Modal ── */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md mx-4 bg-card border border-primary/40 rounded-lg p-6 shadow-2xl cyber-clip">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Rocket className="w-5 h-5 text-primary" />
+                <h3 className="font-display font-bold text-lg text-primary">UPGRADE REQUIRED</h3>
+              </div>
+              <button onClick={() => setShowUpgradeModal(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground font-mono mb-6 leading-relaxed">
+              {upgradeMessage}
+            </p>
+            <div className="bg-primary/5 border border-primary/20 rounded p-4 mb-6 space-y-2">
+              <p className="text-xs font-mono text-primary font-bold uppercase tracking-wider mb-3">What you unlock with Starter ($29/mo):</p>
+              {["Deploy apps publicly with a live URL", "20 builds per month", "10 concurrent projects", "All 21 AI agents", "Full deployment & custom domains"].map(f => (
+                <div key={f} className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
+                  <Check className="w-3.5 h-3.5 text-primary shrink-0" />
+                  {f}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <a href="/pricing" className="flex-1">
+                <button className="w-full flex items-center justify-center gap-2 py-2.5 bg-primary text-primary-foreground text-sm font-mono font-bold rounded hover:opacity-90 transition-opacity glow-primary-hover">
+                  <Zap className="w-4 h-4" /> View Plans & Upgrade
+                </button>
+              </a>
+              <button onClick={() => setShowUpgradeModal(false)} className="flex-1 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-border transition-colors">
+                Maybe Later
+              </button>
+            </div>
           </div>
         </div>
       )}

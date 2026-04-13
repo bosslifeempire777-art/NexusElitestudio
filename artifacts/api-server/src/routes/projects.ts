@@ -305,8 +305,27 @@ router.get("/:id/source", requireAuth, async (req, res) => {
 
 // Rebuild project
 router.post("/:id/rebuild", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
-  const isAdmin = req.auth!.isAdmin;
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  // ── Enforce monthly build limit (skip for admins & VIP) ──
+  if (!isAdmin && !isVip) {
+    const limits = getPlanLimits(userPlan);
+    const user   = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+    if (limits.buildsPerMonth !== -1 && (user?.buildsThisMonth ?? 0) >= limits.buildsPerMonth) {
+      res.status(402).json({
+        error: "plan_limit",
+        code: "BUILD_LIMIT",
+        message: `You've used all ${limits.buildsPerMonth} builds this month on the ${userPlan} plan. Upgrade for more builds.`,
+        currentPlan: userPlan,
+        limit: limits.buildsPerMonth,
+        current: user?.buildsThisMonth ?? 0,
+      });
+      return;
+    }
+  }
 
   const project = isAdmin
     ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
@@ -411,8 +430,24 @@ router.get("/:id/build-stream", async (req, res) => {
 
 // Deploy project — sets status to deployed and generates a shareable URL
 router.post("/:id/deploy", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
+  const userId  = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
+  const isVip   = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  // ── Enforce deployment plan limit (skip for admins & VIP) ──
+  if (!isAdmin && !isVip) {
+    const limits = getPlanLimits(userPlan);
+    if (limits.deployments === 0) {
+      res.status(402).json({
+        error: "plan_limit",
+        code: "DEPLOY_NOT_ALLOWED",
+        message: `Deployments are not available on the ${userPlan} plan. Upgrade to Starter or higher to deploy your apps.`,
+        currentPlan: userPlan,
+      });
+      return;
+    }
+  }
 
   const project = isAdmin
     ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
