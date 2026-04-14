@@ -2,6 +2,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/cyber-ui";
 import { Cpu, Rocket, Code, Shield, BrainCircuit, Zap, TrendingDown, Layers } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { HomeDemoPlayer } from "@/components/ui/HomeDemoPlayer";
 
 export default function Home() {
   const { user } = useAuth();
@@ -89,6 +90,9 @@ export default function Home() {
           ))}
         </div>
       </main>
+
+      {/* Live Demo + Try It Free */}
+      <HomeDemoPlayer />
 
       {/* Features Grid */}
       <section className="relative z-10 bg-secondary/50 border-t border-border/50 py-24">
