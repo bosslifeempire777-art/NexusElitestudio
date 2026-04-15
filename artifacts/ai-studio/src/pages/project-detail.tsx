@@ -8,6 +8,7 @@ import {
   RotateCcw, Send, Bot, User, Sparkles, Bug, Palette, FilePlus, Lock, Database,
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
   Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
+  ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { getToken } from "@/lib/auth";
@@ -784,6 +785,14 @@ function AgentTerminal({
         </div>
       )}
 
+      {/* Orchestrator narration panel */}
+      <OrchestratorPanel
+        projectId={projectId}
+        buildLogs={buildLogs}
+        isStreaming={isStreaming}
+        codeSize={0}
+      />
+
       {/* Character Studio widget — game projects only */}
       {isGame && (
         <div className="shrink-0 border-b border-primary/20 bg-gradient-to-r from-primary/8 via-primary/5 to-transparent p-3">
@@ -1022,6 +1031,309 @@ function DeviceFrame({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════
+   ORCHESTRATOR PANEL — narrator + stats + log history
+   ══════════════════════════════════════════════════ */
+
+const NARRATOR_MAP: Array<{ match: string | RegExp; text: string }> = [
+  { match: "Received project prompt",        text: "I've received your request and I'm analyzing exactly what needs to be built. I'm breaking the work into specialized subtasks and dispatching each one to the right agent in the swarm." },
+  { match: "Breaking down into subtasks",    text: "Decomposing your project into its core components — architecture, UI, data layer, security, and deployment. Each specialist agent will own a piece of this." },
+  { match: "Designing system architecture",  text: "The Architecture Agent is mapping out your entire system: tech stack selection, data models, API contracts, component hierarchy, and folder structure. Getting the blueprint right saves time downstream." },
+  { match: "Architecture design complete",   text: "System architecture finalized. We have a clear blueprint — now handing off to the Code Generator to start writing real production code." },
+  { match: "Starting code generation",       text: "The Code Generator is now writing your application from scratch. This is the most compute-intensive step — it's producing all the HTML, CSS, JavaScript, and logic your app needs." },
+  { match: "game concept and mechanics",     text: "The Game Designer agent is crafting the gameplay loop, mechanics, and player experience. Defining rules, win conditions, and how everything feels to play." },
+  { match: "HTML5 Canvas",                   text: "Canvas Renderer is setting up the game engine — initializing the rendering pipeline, game loop (requestAnimationFrame), and coordinate systems for sprites and collision." },
+  { match: "sprites and visual effects",     text: "The Asset Generator is creating all visual elements: sprites, particle effects, backgrounds, and UI graphics. Everything that appears on screen." },
+  { match: "game world and levels",          text: "Level Builder is constructing the game environment — terrain, obstacles, spawn points, progression structure, and interactive elements." },
+  { match: "collision detection",            text: "Physics Engine is wiring collision detection, gravity, momentum, and movement. This is what makes your game feel physical and responsive." },
+  { match: "Core codebase generated",        text: "The core application code is done. We have a working foundation — now specialist agents are adding UI polish, data persistence, and security hardening." },
+  { match: "UI components",                  text: "The UI/UX Design Agent is building all your interface components: buttons, forms, layouts, animations, and responsive breakpoints. Making it look and feel great." },
+  { match: "database schema",                text: "Database Agent is setting up the data layer — defining tables, relationships, indexes, and migration scripts. Your app will have persistent, structured data storage." },
+  { match: "security configurations",        text: "Security Agent is running through the hardening checklist: input validation, XSS protection, CSRF tokens, secure headers, and authentication flows. Keeping your users safe." },
+  { match: "automated tests",                text: "Testing Agent is running the full suite: unit tests, integration tests, and end-to-end scenarios. Catching bugs before your users ever see the app." },
+  { match: "deployment configuration",       text: "DevOps Agent is finalizing build configs, environment variables, CI/CD pipeline setup, and deployment targets. Getting ready to ship." },
+  { match: "Generating production code",     text: "Sending the full build spec to our AI backbone (Google Gemini). This is where all the planning pays off — it's generating thousands of lines of production-grade code right now..." },
+  { match: /Generated \d+ bytes/,            text: "Code generation complete! The AI produced a full working application. Running final quality checks, security scan, and automated tests before handing it to you." },
+  { match: "Security scan passed",           text: "Security scan came back clean — no vulnerabilities, no exposed secrets, no unsafe patterns. Your app is production-safe." },
+  { match: "Automated tests passed",         text: "All tests passed. The application behaves as expected across all tested scenarios." },
+  { match: "Build complete",                 text: "Everything is done. Your application is fully built and ready to preview. You can see it live in the Preview tab, modify it with the chat below, or deploy it to a public URL." },
+  { match: "Generating production code with AI", text: "Sending full build context to the AI backbone now. Generating all your code in one shot — this typically takes 20-40 seconds depending on complexity." },
+];
+
+function getNarration(logs: string[]): string {
+  if (!logs.length) return "Waiting for the agent swarm to initialize…";
+  const last = logs[logs.length - 1] ?? "";
+  for (const entry of [...NARRATOR_MAP].reverse()) {
+    if (typeof entry.match === "string" ? last.includes(entry.match) : entry.match.test(last)) {
+      return entry.text;
+    }
+  }
+  return "Agents are processing your request. Each specialist in the swarm is working on their assigned task in parallel.";
+}
+
+function extractAgentName(log: string): string | null {
+  return log.match(/\[([^\]]+)\]/)?.[1] ?? null;
+}
+
+function getUniqueAgents(logs: string[]): string[] {
+  const seen = new Set<string>();
+  for (const l of logs) {
+    const a = extractAgentName(l);
+    if (a) seen.add(a);
+  }
+  return Array.from(seen);
+}
+
+function estimateTokens(logs: string[], codeSize = 0): number {
+  return logs.length * 180 + Math.round(codeSize / 4);
+}
+
+function estimateCost(tokens: number): string {
+  const dollars = tokens * 0.0000003;
+  return dollars < 0.001 ? "<$0.001" : `$${dollars.toFixed(4)}`;
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return m > 0 ? `${m}m ${rem}s` : `${s}s`;
+}
+
+interface LogEntry {
+  agent: string;
+  message: string;
+  timestamp: number;
+  plain: string;
+}
+
+function buildHistoryKey(projectId: string) {
+  return `nexus-build-log-${projectId}`;
+}
+
+function loadHistory(projectId: string): LogEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(buildHistoryKey(projectId)) ?? "[]");
+  } catch { return []; }
+}
+
+function saveHistory(projectId: string, entries: LogEntry[]) {
+  try {
+    localStorage.setItem(buildHistoryKey(projectId), JSON.stringify(entries.slice(-500)));
+  } catch {}
+}
+
+function exportLog(projectId: string, entries: LogEntry[]) {
+  const lines = entries.map(e =>
+    `[${format(new Date(e.timestamp), "yyyy-MM-dd HH:mm:ss")}] [${e.agent}] ${e.message}`
+  );
+  const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `nexus-build-log-${projectId.slice(0, 8)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function OrchestratorPanel({
+  projectId,
+  buildLogs,
+  isStreaming,
+  codeSize,
+}: {
+  projectId: string;
+  buildLogs: string[];
+  isStreaming: boolean;
+  codeSize?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState<LogEntry[]>(() => loadHistory(projectId));
+  const [startTs, setStartTs] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevLogsLen = useRef(0);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (buildLogs.length > 0 && !startTs) setStartTs(Date.now());
+    if (!isStreaming && startTs && timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (isStreaming && startTs && !timerRef.current) {
+      timerRef.current = setInterval(() => setElapsed(Date.now() - startTs), 500);
+    }
+    if (!isStreaming && startTs) setElapsed(Date.now() - startTs);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [buildLogs.length, isStreaming, startTs]);
+
+  useEffect(() => {
+    const newLogs = buildLogs.slice(prevLogsLen.current);
+    prevLogsLen.current = buildLogs.length;
+    if (!newLogs.length) return;
+    const now = Date.now();
+    const newEntries: LogEntry[] = newLogs.map((log) => {
+      const agent = extractAgentName(log) || "System";
+      const message = log.replace(/\[[^\]]+\]\s?/, "").trim();
+      let plain = "";
+      for (const entry of [...NARRATOR_MAP].reverse()) {
+        if (typeof entry.match === "string" ? log.includes(entry.match) : entry.match.test(log)) {
+          plain = entry.text; break;
+        }
+      }
+      return { agent, message, timestamp: now, plain };
+    });
+    setHistory(prev => {
+      const updated = [...prev, ...newEntries];
+      saveHistory(projectId, updated);
+      return updated;
+    });
+  }, [buildLogs, projectId]);
+
+  useEffect(() => {
+    if (expanded) logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history, expanded]);
+
+  const agents = getUniqueAgents(buildLogs);
+  const tokens = estimateTokens(buildLogs, codeSize);
+  const narration = getNarration(buildLogs);
+
+  const hasData = buildLogs.length > 0 || history.length > 0;
+
+  return (
+    <div className="shrink-0 border-b border-primary/20 bg-gradient-to-b from-[#080818] to-[#06060f]">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 pt-2.5 pb-2 border-b border-primary/10">
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 rounded bg-primary/15 border border-primary/30 flex items-center justify-center">
+            <Bot className="w-3 h-3 text-primary" />
+          </div>
+          <span className="text-[10px] font-mono font-bold text-primary uppercase tracking-widest">
+            Main Orchestrator
+          </span>
+          {isStreaming
+            ? <span className="flex items-center gap-1 text-[9px] text-primary/70 font-mono bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
+                <span className="w-1 h-1 bg-primary rounded-full animate-pulse inline-block" />
+                ACTIVE
+              </span>
+            : buildLogs.length > 0
+              ? <span className="text-[9px] text-green-400/80 font-mono bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">
+                  BUILD COMPLETE
+                </span>
+              : null
+          }
+        </div>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="flex items-center gap-1 text-[9px] font-mono text-muted-foreground/50 hover:text-primary transition-colors"
+        >
+          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          {expanded ? "collapse" : `${history.length} log entries`}
+        </button>
+      </div>
+
+      {/* Narration bubble */}
+      <div className="px-3 py-2.5">
+        <div className="bg-secondary/20 border border-primary/15 rounded px-3 py-2.5">
+          <div className="flex items-start gap-2">
+            <div className="shrink-0 mt-0.5">
+              {isStreaming
+                ? <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+                : hasData
+                  ? <Check className="w-3.5 h-3.5 text-green-400" />
+                  : <Bot className="w-3.5 h-3.5 text-primary/50" />
+              }
+            </div>
+            <p className="text-[11px] text-[#C8CAD8] leading-relaxed font-mono flex-1">
+              {hasData
+                ? narration
+                : "I'm standing by. Start a build or send a message below and I'll narrate every step the agent swarm takes — explaining what each specialist agent is doing and why, in plain language."
+              }
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      {hasData && (
+        <div className="px-3 pb-2.5 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+            <Activity className="w-3 h-3 text-primary/60" />
+            <span className="text-primary/80 font-bold">{agents.length || history.length > 0 ? (agents.length || "—") : 0}</span>
+            <span>agents active</span>
+          </div>
+          {elapsed > 0 && (
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+              <Clock className="w-3 h-3 text-primary/60" />
+              <span className="text-primary/80 font-bold">{formatElapsed(elapsed)}</span>
+              <span>elapsed</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+            <Cpu className="w-3 h-3 text-primary/60" />
+            <span className="text-primary/80 font-bold">~{tokens.toLocaleString()}</span>
+            <span>est. tokens</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+            <DollarSign className="w-3 h-3 text-green-500/60" />
+            <span className="text-green-400/80 font-bold">{estimateCost(tokens)}</span>
+            <span>est. cost</span>
+          </div>
+          {agents.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap ml-auto">
+              {agents.slice(0, 5).map(a => (
+                <span key={a} className="text-[8px] font-mono bg-primary/8 border border-primary/15 text-primary/60 px-1.5 py-0.5 rounded">
+                  {a}
+                </span>
+              ))}
+              {agents.length > 5 && (
+                <span className="text-[8px] font-mono text-muted-foreground/40">+{agents.length - 5}</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Expandable full log */}
+      {expanded && (
+        <div className="border-t border-primary/10">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-secondary/10">
+            <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest">
+              Build Log — {history.length} entries
+            </span>
+            <button
+              onClick={() => exportLog(projectId, history)}
+              className="flex items-center gap-1 text-[9px] font-mono text-muted-foreground/40 hover:text-primary transition-colors"
+            >
+              <Download className="w-2.5 h-2.5" /> Export .txt
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto px-3 py-2 space-y-2">
+            {history.map((entry, i) => (
+              <div key={i} className="border-l-2 border-primary/20 pl-2 space-y-0.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-mono text-primary/60 font-bold">{entry.agent}</span>
+                  <span className="text-[9px] font-mono text-muted-foreground/30">
+                    {format(new Date(entry.timestamp), "HH:mm:ss")}
+                  </span>
+                </div>
+                <p className="text-[10px] font-mono text-muted-foreground/70">{entry.message}</p>
+                {entry.plain && (
+                  <p className="text-[10px] font-mono text-[#8890A8] italic leading-snug mt-0.5">
+                    ↳ {entry.plain}
+                  </p>
+                )}
+              </div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
