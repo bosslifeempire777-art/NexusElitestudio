@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { storage } from '../storage.js';
 import { stripeService } from '../stripeService.js';
 import { requireAuth } from '../middleware/auth.js';
+import { LAUNCH_PROMO, isPromoActive } from '../lib/promo.js';
 
 const router: IRouter = Router();
 
@@ -69,6 +70,16 @@ router.get('/products/:productId/prices', async (req, res) => {
   }
 });
 
+/* ── Public: launch promo info ─────────────────────────────── */
+router.get('/promo', (_req, res) => {
+  res.json({
+    active:          isPromoActive(),
+    discountPercent: LAUNCH_PROMO.discountPercent,
+    endsAt:          LAUNCH_PROMO.endsAt,
+    couponId:        LAUNCH_PROMO.couponId,
+  });
+});
+
 /* ── Auth-protected: checkout, portal, subscription ─────────── */
 
 /* ── Stripe price ID lookup from env (set these after creating Stripe products) ── */
@@ -116,11 +127,13 @@ router.post('/checkout', requireAuth, async (req, res) => {
       || 'localhost';
     const baseUrl = `https://${domain}`;
 
+    const couponId = isPromoActive() ? LAUNCH_PROMO.couponId : undefined;
     const session = await stripeService.createCheckoutSession(
       customerId,
       priceId,
       `${baseUrl}/dashboard?upgrade=success`,
       `${baseUrl}/pricing`,
+      couponId,
     );
 
     res.json({ url: session.url });

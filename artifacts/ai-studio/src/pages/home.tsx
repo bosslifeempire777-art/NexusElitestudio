@@ -3,12 +3,14 @@ import { Button } from "@/components/ui/cyber-ui";
 import { Cpu, Rocket, Code, Shield, BrainCircuit, Zap, TrendingDown, Layers } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { HomeDemoPlayer } from "@/components/ui/HomeDemoPlayer";
+import { PromoBanner } from "@/components/ui/PromoBanner";
 
 export default function Home() {
   const { user } = useAuth();
 
   return (
     <div className="min-h-screen bg-background relative overflow-hidden">
+      <PromoBanner />
       {/* Hero Background */}
       <div className="absolute inset-0 z-0">
         <img 

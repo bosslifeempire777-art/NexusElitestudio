@@ -1,13 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useListPlans } from "@workspace/api-client-react";
 import { Card, CardHeader, CardContent, Button, Badge } from "@/components/ui/cyber-ui";
 import {
   Check, Loader2, Crown, Zap, Rocket, Building2, Star,
-  ArrowRight, Sparkles, TrendingUp, Shield, Users,
+  ArrowRight, Sparkles, TrendingUp, Shield, Users, Flame,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { getToken } from "@/lib/auth";
+
+function usePromo() {
+  const [promo, setPromo] = useState<{ active: boolean; discountPercent: number; endsAt: number } | null>(null);
+  useEffect(() => {
+    fetch("/api/stripe/promo").then(r => r.json()).then(setPromo).catch(() => {});
+  }, []);
+  return promo;
+}
 
 const PLAN_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   free:    Star,
@@ -39,11 +47,13 @@ const OVERAGE_DISPLAY: Record<string, string> = {
 export default function Pricing() {
   const { data: plans, isLoading } = useListPlans();
   const { user } = useAuth();
+  const promo = usePromo();
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [checkoutError, setCheckoutError]     = useState<string | null>(null);
 
   const userPlan = user?.plan || "free";
   const displayPlans = plans?.filter(p => p.name !== "vip" && p.name !== "admin") ?? [];
+  const promoActive = promo?.active === true;
 
   async function handleUpgrade(planName: string) {
     if (!user) { window.location.href = "/login"; return; }
@@ -157,11 +167,29 @@ export default function Pricing() {
                       <div className="mt-4 flex items-baseline gap-0.5">
                         {plan.price === 0
                           ? <span className="text-4xl font-display font-black text-muted-foreground">Free</span>
-                          : <>
-                              <span className="text-lg font-bold mt-1">$</span>
-                              <span className="text-4xl font-display font-black">{plan.price}</span>
-                              <span className="text-muted-foreground font-mono text-sm ml-1">/mo</span>
-                            </>
+                          : promoActive
+                            ? <>
+                                <div className="flex flex-col">
+                                  <div className="flex items-baseline gap-1">
+                                    <span className="text-lg font-bold mt-1 text-accent">$</span>
+                                    <span className="text-4xl font-display font-black text-accent">
+                                      {Math.round(plan.price * 0.5)}
+                                    </span>
+                                    <span className="text-muted-foreground font-mono text-sm ml-1">/first mo</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-muted-foreground/50 font-mono text-sm line-through">${plan.price}/mo</span>
+                                    <span className="text-xs bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded font-mono font-bold">
+                                      50% OFF
+                                    </span>
+                                  </div>
+                                </div>
+                              </>
+                            : <>
+                                <span className="text-lg font-bold mt-1">$</span>
+                                <span className="text-4xl font-display font-black">{plan.price}</span>
+                                <span className="text-muted-foreground font-mono text-sm ml-1">/mo</span>
+                              </>
                         }
                       </div>
 
@@ -197,14 +225,18 @@ export default function Pricing() {
                             isPro     ? "bg-accent hover:bg-accent/90 text-background" :
                             isElite   ? "bg-yellow-500 hover:bg-yellow-400 text-background" :
                             isStarter ? "" : ""
-                          }`}
+                          } ${promoActive && !isDowngrade ? "ring-2 ring-red-500/50" : ""}`}
                           variant={isPro || isElite ? "default" : "outline"}
                           disabled={loading || !!checkoutLoading}
                           onClick={() => handleUpgrade(plan.name)}
                         >
                           {loading
                             ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Redirecting…</>
-                            : <><ArrowRight className="w-3.5 h-3.5" /> {isDowngrade ? "Switch Plan" : "Upgrade Now"}</>
+                            : isDowngrade
+                              ? <><ArrowRight className="w-3.5 h-3.5" /> Switch Plan</>
+                              : promoActive
+                                ? <><Flame className="w-3.5 h-3.5 text-orange-400" /> 50% OFF — Upgrade Now</>
+                                : <><ArrowRight className="w-3.5 h-3.5" /> Upgrade Now</>
                           }
                         </Button>
                       )}

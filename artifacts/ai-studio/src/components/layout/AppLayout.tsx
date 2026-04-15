@@ -2,6 +2,7 @@ import * as React from "react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/components/ui/cyber-ui";
+import { PromoBanner } from "@/components/ui/PromoBanner";
 import { 
   LayoutDashboard, 
   Code2, 
@@ -83,7 +84,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const planColor = user?.isAdmin ? "text-destructive" : user?.isVip ? "text-yellow-400" : "text-primary";
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden relative">
+    <div className="flex flex-col h-screen w-full bg-background overflow-hidden relative">
+      <PromoBanner />
+    <div className="flex flex-1 overflow-hidden relative">
       {/* Background Grid */}
       <div
         className="absolute inset-0 pointer-events-none opacity-5"
@@ -249,6 +252,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+    </div>
     </div>
   );
 }
