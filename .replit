@@ -40,3 +40,15 @@ STRIPE_PRICE_PRO = "price_1TIMr9JuLDzBrGo8iXs5tmYV"
 STRIPE_PRICE_ELITE = "price_1TIMrAJuLDzBrGo8BDRh2BMP"
 STRIPE_WEBHOOK_SECRET = "whsec_0eiy0uIvMKRWGfU0pMqZ96oApGI7TeCC"
 CUSTOM_DOMAIN = "nexuselitestudio.nexus"
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 80
+
+[[ports]]
+localPort = 22936
+externalPort = 3000
