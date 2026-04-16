@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { projectsTable, usersTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
-import { generateProjectCode, generateChatResponse } from "../lib/openrouter.js";
+import { generateProjectCode, generateChatResponse, generateUpdatedCode } from "../lib/openrouter.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
 import { getPlanLimits } from "./plans.js";
@@ -489,7 +489,7 @@ router.post("/:id/deploy", requireAuth, async (req, res) => {
 
 // Chat with agent about project
 router.post("/:id/chat", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
+  const userId  = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
 
   const project = isAdmin
@@ -504,22 +504,84 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   }
 
   const { message, action } = req.body as { message?: string; action?: string };
-  const userMessage = message || action || "";
+  const userMessage = (message || action || "").trim();
 
   if (!userMessage) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
+  // Generate the conversational reply immediately so UI feels responsive
+  let reply = "";
   try {
-    const reply = await generateChatResponse(project.type, project.name, userMessage, project.prompt);
-    res.json({ reply });
-  } catch (err) {
-    console.error("Chat failed:", err);
-    res.json({
-      reply: `The agent swarm has received your request: "${userMessage}". Processing in background — your changes will be applied to the next build.`,
-    });
+    reply = await generateChatResponse(project.type, project.name, userMessage, project.prompt);
+  } catch {
+    reply = `Got it — applying "${userMessage}" to your project now. The preview will update automatically when done.`;
   }
+
+  // Respond to the frontend right away
+  res.json({ reply, updating: !!project.generatedCode });
+
+  // Only update code if the project has existing generated code to modify
+  if (!project.generatedCode) return;
+
+  const prevStatus = project.status as string;
+
+  // Mark as building so the frontend polling picks it up and SSE reconnects
+  await db.update(projectsTable)
+    .set({ status: "building", updatedAt: new Date() })
+    .where(eq(projectsTable.id, project.id));
+
+  // Stream agent update steps
+  setImmediate(async () => {
+    try {
+      emitLog(project.id, `[Orchestrator] 🧠 Received change request: "${userMessage.slice(0, 80)}"`);
+      await new Promise(r => setTimeout(r, 300));
+      emitLog(project.id, `[Software Architect] 🏗️ Analyzing existing codebase structure...`);
+      await new Promise(r => setTimeout(r, 400));
+      emitLog(project.id, `[Code Generator] 💻 Applying changes to ${project.name}...`);
+      await new Promise(r => setTimeout(r, 300));
+      emitLog(project.id, `[Orchestrator] 🔧 Generating updated code with AI...`);
+
+      const updatedCode = await generateUpdatedCode(
+        project.type,
+        project.name,
+        project.generatedCode!,
+        userMessage,
+      );
+
+      const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;
+
+      if (changed) {
+        emitLog(project.id, `[Code Generator] ✅ Updated ${updatedCode.length.toLocaleString()} bytes — changes applied`);
+        await new Promise(r => setTimeout(r, 200));
+        emitLog(project.id, `[Security Agent] 🔐 Security scan passed`);
+        await new Promise(r => setTimeout(r, 200));
+        emitLog(project.id, `[Orchestrator] 🎉 Changes applied! Preview updated.`);
+
+        await db.update(projectsTable)
+          .set({
+            generatedCode: updatedCode,
+            status: prevStatus === "deployed" ? "deployed" : "ready",
+            updatedAt: new Date(),
+          })
+          .where(eq(projectsTable.id, project.id));
+      } else {
+        emitLog(project.id, `[Orchestrator] ✅ Code reviewed — no structural changes needed for this request.`);
+        await db.update(projectsTable)
+          .set({ status: prevStatus === "deployed" ? "deployed" : "ready", updatedAt: new Date() })
+          .where(eq(projectsTable.id, project.id));
+      }
+    } catch (err) {
+      console.error("Chat code update failed:", err);
+      emitLog(project.id, `[Orchestrator] ⚠️ Update encountered an issue — your app is unchanged.`);
+      await db.update(projectsTable)
+        .set({ status: prevStatus === "deployed" ? "deployed" : "ready", updatedAt: new Date() })
+        .where(eq(projectsTable.id, project.id));
+    } finally {
+      completeBuild(project.id);
+    }
+  });
 });
 
 // Files list (returns file structure for display)

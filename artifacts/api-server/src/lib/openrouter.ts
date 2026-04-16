@@ -141,6 +141,91 @@ Include multiple screens/sections, realistic data, working UI interactions, and 
   }
 }
 
+/** Apply a user-requested change to an existing project's HTML code */
+export async function generateUpdatedCode(
+  type: string,
+  name: string,
+  currentCode: string,
+  changeRequest: string,
+): Promise<string> {
+  const API_KEY = getApiKey();
+  if (!API_KEY || !currentCode) return currentCode;
+
+  const isGame = type === "game";
+
+  const systemPrompt = isGame
+    ? `You are an expert HTML5 game developer. You will receive an existing complete HTML5 game file and a change request.
+Output ONLY the complete updated HTML file with the requested changes applied.
+CRITICAL RULES:
+1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
+2. Keep ALL existing game logic, assets and structure intact — only apply the requested change.
+3. No external resources of any kind — no CDN, no external scripts, no external images.
+4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.`
+    : `You are an expert web developer. You will receive an existing complete single-file web application and a change request.
+Output ONLY the complete updated HTML file with the requested changes applied.
+CRITICAL RULES:
+1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
+2. Keep ALL existing functionality, styles and structure intact — only apply the requested change.
+3. No external resources of any kind — no CDN, no external scripts, no web fonts.
+4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.`;
+
+  const userPrompt = `This is the current code for a ${type} app called "${name}":
+
+${currentCode}
+
+Apply this change: ${changeRequest}
+
+Output the complete updated HTML file with the change applied. Keep everything else exactly the same.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      API_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${API_KEY}`,
+          "HTTP-Referer": "https://nexuselitestudio.nexus",
+          "X-Title": "NexusElite AI Studio",
+        },
+        body: JSON.stringify({
+          model: CODE_MODEL,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user",   content: userPrompt   },
+          ],
+          temperature: 0.5,
+          max_tokens: 8000,
+        }),
+      },
+      FETCH_TIMEOUT_MS,
+    );
+
+    if (!response.ok) {
+      console.error(`OpenRouter update error ${response.status}`);
+      return currentCode;
+    }
+
+    const data = (await response.json()) as any;
+    const content: string = data.choices?.[0]?.message?.content || "";
+    if (!content) return currentCode;
+
+    const stripped = content
+      .replace(/^```(?:html)?\n?/i, "")
+      .replace(/\n?```$/i, "")
+      .trim();
+
+    if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+      return stripped;
+    }
+
+    return currentCode; // fallback: keep existing code if AI returned garbage
+  } catch (err: any) {
+    console.error("generateUpdatedCode error:", err?.message ?? err);
+    return currentCode;
+  }
+}
+
 /** Generate a chat response for the agent terminal */
 export async function generateChatResponse(
   projectType: string,

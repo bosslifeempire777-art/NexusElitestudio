@@ -485,7 +485,14 @@ export default function ProjectDetail() {
 
           {/* AGENT TAB — chat terminal */}
           {activeTab === 'agent' && (
-            <AgentTerminal projectId={project.id} projectName={project.name} projectStatus={project.status} projectType={project.type} onBuildComplete={refetch} />
+            <AgentTerminal
+              projectId={project.id}
+              projectName={project.name}
+              projectStatus={project.status}
+              projectType={project.type}
+              onUpdateStarted={refetch}
+              onBuildComplete={() => { refetch(); refreshPreview(); }}
+            />
           )}
         </div>
       </div>
@@ -612,13 +619,14 @@ function getStepsForMessage(text: string): string[] {
 
 /* ── Agent Terminal ── */
 function AgentTerminal({
-  projectId, projectName, projectStatus, projectType, onBuildComplete,
+  projectId, projectName, projectStatus, projectType, onBuildComplete, onUpdateStarted,
 }: {
   projectId: string;
   projectName: string;
   projectStatus: string;
   projectType?: string;
   onBuildComplete?: () => void;
+  onUpdateStarted?: () => void;
 }) {
   const [, navigate] = useLocation();
   const isGame = projectType === "game";
@@ -716,6 +724,10 @@ function AgentTerminal({
       });
       const data = await res.json();
       apiReply = data.reply || apiReply;
+      // If the backend is updating the code, kick off polling immediately
+      if (data.updating) {
+        onUpdateStarted?.();
+      }
     } catch {
       apiReply = "Request queued — the swarm will process this when connectivity is restored.";
     }
