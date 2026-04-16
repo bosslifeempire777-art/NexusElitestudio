@@ -699,10 +699,14 @@ function AgentTerminal({
   const [isLoading, setIsLoading] = useState(false);
   const [activeSteps, setActiveSteps] = useState<string[]>([]);
   const [stepsDone, setStepsDone] = useState(false);
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const inputRef    = useRef<HTMLTextAreaElement>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const esRef       = useRef<EventSource | null>(null);
+  const bottomRef       = useRef<HTMLDivElement>(null);
+  const inputRef        = useRef<HTMLTextAreaElement>(null);
+  const intervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const esRef           = useRef<EventSource | null>(null);
+  // True only when the user sent a chat message that triggered a real build.
+  // Guards against calling onBuildComplete (and auto-switching to Preview) when
+  // the SSE stream fires the instant __DONE__ on a project that is already ready.
+  const pendingBuildRef = useRef(false);
 
   // Subscribe to SSE build stream
   useEffect(() => {
@@ -720,7 +724,11 @@ function AgentTerminal({
         if (msg === "__DONE__") {
           setIsStreaming(false);
           es.close();
-          onBuildComplete?.();
+          // Only fire onBuildComplete when a real chat-triggered build just finished
+          if (pendingBuildRef.current) {
+            pendingBuildRef.current = false;
+            onBuildComplete?.();
+          }
           return;
         }
         setBuildLogs(prev => [...prev, msg]);
@@ -782,6 +790,8 @@ function AgentTerminal({
       apiReply = data.reply || apiReply;
       // If the backend is updating the code, kick off polling immediately
       if (data.updating) {
+        // Mark that a real build is in progress so onBuildComplete fires correctly
+        pendingBuildRef.current = true;
         onUpdateStarted?.();
       }
     } catch {
