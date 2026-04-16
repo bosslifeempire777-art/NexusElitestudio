@@ -195,7 +195,7 @@ Output the complete updated HTML file with the change applied. Keep everything e
             { role: "user",   content: userPrompt   },
           ],
           temperature: 0.5,
-          max_tokens: 8000,
+          max_tokens: 16000,
         }),
       },
       FETCH_TIMEOUT_MS,

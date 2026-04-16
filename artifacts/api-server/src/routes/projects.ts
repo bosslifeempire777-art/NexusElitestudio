@@ -530,26 +530,28 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     return;
   }
 
-  // Generate the conversational reply immediately so UI feels responsive
-  let reply = "";
-  try {
-    reply = await generateChatResponse(project.type, project.name, userMessage, project.prompt);
-  } catch {
-    reply = `Got it — applying "${userMessage}" to your project now. The preview will update automatically when done.`;
-  }
-
-  // Respond to the frontend right away
-  res.json({ reply, updating: !!project.generatedCode });
-
-  // Only update code if the project has existing generated code to modify
-  if (!project.generatedCode) return;
-
+  const hasCode    = !!project.generatedCode;
   const prevStatus = project.status as string;
 
-  // Mark as building so the frontend polling picks it up and SSE reconnects
-  await db.update(projectsTable)
-    .set({ status: "building", updatedAt: new Date() })
-    .where(eq(projectsTable.id, project.id));
+  // Run the chat reply generation and the "set building" DB write in parallel.
+  // The DB update MUST finish before we call res.json() — otherwise the
+  // frontend's immediate refetch() races the write and sees status:"ready",
+  // which prevents polling from ever starting and the preview never refreshes.
+  const [reply] = await Promise.all([
+    generateChatResponse(project.type, project.name, userMessage, project.prompt)
+      .catch(() => `Got it — applying "${userMessage}" to your project now. The preview will update automatically when done.`),
+    hasCode
+      ? db.update(projectsTable)
+          .set({ status: "building", updatedAt: new Date() })
+          .where(eq(projectsTable.id, project.id))
+      : Promise.resolve(),
+  ]);
+
+  // By the time we respond the DB already shows "building", so the frontend's
+  // refetch() will see the right status and start polling immediately.
+  res.json({ reply, updating: hasCode });
+
+  if (!hasCode) return;
 
   // Stream agent update steps
   setImmediate(async () => {

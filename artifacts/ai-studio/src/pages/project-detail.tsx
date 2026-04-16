@@ -94,6 +94,8 @@ export default function ProjectDetail() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeMessage, setUpgradeMessage]     = useState("");
   const [urlCopied, setUrlCopied]       = useState(false);
+  // Incremented every time a build/chat-update completes — forces iframe remount
+  const [previewVersion, setPreviewVersion] = useState(0);
 
   function authHeaders(): Record<string, string> {
     const token = getToken();
@@ -505,7 +507,7 @@ export default function ProjectDetail() {
                     <DeviceFrame device={currentDevice}>
                       <iframe
                         ref={iframeRef}
-                        key={project.id}
+                        key={`${project.id}-${previewVersion}`}
                         src={previewUrl}
                         className="w-full h-full border-0 block"
                         title={`Preview: ${project.name}`}
@@ -539,7 +541,13 @@ export default function ProjectDetail() {
               projectStatus={project.status}
               projectType={project.type}
               onUpdateStarted={refetch}
-              onBuildComplete={() => { refetch(); refreshPreview(); }}
+              onBuildComplete={() => {
+                refetch();
+                // Force the preview iframe to remount with fresh content
+                setPreviewVersion(v => v + 1);
+                // Switch to Preview so the user immediately sees the result
+                setActiveTab('preview');
+              }}
             />
           )}
         </div>
