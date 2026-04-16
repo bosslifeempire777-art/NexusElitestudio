@@ -201,10 +201,10 @@ export default function Characters() {
   }
 
   /* ── AI Generate ── */
-  async function generateCharacter() {
+  async function generateCharacter(styleOverride?: GameStyle) {
     if (!prompt.trim()) return;
     setImageLoading(true);
-    const { url } = buildPollinationsUrl(prompt, style);
+    const { url } = buildPollinationsUrl(prompt, styleOverride ?? style);
     setCurrentImageUrl(url);
   }
 
@@ -251,18 +251,36 @@ export default function Characters() {
     const canvas = canvasRef.current;
     const overlay = overlayRef.current;
     if (!canvas) return;
-    const merged = document.createElement("canvas");
-    merged.width  = canvas.width;
-    merged.height = canvas.height;
-    const ctx = merged.getContext("2d")!;
-    ctx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) hue-rotate(${hue}deg)`;
-    ctx.drawImage(canvas, 0, 0);
-    ctx.filter = "none";
-    if (overlay) ctx.drawImage(overlay, 0, 0);
-    const link = document.createElement("a");
-    link.download = `${characterName.replace(/\s+/g, "_")}.png`;
-    link.href = merged.toDataURL("image/png");
-    link.click();
+
+    try {
+      const merged = document.createElement("canvas");
+      merged.width  = canvas.width;
+      merged.height = canvas.height;
+      const ctx = merged.getContext("2d")!;
+      ctx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) hue-rotate(${hue}deg)`;
+      ctx.drawImage(canvas, 0, 0);
+      ctx.filter = "none";
+      if (overlay) ctx.drawImage(overlay, 0, 0);
+
+      // Try canvas export (may fail if image is cross-origin without CORS headers)
+      const dataUrl = merged.toDataURL("image/png");
+      const link = document.createElement("a");
+      link.download = `${characterName.replace(/\s+/g, "_")}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch {
+      // Canvas is tainted by cross-origin image — fall back to downloading the source URL
+      if (currentImageUrl.startsWith("data:")) {
+        // Data URLs can always be downloaded
+        const link = document.createElement("a");
+        link.download = `${characterName.replace(/\s+/g, "_")}.png`;
+        link.href = currentImageUrl;
+        link.click();
+      } else {
+        // Open the image URL in a new tab so the user can right-click → Save
+        window.open(currentImageUrl, "_blank");
+      }
+    }
   }
 
   /* ── Save to library ── */
@@ -874,8 +892,18 @@ export default function Characters() {
                         {STYLES.filter(s => s.id !== style).map(s => (
                           <button
                             key={s.id}
-                            onClick={() => { setStyle(s.id); generateCharacter(); }}
-                            className="flex items-center gap-1.5 px-2 py-1.5 text-[10px] border border-border/30 rounded text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
+                            onClick={() => {
+                              setStyle(s.id);
+                              if (prompt.trim()) {
+                                generateCharacter(s.id);
+                              } else if (editPrompt.trim()) {
+                                // Use the edit prompt as the base if no generation prompt
+                                setPrompt(editPrompt.trim());
+                                generateCharacter(s.id);
+                              }
+                            }}
+                            disabled={imageLoading}
+                            className="flex items-center gap-1.5 px-2 py-1.5 text-[10px] border border-border/30 rounded text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-40"
                           >
                             <span>{s.emoji}</span> {s.label}
                           </button>
