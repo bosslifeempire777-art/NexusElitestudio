@@ -171,33 +171,37 @@ export default function Characters() {
   }
 
   /* ── Paint on overlay canvas ── */
-  function getPos(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
+  function getPosFromXY(clientX: number, clientY: number) {
     const oc = overlayRef.current!;
     const rect = oc.getBoundingClientRect();
-    const scaleX = oc.width / rect.width;
-    const scaleY = oc.height / rect.height;
-    let cx: number, cy: number;
-    if ("touches" in e) {
-      cx = e.touches[0]!.clientX;
-      cy = e.touches[0]!.clientY;
-    } else {
-      cx = (e as React.MouseEvent).clientX;
-      cy = (e as React.MouseEvent).clientY;
-    }
-    return { x: (cx - rect.left) * scaleX, y: (cy - rect.top) * scaleY };
+    return {
+      x: (clientX - rect.left) * (oc.width  / rect.width),
+      y: (clientY - rect.top)  * (oc.height / rect.height),
+    };
   }
 
-  function paint(e: React.MouseEvent<HTMLCanvasElement>) {
-    if (!painting) return;
+  function drawAt(x: number, y: number) {
     const oc = overlayRef.current;
     if (!oc) return;
     const ctx = oc.getContext("2d")!;
-    const { x, y } = getPos(e);
     ctx.globalCompositeOperation = tool === "eraser" ? "destination-out" : "source-over";
     ctx.fillStyle = brushColor;
     ctx.beginPath();
     ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  function paint(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!painting) return;
+    const { x, y } = getPosFromXY(e.clientX, e.clientY);
+    drawAt(x, y);
+  }
+
+  function paintTouch(e: React.TouchEvent<HTMLCanvasElement>) {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const { x, y } = getPosFromXY(touch.clientX, touch.clientY);
+    drawAt(x, y);
   }
 
   /* ── AI Generate ── */
@@ -582,11 +586,16 @@ export default function Characters() {
                           width: "100%",
                           height: "100%",
                           cursor: tool === "brush" ? "crosshair" : "cell",
+                          touchAction: "none",
                         }}
                         onMouseDown={(e) => { setPainting(true); paint(e); }}
                         onMouseMove={paint}
                         onMouseUp={() => setPainting(false)}
                         onMouseLeave={() => setPainting(false)}
+                        onTouchStart={(e) => { e.preventDefault(); setPainting(true); paintTouch(e); }}
+                        onTouchMove={(e) => { e.preventDefault(); paintTouch(e); }}
+                        onTouchEnd={() => setPainting(false)}
+                        onTouchCancel={() => setPainting(false)}
                       />
                     )}
                   </div>
@@ -689,9 +698,10 @@ export default function Characters() {
 
                   {currentImageUrl && (
                     <button
-                      onClick={generateCharacter}
-                      disabled={imageLoading}
-                      className="w-full flex items-center justify-center gap-2 py-2 border border-border/50 text-muted-foreground text-xs rounded hover:border-primary/40 hover:text-primary transition-colors"
+                      onClick={() => generateCharacter()}
+                      disabled={imageLoading || !prompt.trim()}
+                      title={!prompt.trim() ? "Enter a description above to regenerate" : "Regenerate with a new random variation"}
+                      className="w-full flex items-center justify-center gap-2 py-2 border border-border/50 text-muted-foreground text-xs rounded hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-3.5 h-3.5" /> Regenerate (new variation)
                     </button>
@@ -897,10 +907,11 @@ export default function Characters() {
                               if (prompt.trim()) {
                                 generateCharacter(s.id);
                               } else if (editPrompt.trim()) {
-                                // Use the edit prompt as the base if no generation prompt
                                 setPrompt(editPrompt.trim());
                                 generateCharacter(s.id);
                               }
+                              // If neither has content, style is still switched —
+                              // the note below guides the user to add a description
                             }}
                             disabled={imageLoading}
                             className="flex items-center gap-1.5 px-2 py-1.5 text-[10px] border border-border/30 rounded text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-40"
@@ -909,6 +920,12 @@ export default function Characters() {
                           </button>
                         ))}
                       </div>
+                      {/* Guide when neither prompt has content to work from */}
+                      {!prompt.trim() && !editPrompt.trim() && (
+                        <p className="text-[10px] text-yellow-500/70 mt-2 leading-snug">
+                          ⚡ Enter a description in the field above, then click a style to regenerate in that style.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
