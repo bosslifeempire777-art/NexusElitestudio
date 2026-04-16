@@ -72,8 +72,14 @@ function getBaseUrl(): string {
 }
 
 function projectResponse(p: typeof projectsTable.$inferSelect) {
+  // Strip raw source code from every API response — code is only accessible
+  // through the gated /source and /files endpoints (paid plans only).
+  // We expose a `hasCode` boolean so the UI can show the correct state
+  // (e.g. disable Deploy button) without leaking the actual source.
+  const { generatedCode, ...rest } = p;
   return {
-    ...p,
+    ...rest,
+    hasCode: !!(generatedCode && generatedCode.length > 100),
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
     agentLogs: Array.isArray(p.agentLogs) ? p.agentLogs : [],
@@ -290,8 +296,21 @@ router.get("/:id/preview", async (req, res) => {
 
 // Get raw source code of a project
 router.get("/:id/source", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
-  const isAdmin = req.auth!.isAdmin;
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  // Free plan users cannot access or download source code
+  if (!isAdmin && !isVip && userPlan === "free") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "SOURCE_NOT_ALLOWED",
+      message: "Source code access requires a paid plan. Upgrade to Starter or higher to view and download your app's source code.",
+      currentPlan: userPlan,
+    });
+    return;
+  }
 
   const project = isAdmin
     ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
@@ -586,8 +605,21 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
 // Files list (returns file structure for display)
 router.get("/:id/files", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
-  const isAdmin = req.auth!.isAdmin;
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  // Free plan users cannot access file contents
+  if (!isAdmin && !isVip && userPlan === "free") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "SOURCE_NOT_ALLOWED",
+      message: "Source code access requires a paid plan. Upgrade to Starter or higher.",
+      currentPlan: userPlan,
+    });
+    return;
+  }
 
   const project = isAdmin
     ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })

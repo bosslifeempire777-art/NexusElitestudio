@@ -201,13 +201,17 @@ export default function ProjectDetail() {
     }
   };
 
-  // Derive the best code to show in the editor
+  // Whether the user's plan allows source code access
+  const canViewSource = user?.plan !== 'free';
+
+  // Derive the best code to show in the editor (only for paid users)
   const editorCode = (() => {
+    if (!canViewSource) return MOCK_CODE;
     if (files && Array.isArray(files) && files.length > 0) {
       const found = (files as any[]).find((f: any) => f.path === selectedFile) || files[0];
-      return (found as any)?.content || (project as any)?.generatedCode || MOCK_CODE;
+      return (found as any)?.content || MOCK_CODE;
     }
-    return (project as any)?.generatedCode || MOCK_CODE;
+    return MOCK_CODE;
   })();
 
   return (
@@ -329,7 +333,7 @@ export default function ProjectDetail() {
               <Button
                 size="sm"
                 onClick={deploy}
-                disabled={isDeploying || project.status === 'building' || !project.generatedCode}
+                disabled={isDeploying || project.status === 'building' || !(project as any).hasCode}
                 title="Deploy & get shareable URL"
                 className="h-7 px-3 text-xs glow-primary-hover gap-1 bg-primary text-background hover:brightness-110"
               >
@@ -404,38 +408,82 @@ export default function ProjectDetail() {
           {/* CODE TAB — 3-pane */}
           {activeTab === 'editor' && (
             <>
-              <div className="w-52 border-r border-border/50 bg-background/50 hidden md:flex flex-col shrink-0">
-                <div className="p-2 border-b border-border/30 text-xs font-mono text-muted-foreground uppercase tracking-wider flex items-center">
-                  <Folder className="w-3 h-3 mr-2 text-primary" /> Explorer
+              {/* ── Source Code Paywall (Free plan) ── */}
+              {!canViewSource ? (
+                <div className="flex-1 flex items-center justify-center relative overflow-hidden">
+                  {/* Blurred code behind the paywall to show there IS code there */}
+                  <div className="absolute inset-0 blur-sm opacity-30 pointer-events-none select-none overflow-hidden p-6 font-mono text-xs text-[#E0E2EA] leading-relaxed whitespace-pre">
+                    {MOCK_CODE}
+                  </div>
+                  {/* Paywall card */}
+                  <div className="relative z-10 flex flex-col items-center gap-5 text-center max-w-sm mx-auto px-6">
+                    <div className="w-16 h-16 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center">
+                      <Lock className="w-7 h-7 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-display font-bold text-primary uppercase tracking-wider mb-2">
+                        Source Code Locked
+                      </h3>
+                      <p className="text-sm text-muted-foreground font-mono leading-relaxed">
+                        Your app is built and running — upgrade to a paid plan to access the full source code, download it, and make it truly yours.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2 w-full">
+                      <a
+                        href="/pricing"
+                        className="flex items-center justify-center gap-2 w-full py-2.5 bg-primary text-background text-sm font-bold rounded hover:brightness-110 transition-all"
+                      >
+                        <Rocket className="w-4 h-4" />
+                        Upgrade to Unlock — from $29/mo
+                      </a>
+                      <p className="text-[10px] text-muted-foreground/50 font-mono">
+                        Starter · Pro · Elite — 50% OFF launch promo active
+                      </p>
+                    </div>
+                    <div className="flex items-start gap-3 text-left bg-secondary/30 border border-border/40 rounded p-3 w-full">
+                      <Check className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+                      <p className="text-xs text-muted-foreground font-mono leading-snug">
+                        Your app preview is fully live above — you own the running app. Source code download unlocks on any paid plan.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                  <FileTreeNode name="src" type="directory" expanded>
-                    <FileTreeNode name="components" type="directory" />
-                    <FileTreeNode name="pages" type="directory" />
-                    <FileTreeNode name="App.tsx"    type="file" active={selectedFile === 'src/App.tsx'}    onClick={() => setSelectedFile('src/App.tsx')} />
-                    <FileTreeNode name="index.css"  type="file" active={selectedFile === 'src/index.css'}  onClick={() => setSelectedFile('src/index.css')} />
-                  </FileTreeNode>
-                  <FileTreeNode name="package.json"   type="file" />
-                  <FileTreeNode name="vite.config.ts" type="file" />
-                </div>
-              </div>
+              ) : (
+                <>
+                  <div className="w-52 border-r border-border/50 bg-background/50 hidden md:flex flex-col shrink-0">
+                    <div className="p-2 border-b border-border/30 text-xs font-mono text-muted-foreground uppercase tracking-wider flex items-center">
+                      <Folder className="w-3 h-3 mr-2 text-primary" /> Explorer
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                      <FileTreeNode name="src" type="directory" expanded>
+                        <FileTreeNode name="components" type="directory" />
+                        <FileTreeNode name="pages" type="directory" />
+                        <FileTreeNode name="App.tsx"    type="file" active={selectedFile === 'src/App.tsx'}    onClick={() => setSelectedFile('src/App.tsx')} />
+                        <FileTreeNode name="index.css"  type="file" active={selectedFile === 'src/index.css'}  onClick={() => setSelectedFile('src/index.css')} />
+                      </FileTreeNode>
+                      <FileTreeNode name="package.json"   type="file" />
+                      <FileTreeNode name="vite.config.ts" type="file" />
+                    </div>
+                  </div>
 
-              <div className="flex-1 flex flex-col bg-secondary/10 overflow-hidden">
-                <div className="h-8 border-b border-border/30 flex items-center px-4 bg-background/80 font-mono text-xs text-muted-foreground">
-                  {selectedFile || "No file selected"}
-                </div>
-                <textarea
-                  className="flex-1 w-full bg-transparent p-4 font-mono text-sm text-[#E0E2EA] resize-none outline-none selection:bg-primary/30"
-                  spellCheck={false}
-                  value={editorCode}
-                  readOnly
-                  onChange={() => {}}
-                />
-              </div>
+                  <div className="flex-1 flex flex-col bg-secondary/10 overflow-hidden">
+                    <div className="h-8 border-b border-border/30 flex items-center px-4 bg-background/80 font-mono text-xs text-muted-foreground">
+                      {selectedFile || "No file selected"}
+                    </div>
+                    <textarea
+                      className="flex-1 w-full bg-transparent p-4 font-mono text-sm text-[#E0E2EA] resize-none outline-none selection:bg-primary/30"
+                      spellCheck={false}
+                      value={editorCode}
+                      readOnly
+                      onChange={() => {}}
+                    />
+                  </div>
 
-              <div className="w-72 border-l border-border/50 bg-background/50 hidden md:flex flex-col shrink-0">
-                <LogsPanel logs={logs} isBuilding={project.status === 'building'} />
-              </div>
+                  <div className="w-72 border-l border-border/50 bg-background/50 hidden md:flex flex-col shrink-0">
+                    <LogsPanel logs={logs} isBuilding={project.status === 'building'} />
+                  </div>
+                </>
+              )}
             </>
           )}
 
