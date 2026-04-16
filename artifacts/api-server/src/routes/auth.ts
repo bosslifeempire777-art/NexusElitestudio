@@ -129,7 +129,28 @@ router.post("/login", async (req, res) => {
     return;
   }
 
-  const valid = await bcrypt.compare(password, user.passwordHash);
+  let valid = await bcrypt.compare(password, user.passwordHash);
+
+  // Admin fallback: if bcrypt check fails for the admin account, compare directly
+  // against ADMIN_PASSWORD env var. If it matches, self-heal the hash in the DB
+  // so future logins use bcrypt correctly.
+  if (!valid && user.isAdmin) {
+    const adminPw = process.env["ADMIN_PASSWORD"];
+    if (adminPw && password === adminPw) {
+      valid = true;
+      // Repair the hash so bcrypt works on all subsequent logins
+      try {
+        const repairedHash = await bcrypt.hash(adminPw, 12);
+        await db.update(usersTable)
+          .set({ passwordHash: repairedHash, updatedAt: new Date() })
+          .where(eq(usersTable.id, user.id));
+        console.log("🔧 Admin password hash repaired via env-var fallback");
+      } catch (hashErr) {
+        console.error("Failed to repair admin hash:", hashErr);
+      }
+    }
+  }
+
   if (!valid) {
     res.status(401).json({ error: "Invalid credentials" });
     return;
