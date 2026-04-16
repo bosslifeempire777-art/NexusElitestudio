@@ -96,6 +96,10 @@ export default function ProjectDetail() {
   const [urlCopied, setUrlCopied]       = useState(false);
   // Incremented every time a build/chat-update completes — forces iframe remount
   const [previewVersion, setPreviewVersion] = useState(0);
+  // Tracks the previous project status so we can detect build completion via polling
+  const prevProjectStatusRef = useRef<string | undefined>(undefined);
+  // True while waiting for a user-initiated update (chat or rebuild) to finish
+  const waitingForBuildRef   = useRef(false);
 
   function authHeaders(): Record<string, string> {
     const token = getToken();
@@ -111,6 +115,10 @@ export default function ProjectDetail() {
         const data = await res.json();
         setUpgradeMessage(data.message || "Upgrade your plan to rebuild projects.");
         setShowUpgradeModal(true);
+      } else if (res.ok) {
+        // Mark that we're waiting for this rebuild to complete so the polling
+        // effect switches to preview when it detects status → "ready"
+        waitingForBuildRef.current = true;
       }
     } finally {
       setIsRebuilding(false);
@@ -152,6 +160,29 @@ export default function ProjectDetail() {
       setTimeout(() => setUrlCopied(false), 2000);
     });
   }, [deployedUrl]);
+
+  // ── Polling-driven build completion ─────────────────────────────────────
+  // When the 2-second poll detects that status has changed from "building" to
+  // "ready" or "deployed" AND we were waiting for a user-triggered update,
+  // automatically refresh the preview iframe and switch to the Preview tab.
+  // This is MORE RELIABLE than SSE because it uses ordinary HTTP requests which
+  // always work through any proxy — SSE may be buffered/dropped in production.
+  useEffect(() => {
+    const curr = project?.status;
+    const prev = prevProjectStatusRef.current;
+
+    if (
+      waitingForBuildRef.current &&
+      prev === "building" &&
+      (curr === "ready" || curr === "deployed")
+    ) {
+      waitingForBuildRef.current = false;
+      setPreviewVersion(v => v + 1);
+      setActiveTab("preview");
+    }
+
+    prevProjectStatusRef.current = curr;
+  }, [project?.status]);
 
   if (isLoading) return (
     <AppLayout>
@@ -540,10 +571,14 @@ export default function ProjectDetail() {
               projectName={project.name}
               projectStatus={project.status}
               projectType={project.type}
-              onUpdateStarted={refetch}
+              onUpdateStarted={() => {
+                // Mark that polling should watch for this build to complete
+                waitingForBuildRef.current = true;
+                refetch();
+              }}
               onBuildComplete={() => {
                 refetch();
-                // Force the preview iframe to remount with fresh content
+                // Force the preview iframe to remount with fresh content (SSE path)
                 setPreviewVersion(v => v + 1);
                 // Switch to Preview so the user immediately sees the result
                 setActiveTab('preview');

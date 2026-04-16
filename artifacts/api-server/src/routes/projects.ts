@@ -424,6 +424,7 @@ router.get("/:id/build-stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
     const logs = Array.isArray(project.agentLogs) ? project.agentLogs as string[] : [];
     for (const msg of logs) {
       res.write(`data: ${JSON.stringify({ msg, ts: Date.now() })}\n\n`);
