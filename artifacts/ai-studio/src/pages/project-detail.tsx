@@ -228,13 +228,18 @@ export default function ProjectDetail() {
   // Cache-busting query param: previewVersion bumps when a build completes,
   // forcing both the iframe to reload AND the browser to bypass any cached
   // copy of the previous HTML (Cloudflare/Replit proxy + browser cache).
-  const previewUrl   = `/api/projects/${project.id}/preview?v=${previewVersion}`;
+  // The token is included so the server can identify the OWNER and inject
+  // their saved API keys (window.USER_SECRETS) into the preview HTML.
+  // Without a valid owner token, the server does NOT inject any secrets.
+  const previewToken = getToken() ?? "";
+  const previewUrl   = `/api/projects/${project.id}/preview?v=${previewVersion}${previewToken ? `&token=${encodeURIComponent(previewToken)}` : ""}`;
   const currentDevice = DEVICES.find(d => d.id === device)!;
 
   const refreshPreview = () => {
     if (iframeRef.current) {
       // Force a fresh fetch by bumping the timestamp
-      iframeRef.current.src = `/api/projects/${project.id}/preview?v=${Date.now()}`;
+      const t = getToken() ?? "";
+      iframeRef.current.src = `/api/projects/${project.id}/preview?v=${Date.now()}${t ? `&token=${encodeURIComponent(t)}` : ""}`;
     }
   };
 

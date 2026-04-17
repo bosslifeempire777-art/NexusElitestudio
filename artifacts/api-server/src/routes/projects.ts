@@ -7,6 +7,8 @@ import { generateProjectCode, generateChatResponse, generateUpdatedCode } from "
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
 import { getPlanLimits } from "./plans.js";
+import { getUserSecretNames, getUserSecretsMap } from "./secrets.js";
+import { verifyToken } from "../middleware/auth.js";
 
 const router: IRouter = Router();
 
@@ -285,9 +287,62 @@ router.get("/:id/preview", async (req, res) => {
     return;
   }
 
-  const html = project.generatedCode
+  let html = project.generatedCode
     ? project.generatedCode
     : buildMissingCodeHtml(project.name, project.type, project.id);
+
+  // Inject the project owner's API keys into window.USER_SECRETS so the
+  // generated app can call OpenAI/Stripe/etc. without hardcoding keys.
+  //
+  // SECURITY: Only inject when the requester proves they ARE the project owner.
+  // The preview endpoint is intentionally unauthenticated so that the iframe
+  // <src> can load it directly, but injecting secrets unconditionally would
+  // leak them to anyone with the URL. We accept the user's JWT via either the
+  // `Authorization` header OR a short `?token=` query parameter (the iframe
+  // src form), and verify ownership before injecting anything.
+  let isOwnerRequest = false;
+  const headerToken = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const queryToken = typeof req.query.token === "string" ? req.query.token : "";
+  const authToken = headerToken || queryToken;
+  if (authToken) {
+    const payload = verifyToken(authToken);
+    if (payload && payload.userId === project.userId) isOwnerRequest = true;
+  }
+
+  if (project.generatedCode && isOwnerRequest) {
+    try {
+      const secrets = await getUserSecretsMap(project.userId);
+      // SECURITY: JSON.stringify does NOT escape `</script>`, allowing a
+      // crafted secret value to break out of the inline script. Replace
+      // every `<` with its safe \u003c escape (and `>` for symmetry).
+      const safeJson = JSON.stringify(secrets)
+        .replace(/</g, "\\u003c")
+        .replace(/>/g, "\\u003e")
+        .replace(/&/g, "\\u0026")
+        .replace(/\u2028/g, "\\u2028")
+        .replace(/\u2029/g, "\\u2029");
+      const injection =
+        `<script>window.USER_SECRETS = ${safeJson};` +
+        `window.NEXUS_REQUIRE_KEY = function(name){` +
+        `if(window.USER_SECRETS && window.USER_SECRETS[name]) return window.USER_SECRETS[name];` +
+        `var d=document.createElement('div');` +
+        `d.style.cssText='position:fixed;inset:0;background:#0a0a0f;color:#e2e8f0;font-family:system-ui;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;z-index:99999';` +
+        `d.innerHTML='<div><div style=\\'font-size:36px;margin-bottom:12px\\'>🔑</div><div style=\\'font-size:18px;color:#00d4ff;margin-bottom:8px;font-weight:700\\'>API KEY REQUIRED</div><div style=\\'max-width:420px;line-height:1.6;font-size:14px;color:#94a3b8\\'>This app needs <code style=\\'color:#fbbf24;background:#1a1a2e;padding:2px 6px;border-radius:4px\\'>'+name+'</code>.<br/><br/>Open <strong>NexusElite Studio → Settings → API Keys</strong>, click <strong>Add Secret</strong>, and save it with the exact name <strong>'+name+'</strong>. Then reload this preview.</div></div>';` +
+        `document.body.appendChild(d);` +
+        `throw new Error('Missing API key: '+name);};</script>`;
+
+      // Inject just before </head>; if no </head>, prepend to <body>.
+      if (/<\/head>/i.test(html)) {
+        html = html.replace(/<\/head>/i, `${injection}</head>`);
+      } else if (/<body[^>]*>/i.test(html)) {
+        html = html.replace(/<body([^>]*)>/i, `<body$1>${injection}`);
+      } else {
+        html = injection + html;
+      }
+    } catch (err) {
+      console.error("Failed to inject user secrets into preview:", err);
+    }
+  }
 
   res.setHeader("Content-Type", "text/html");
   res.setHeader("X-Frame-Options", "ALLOWALL");
@@ -542,12 +597,16 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   const hasCode    = !!project.generatedCode;
   const prevStatus = project.status as string;
 
+  // Fetch user's secret NAMES (not values) so the AI can suggest using them
+  // OR explicitly tell the user which API key they need to add.
+  const userSecretNames = await getUserSecretNames(project.userId);
+
   // Run the chat reply generation and the "set building" DB write in parallel.
   // The DB update MUST finish before we call res.json() — otherwise the
   // frontend's immediate refetch() races the write and sees status:"ready",
   // which prevents polling from ever starting and the preview never refreshes.
   const [reply] = await Promise.all([
-    generateChatResponse(project.type, project.name, userMessage, project.prompt)
+    generateChatResponse(project.type, project.name, userMessage, project.prompt, userSecretNames)
       .catch(() => `Got it — applying "${userMessage}" to your project now. The preview will update automatically when done.`),
     hasCode
       ? db.update(projectsTable)
@@ -578,6 +637,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         project.name,
         project.generatedCode!,
         userMessage,
+        userSecretNames,
       );
 
       const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;

@@ -147,11 +147,18 @@ export async function generateUpdatedCode(
   name: string,
   currentCode: string,
   changeRequest: string,
+  availableSecretNames: string[] = [],
 ): Promise<string> {
   const API_KEY = getApiKey();
   if (!API_KEY || !currentCode) return currentCode;
 
   const isGame = type === "game";
+
+  const secretsBlock = availableSecretNames.length > 0
+    ? `\n\nUSER-PROVIDED API KEYS / SECRETS available at runtime via window.USER_SECRETS:
+${availableSecretNames.map((n) => `  - window.USER_SECRETS.${n}`).join("\n")}
+You SHOULD use these when calling external APIs (OpenAI, Stripe, etc.). Never hard-code keys.`
+    : `\n\nUSER-PROVIDED API KEYS / SECRETS: none yet. If the requested change requires an external API, write the code to use window.USER_SECRETS.<KEY_NAME> and gracefully show the user a friendly message inside the app telling them which secret name to add in Settings → API Keys.`;
 
   const systemPrompt = isGame
     ? `You are an expert HTML5 game developer. You will receive an existing complete HTML5 game file and a change request.
@@ -160,14 +167,14 @@ CRITICAL RULES:
 1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
 2. Keep ALL existing game logic, assets and structure intact — only apply the requested change.
 3. No external resources of any kind — no CDN, no external scripts, no external images.
-4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.`
+4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`
     : `You are an expert web developer. You will receive an existing complete single-file web application and a change request.
 Output ONLY the complete updated HTML file with the requested changes applied.
 CRITICAL RULES:
 1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
 2. Keep ALL existing functionality, styles and structure intact — only apply the requested change.
-3. No external resources of any kind — no CDN, no external scripts, no web fonts.
-4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.`;
+3. No external resources of any kind in the HTML head — no CDN scripts, no external script src, no web fonts. (You MAY call third-party JSON APIs from JavaScript using fetch().)
+4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`;
 
   const userPrompt = `This is the current code for a ${type} app called "${name}":
 
@@ -232,9 +239,14 @@ export async function generateChatResponse(
   projectName: string,
   userMessage: string,
   originalPrompt: string,
+  availableSecretNames: string[] = [],
 ): Promise<string> {
   const API_KEY = getApiKey();
   if (!API_KEY) return getSimulatedResponse(userMessage, projectType, projectName);
+
+  const secretsContext = availableSecretNames.length > 0
+    ? `The user has saved these API keys in their NexusElite Settings → API Keys (available at runtime as window.USER_SECRETS.<NAME>): ${availableSecretNames.join(", ")}.`
+    : `The user has not saved any API keys yet in NexusElite Settings → API Keys.`;
 
   try {
     const response = await fetchWithTimeout(
@@ -254,13 +266,19 @@ export async function generateChatResponse(
               role: "system",
               content: `You are a helpful AI agent inside "NexusElite AI Studio", an AI-powered app builder.
 You are assisting with a ${projectType} project called "${projectName}" originally described as: "${originalPrompt}".
-Respond as a friendly, knowledgeable AI agent. Describe what changes you are making or what advice you have.
-Keep responses concise (2-4 sentences). Use technical but accessible language. Start with what you are doing.`,
+
+${secretsContext}
+
+Your job:
+1. Tell the user what change you are making or what you advise.
+2. If the request needs ANY external service (OpenAI, Stripe, Twilio, SendGrid, weather API, maps, database, etc.) AND the required key is not in the list above, ALWAYS call it out clearly. Tell the user: which key they need (the suggested name in UPPER_SNAKE_CASE), why it is needed, and exactly how to add it ("Open Settings → API Keys → Add Secret → name it <NAME>").
+3. If the required key IS in the list above, simply confirm you are wiring the change to use it — never ask for it again.
+4. Be concise but complete (3-6 sentences). Friendly, technical, encouraging tone.`,
             },
             { role: "user", content: userMessage },
           ],
           temperature: 0.7,
-          max_tokens: 400,
+          max_tokens: 500,
         }),
       },
       30_000, // 30-second timeout for chat

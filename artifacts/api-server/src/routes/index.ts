@@ -12,6 +12,7 @@ import stripeRouter from "./stripe.js";
 import adminRouter from "./admin.js";
 import charactersRouter from "./characters.js";
 import referralsRouter from "./referrals.js";
+import secretsRouter from "./secrets.js";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use("/stripe", stripeRouter);
 router.use("/admin", adminRouter);
 router.use("/characters", charactersRouter);
 router.use("/referrals", referralsRouter);
+router.use("/secrets", secretsRouter);
 
 export default router;
