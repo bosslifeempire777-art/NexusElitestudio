@@ -373,9 +373,13 @@ function RepairTerminal() {
     setLoading(true);
 
     try {
+      const token = getToken();
       const res = await fetch("/api/admin/repair", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           message: msg,
           mode,

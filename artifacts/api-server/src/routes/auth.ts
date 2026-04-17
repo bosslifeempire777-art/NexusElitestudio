@@ -124,7 +124,16 @@ router.post("/login", async (req, res) => {
     where: or(eq(usersTable.username, username), eq(usersTable.email, username)),
   });
 
+  // Diagnostic flag: only verbose-log for the admin account so we don't leak
+  // info about regular user logins. Helps debug "can't login" issues in prod.
+  const isAdminAttempt =
+    username === (process.env["ADMIN_USERNAME"] || "Bosslife_king") ||
+    username === process.env["ADMIN_EMAIL"];
+
   if (!user || !user.passwordHash) {
+    if (isAdminAttempt) {
+      console.log(`[auth/login] admin attempt for "${username}" — user_in_db=${!!user} hash_in_db=${!!user?.passwordHash}`);
+    }
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
@@ -136,6 +145,9 @@ router.post("/login", async (req, res) => {
   // so future logins use bcrypt correctly.
   if (!valid && user.isAdmin) {
     const adminPw = process.env["ADMIN_PASSWORD"];
+    if (isAdminAttempt) {
+      console.log(`[auth/login] admin bcrypt failed — env_var_set=${!!adminPw} env_var_matches=${adminPw ? password === adminPw : false} input_len=${password.length} env_len=${adminPw?.length ?? 0}`);
+    }
     if (adminPw && password === adminPw) {
       valid = true;
       // Repair the hash so bcrypt works on all subsequent logins
@@ -152,8 +164,15 @@ router.post("/login", async (req, res) => {
   }
 
   if (!valid) {
+    if (isAdminAttempt) {
+      console.log(`[auth/login] admin login REJECTED for "${username}"`);
+    }
     res.status(401).json({ error: "Invalid credentials" });
     return;
+  }
+
+  if (isAdminAttempt) {
+    console.log(`[auth/login] admin login OK for "${username}"`);
   }
 
   const token = signToken({
