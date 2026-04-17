@@ -291,6 +291,14 @@ router.get("/:id/preview", async (req, res) => {
 
   res.setHeader("Content-Type", "text/html");
   res.setHeader("X-Frame-Options", "ALLOWALL");
+  // Aggressively prevent caching — the preview is supposed to update instantly
+  // when the user chats new changes. Cloudflare/CDN/browser caching the old
+  // HTML is the #1 cause of "I told it to change but nothing happened" reports.
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("CDN-Cache-Control", "no-store");
+  res.setHeader("Cloudflare-CDN-Cache-Control", "no-store");
   res.send(html);
 });
 

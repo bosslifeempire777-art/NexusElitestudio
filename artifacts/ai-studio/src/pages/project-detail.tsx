@@ -225,12 +225,16 @@ export default function ProjectDetail() {
     );
   }
 
-  const previewUrl   = `/api/projects/${project.id}/preview`;
+  // Cache-busting query param: previewVersion bumps when a build completes,
+  // forcing both the iframe to reload AND the browser to bypass any cached
+  // copy of the previous HTML (Cloudflare/Replit proxy + browser cache).
+  const previewUrl   = `/api/projects/${project.id}/preview?v=${previewVersion}`;
   const currentDevice = DEVICES.find(d => d.id === device)!;
 
   const refreshPreview = () => {
     if (iframeRef.current) {
-      iframeRef.current.src = previewUrl;
+      // Force a fresh fetch by bumping the timestamp
+      iframeRef.current.src = `/api/projects/${project.id}/preview?v=${Date.now()}`;
     }
   };
 
