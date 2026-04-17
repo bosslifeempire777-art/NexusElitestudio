@@ -6,6 +6,7 @@ import {
   Users, Database, DollarSign, Activity, Terminal, Send, Loader2,
   Wrench, AlertTriangle, CheckCircle2, RefreshCw, FileCode2, Cpu,
   ChevronRight, RotateCcw, ShieldAlert, Crown, Search, UserCheck, UserX, Gift,
+  Radio, UserPlus, Hammer, Box, Coins, Globe2,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { getToken } from "@/lib/auth";
@@ -229,6 +230,12 @@ export default function Admin() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Activity Feed (real DB events) */}
+        <ActivityFeed />
+
+        {/* Live Traffic */}
+        <TrafficPanel />
 
         {/* Referral Overview */}
         <AdminReferrals />
@@ -613,3 +620,323 @@ const EXAMPLE_COMMANDS: Record<RepairMode, string[]> = {
     "Add a pause menu when the player presses Escape",
   ],
 };
+
+// ─── ACTIVITY FEED ──────────────────────────────────────────────────────────
+
+type ActivityEvent = {
+  id: string;
+  kind: "signup" | "project" | "build" | "credit";
+  ts: string;
+  title: string;
+  detail: string;
+  username: string | null;
+  meta: Record<string, any>;
+};
+
+function ActivityFeed() {
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<"all" | ActivityEvent["kind"]>("all");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  async function load() {
+    try {
+      const t = getToken();
+      const r = await fetch("/api/admin/activity?limit=100", {
+        headers: t ? { Authorization: `Bearer ${t}` } : {},
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setEvents(d.events || []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    if (!autoRefresh) return;
+    const id = setInterval(load, 8000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  const filtered = filter === "all" ? events : events.filter((e) => e.kind === filter);
+  const KIND_META: Record<ActivityEvent["kind"], { icon: any; color: string; label: string }> = {
+    signup: { icon: UserPlus, color: "text-green-400", label: "Signup" },
+    project: { icon: Box, color: "text-primary", label: "Project" },
+    build: { icon: Hammer, color: "text-accent", label: "Build" },
+    credit: { icon: Coins, color: "text-yellow-400", label: "Credits" },
+  };
+
+  return (
+    <Card className="border-border">
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <CardTitle className="text-sm font-mono text-muted-foreground flex items-center gap-2">
+          <Activity className="w-4 h-4 text-green-400" />
+          ACTIVITY FEED — REAL DATABASE EVENTS
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] font-mono text-muted-foreground flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-primary" />
+            auto-refresh
+          </label>
+          <button onClick={load} className="text-xs text-muted-foreground hover:text-foreground" title="Refresh now">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-1 mb-3 flex-wrap">
+          {(["all", "signup", "project", "build", "credit"] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setFilter(k)}
+              className={`px-2.5 py-1 text-[10px] font-mono uppercase rounded border transition ${
+                filter === k
+                  ? "border-primary/60 bg-primary/10 text-primary"
+                  : "border-border/40 text-muted-foreground hover:border-border"
+              }`}
+            >
+              {k} {k !== "all" && events.filter((e) => e.kind === k).length > 0 && (
+                <span className="ml-1 opacity-60">({events.filter((e) => e.kind === k).length})</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
+            <RefreshCw className="w-4 h-4 animate-spin" /> Loading activity...
+          </div>
+        ) : filtered.length === 0 ? (
+          <p className="text-center py-8 text-muted-foreground font-mono text-xs">
+            No {filter === "all" ? "" : filter} events yet.
+          </p>
+        ) : (
+          <div className="space-y-1 max-h-96 overflow-y-auto pr-2">
+            {filtered.map((e) => {
+              const m = KIND_META[e.kind];
+              const Icon = m.icon;
+              return (
+                <div key={e.id} className="flex items-start gap-3 py-2 border-b border-border/20 last:border-0 hover:bg-secondary/20 px-2 rounded transition">
+                  <Icon className={`w-4 h-4 ${m.color} shrink-0 mt-0.5`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-xs font-mono font-semibold">{e.title}</span>
+                      {e.username && <span className="text-[11px] font-mono text-primary">@{e.username}</span>}
+                    </div>
+                    <div className="text-[11px] font-mono text-muted-foreground truncate">{e.detail}</div>
+                  </div>
+                  <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">
+                    {timeAgo(e.ts)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── LIVE TRAFFIC PANEL ─────────────────────────────────────────────────────
+
+type TrafficEntry = {
+  id: number;
+  ts: number;
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+  ip: string;
+  userId: string | null;
+  username: string | null;
+  isAdmin: boolean;
+  userAgent: string;
+  bytesOut: number;
+};
+
+function TrafficPanel() {
+  const [data, setData] = useState<{ summary: any; recent: TrafficEntry[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [search, setSearch] = useState("");
+
+  async function load() {
+    try {
+      const t = getToken();
+      const r = await fetch("/api/admin/traffic?limit=200", {
+        headers: t ? { Authorization: `Bearer ${t}` } : {},
+      });
+      if (r.ok) setData(await r.json());
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    if (!autoRefresh) return;
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  const recent = (data?.recent || []).filter((e) => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (
+      e.path.toLowerCase().includes(s) ||
+      e.method.toLowerCase().includes(s) ||
+      (e.username || "").toLowerCase().includes(s) ||
+      e.ip.includes(s) ||
+      String(e.status).includes(s)
+    );
+  });
+
+  const s = data?.summary;
+
+  return (
+    <Card className="border-border">
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <CardTitle className="text-sm font-mono text-muted-foreground flex items-center gap-2">
+          <Radio className="w-4 h-4 text-cyan-400" />
+          LIVE TRAFFIC — LAST {s?.bufferSize ?? "—"} REQUESTS
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] font-mono text-muted-foreground flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-primary" />
+            auto-refresh
+          </label>
+          <button onClick={load} className="text-xs text-muted-foreground hover:text-foreground">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
+            <RefreshCw className="w-4 h-4 animate-spin" /> Loading traffic...
+          </div>
+        ) : !data ? (
+          <p className="text-muted-foreground text-sm">No traffic data.</p>
+        ) : (
+          <>
+            {/* Summary tiles */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+              <SummaryTile label="Last 5 min" value={s.requestsLast5Min} color="text-primary" />
+              <SummaryTile label="Last hour" value={s.requestsLastHour} color="text-accent" />
+              <SummaryTile label="Errors (5xx)" value={s.errorCount} color={s.errorCount > 0 ? "text-destructive" : "text-green-400"} />
+              <SummaryTile label="Unique IPs" value={s.uniqueIps} color="text-cyan-400" />
+              <SummaryTile label="Unique users" value={s.uniqueUsers} color="text-yellow-400" />
+            </div>
+
+            {/* Top paths */}
+            {s.topPaths?.length > 0 && (
+              <div className="mb-4">
+                <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1.5">Top paths</p>
+                <div className="space-y-0.5 text-[11px] font-mono">
+                  {s.topPaths.slice(0, 5).map((p: any) => (
+                    <div key={p.path} className="flex justify-between border-b border-border/20 py-1">
+                      <span className="text-foreground truncate pr-2">{p.path}</span>
+                      <span className="text-muted-foreground">{p.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Search */}
+            <div className="relative mb-2">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter by path, method, user, IP, status…"
+                className="pl-8 h-7 text-xs"
+              />
+            </div>
+
+            {/* Request log */}
+            <div className="bg-black/60 border border-border/40 rounded font-mono text-[11px] max-h-96 overflow-y-auto">
+              <table className="w-full">
+                <thead className="text-[10px] text-muted-foreground uppercase border-b border-border/30 sticky top-0 bg-black/80 backdrop-blur z-10">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left">Time</th>
+                    <th className="px-2 py-1.5 text-left">Method</th>
+                    <th className="px-2 py-1.5 text-left">Path</th>
+                    <th className="px-2 py-1.5 text-right">Status</th>
+                    <th className="px-2 py-1.5 text-right">Δms</th>
+                    <th className="px-2 py-1.5 text-left">User</th>
+                    <th className="px-2 py-1.5 text-left">IP</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/10">
+                  {recent.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-2 py-6 text-center text-muted-foreground">
+                        {search ? `No requests match "${search}"` : "No requests yet — make some API calls and they'll show up here."}
+                      </td>
+                    </tr>
+                  ) : (
+                    recent.map((e) => (
+                      <tr key={e.id} className="hover:bg-secondary/10">
+                        <td className="px-2 py-1 text-muted-foreground/70 whitespace-nowrap">{new Date(e.ts).toLocaleTimeString("en-US", { hour12: false })}</td>
+                        <td className="px-2 py-1"><span className={methodColor(e.method)}>{e.method}</span></td>
+                        <td className="px-2 py-1 text-foreground truncate max-w-xs" title={e.path}>{e.path}</td>
+                        <td className={`px-2 py-1 text-right ${statusColor(e.status)}`}>{e.status}</td>
+                        <td className="px-2 py-1 text-right text-muted-foreground">{e.durationMs}</td>
+                        <td className="px-2 py-1 text-primary">
+                          {e.username ? <>@{e.username}{e.isAdmin && <span className="ml-1 text-[9px] text-destructive">[A]</span>}</> : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-2 py-1 text-muted-foreground/80 truncate max-w-[8rem]" title={e.userAgent}>
+                          <Globe2 className="w-2.5 h-2.5 inline mr-1" />{e.ip}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SummaryTile({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className="bg-secondary/20 border border-border/40 p-2 rounded text-center">
+      <div className={`text-lg font-display font-bold ${color}`}>{value}</div>
+      <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider">{label}</div>
+    </div>
+  );
+}
+
+function methodColor(m: string): string {
+  switch (m) {
+    case "GET": return "text-green-400";
+    case "POST": return "text-blue-400";
+    case "PUT": case "PATCH": return "text-yellow-400";
+    case "DELETE": return "text-red-400";
+    default: return "text-muted-foreground";
+  }
+}
+
+function statusColor(s: number): string {
+  if (s >= 500) return "text-red-400";
+  if (s >= 400) return "text-orange-400";
+  if (s >= 300) return "text-cyan-400";
+  if (s >= 200) return "text-green-400";
+  return "text-muted-foreground";
+}
+
+function timeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
+  return `${Math.floor(ms / 86_400_000)}d`;
+}
