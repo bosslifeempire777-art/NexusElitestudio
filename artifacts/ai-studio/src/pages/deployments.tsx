@@ -14,6 +14,7 @@ import {
   RefreshCw,
   X,
   Loader2,
+  Server,
 } from "lucide-react";
 
 interface CustomDomain {
@@ -33,6 +34,8 @@ interface Deployment {
   slug: string;
   brandedUrl: string;
   provider: string;
+  providerServiceId: string | null;
+  providerLiveUrl: string | null;
   status: string;
   errorMessage: string | null;
   buildLogs: string[];
@@ -63,6 +66,8 @@ export default function DeploymentsPage() {
   const [domainInput, setDomainInput] = useState("");
   const [domainBusy, setDomainBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [provisioning, setProvisioning] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState<string | null>(null);
 
   const headers = useCallback((): Record<string, string> => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -177,6 +182,37 @@ export default function DeploymentsPage() {
     }
   }
 
+  async function handleProvision(id: string) {
+    if (!confirm("Provision a dedicated Render web service for this deployment? This isolates traffic from the main server (Pro/Elite plan).")) return;
+    setProvisioning(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/deployments/${id}/provision`, { method: "POST", headers: headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || `Provision failed (${res.status})`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProvisioning(null);
+    }
+  }
+
+  async function handleSync(id: string) {
+    setSyncing(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/deployments/${id}/sync`, { method: "POST", headers: headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || `Sync failed (${res.status})`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(null);
+    }
+  }
+
   async function handleRemoveDomain(domainId: string) {
     if (!activeDeployment) return;
     if (!confirm("Remove this custom domain?")) return;
@@ -288,6 +324,22 @@ export default function DeploymentsPage() {
                       >
                         {d.brandedUrl} <ExternalLink className="w-3 h-3 shrink-0" />
                       </a>
+                      {d.providerServiceId && (
+                        <div className="mt-1 flex items-center gap-2 text-xs text-violet-300">
+                          <Server className="w-3 h-3" />
+                          <span className="font-mono">Dedicated Render service</span>
+                          {d.providerLiveUrl && (
+                            <a
+                              href={d.providerLiveUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline hover:text-violet-200 break-all"
+                            >
+                              {d.providerLiveUrl}
+                            </a>
+                          )}
+                        </div>
+                      )}
                       {verifiedDomains.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {verifiedDomains.map((cd) => (
@@ -321,6 +373,27 @@ export default function DeploymentsPage() {
                       >
                         Manage Domains
                       </button>
+                      {d.providerServiceId ? (
+                        <button
+                          onClick={() => handleSync(d.id)}
+                          disabled={syncing === d.id}
+                          className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded hover:bg-violet-500/10 flex items-center gap-1 disabled:opacity-40"
+                          title="Refresh status from Render"
+                        >
+                          {syncing === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                          Sync
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleProvision(d.id)}
+                          disabled={provisioning === d.id}
+                          className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded hover:bg-violet-500/10 flex items-center gap-1 disabled:opacity-40"
+                          title="Move this deployment off the shared edge onto its own Render web service"
+                        >
+                          {provisioning === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Server className="w-3 h-3" />}
+                          Provision Dedicated
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDelete(d.id)}
                         className="px-3 py-1.5 text-xs border border-red-500/40 text-red-300 rounded hover:bg-red-500/10"

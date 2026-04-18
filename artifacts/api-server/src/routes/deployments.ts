@@ -5,7 +5,26 @@ import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getPlanLimits } from "./plans.js";
-import { isRenderConfigured, pingRender, addCustomDomainToService } from "../lib/render.js";
+import {
+  isRenderConfigured,
+  pingRender,
+  addCustomDomainToService,
+  createRenderService,
+  getRenderServiceStatus,
+  deleteRenderService,
+  removeCustomDomainFromService,
+  triggerRenderRedeploy,
+  urlToHostname,
+} from "../lib/render.js";
+
+function getPublicBaseUrl(): string {
+  const domain =
+    process.env["CUSTOM_DOMAIN"] ||
+    process.env["REPLIT_DOMAINS"]?.split(",")[0] ||
+    process.env["REPLIT_DEV_DOMAIN"];
+  if (domain) return `https://${domain}`;
+  return "http://localhost:8080";
+}
 
 const router: IRouter = Router();
 
@@ -169,16 +188,36 @@ router.post("/", requireAuth, async (req, res) => {
   }
 
   if (existing) {
+    // If this deployment lives on a dedicated Render service, the static
+    // HTML snapshot is taken at container start — so a Nexus redeploy
+    // means nothing until we trigger a Render redeploy. Do that here.
+    const redeployLogs: string[] = [
+      `[${new Date().toISOString()}] Re-deployed from latest project code`,
+    ];
+    let newStatus: string = "live";
+    if (existing.providerServiceId && isRenderConfigured()) {
+      const r = await triggerRenderRedeploy(existing.providerServiceId);
+      if (r.ok) {
+        newStatus = "provisioning";
+        redeployLogs.push(
+          `[${new Date().toISOString()}] 🔁 Triggered Render redeploy (${r.deployId ?? "queued"}) — service will refetch HTML on container start`,
+        );
+      } else {
+        redeployLogs.push(
+          `[${new Date().toISOString()}] ⚠ Render redeploy failed: ${r.error}. The dedicated service may serve stale content until you click Sync or retry.`,
+        );
+      }
+    }
     const [updated] = await db
       .update(deploymentsTable)
       .set({
-        status: "live",
+        status: newStatus,
         errorMessage: null,
         lastDeployedAt: new Date(),
         updatedAt: new Date(),
         buildLogs: [
           ...(Array.isArray(existing.buildLogs) ? (existing.buildLogs as string[]) : []),
-          `[${new Date().toISOString()}] Re-deployed from latest project code`,
+          ...redeployLogs,
         ],
       })
       .where(eq(deploymentsTable.id, existing.id))
@@ -240,9 +279,190 @@ router.delete("/:id", requireAuth, async (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
+  // Best-effort cleanup of any associated Render service so we don't leave
+  // orphaned billable resources behind.
+  if (dep.providerServiceId && isRenderConfigured()) {
+    await deleteRenderService(dep.providerServiceId).catch(() => undefined);
+  }
   await db.delete(customDomainsTable).where(eq(customDomainsTable.deploymentId, dep.id));
   await db.delete(deploymentsTable).where(eq(deploymentsTable.id, dep.id));
   res.status(204).send();
+});
+
+// ── Provision dedicated Render hosting for a deployment ───────────────────
+router.post("/:id/provision", requireAuth, async (req, res) => {
+  const userId = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const isVip = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  // Pro / Elite / VIP / admin only
+  if (!isAdmin && !isVip && userPlan !== "pro" && userPlan !== "elite") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "DEDICATED_HOSTING_NOT_ALLOWED",
+      message: "Dedicated hosting is available on the Pro plan or higher.",
+      currentPlan: userPlan,
+    });
+    return;
+  }
+
+  if (!isRenderConfigured()) {
+    res.status(503).json({ error: "not_configured", message: "Render hosting is not configured on this server." });
+    return;
+  }
+
+  const dep = await db.query.deploymentsTable.findFirst({
+    where: isAdmin
+      ? eq(deploymentsTable.id, req.params.id)
+      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+  });
+  if (!dep) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  if (dep.providerServiceId) {
+    res.status(409).json({
+      error: "already_provisioned",
+      message: "This deployment already has dedicated hosting.",
+      providerServiceId: dep.providerServiceId,
+      providerLiveUrl: dep.providerLiveUrl,
+    });
+    return;
+  }
+
+  const proxyTarget = `${getPublicBaseUrl()}/api/projects/${dep.projectId}/preview`;
+  const result = await createRenderService({
+    name: `nexus-${dep.slug}`.slice(0, 60),
+    proxyTarget,
+  });
+  if (!result.ok || !result.serviceId) {
+    res.status(502).json({ error: "render_failed", message: result.error || "Failed to create Render service" });
+    return;
+  }
+
+  // Backfill: register any pre-existing custom domains with the new
+  // Render service so SSL is handled correctly. Best-effort — failures
+  // are recorded in build logs but don't abort provisioning.
+  const existingDomains = await db
+    .select()
+    .from(customDomainsTable)
+    .where(eq(customDomainsTable.deploymentId, dep.id));
+  const backfillLogs: string[] = [];
+  for (const cd of existingDomains) {
+    const r = await addCustomDomainToService(result.serviceId, cd.domain);
+    if (r.ok) {
+      const target = r.verificationTarget ?? urlToHostname(result.serviceUrl ?? null);
+      if (target) {
+        await db
+          .update(customDomainsTable)
+          .set({ verificationTarget: target, status: "pending", verifiedAt: null })
+          .where(eq(customDomainsTable.id, cd.id));
+      }
+      backfillLogs.push(`[${new Date().toISOString()}] ↳ Registered existing domain ${cd.domain} on Render`);
+    } else {
+      backfillLogs.push(`[${new Date().toISOString()}] ⚠ Failed to register ${cd.domain} on Render: ${r.error}`);
+    }
+  }
+
+  const now = new Date();
+  const [updated] = await db
+    .update(deploymentsTable)
+    .set({
+      provider: "render",
+      providerServiceId: result.serviceId,
+      providerLiveUrl: result.serviceUrl ?? null,
+      status: "provisioning",
+      updatedAt: now,
+      buildLogs: [
+        ...(Array.isArray(dep.buildLogs) ? (dep.buildLogs as string[]) : []),
+        `[${now.toISOString()}] 🛠  Provisioning dedicated Render service (${result.serviceId})`,
+        `[${now.toISOString()}] ↳ Source: ${proxyTarget}`,
+        ...backfillLogs,
+      ],
+    })
+    .where(eq(deploymentsTable.id, dep.id))
+    .returning();
+
+  const domains = await db
+    .select()
+    .from(customDomainsTable)
+    .where(eq(customDomainsTable.deploymentId, dep.id));
+  res.status(202).json(deploymentResponse(updated!, domains));
+});
+
+// ── Sync deployment status from Render ────────────────────────────────────
+router.post("/:id/sync", requireAuth, async (req, res) => {
+  const userId = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const dep = await db.query.deploymentsTable.findFirst({
+    where: isAdmin
+      ? eq(deploymentsTable.id, req.params.id)
+      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+  });
+  if (!dep) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  if (!dep.providerServiceId || !isRenderConfigured()) {
+    res.status(400).json({ error: "no_provider", message: "Deployment has no dedicated Render service to sync." });
+    return;
+  }
+
+  const status = await getRenderServiceStatus(dep.providerServiceId);
+  if (!status.ok) {
+    res.status(502).json({ error: "render_failed", message: status.error });
+    return;
+  }
+
+  // Map Render deploy status → our deployment status
+  let newStatus = dep.status;
+  let errorMessage: string | null = dep.errorMessage;
+  switch (status.state) {
+    case "live":
+      newStatus = "live";
+      errorMessage = null;
+      break;
+    case "build_failed":
+    case "update_failed":
+    case "canceled":
+    case "deactivated":
+      newStatus = "failed";
+      errorMessage = `Render reported state: ${status.state}`;
+      break;
+    case "created":
+    case "build_in_progress":
+    case "update_in_progress":
+    case "pre_deploy_in_progress":
+      newStatus = "provisioning";
+      break;
+    default:
+      // unknown state: leave status alone
+      break;
+  }
+
+  const now = new Date();
+  const [updated] = await db
+    .update(deploymentsTable)
+    .set({
+      status: newStatus,
+      providerLiveUrl: status.serviceUrl ?? dep.providerLiveUrl,
+      errorMessage,
+      lastDeployedAt: newStatus === "live" ? now : dep.lastDeployedAt,
+      updatedAt: now,
+      buildLogs: [
+        ...(Array.isArray(dep.buildLogs) ? (dep.buildLogs as string[]) : []),
+        `[${now.toISOString()}] 🔄 Render status: ${status.state ?? "unknown"}`,
+      ],
+    })
+    .where(eq(deploymentsTable.id, dep.id))
+    .returning();
+
+  const domains = await db
+    .select()
+    .from(customDomainsTable)
+    .where(eq(customDomainsTable.deploymentId, dep.id));
+  res.json(deploymentResponse(updated!, domains));
 });
 
 // ── Add custom domain ─────────────────────────────────────────────────────
@@ -289,14 +509,35 @@ router.post("/:id/domains", requireAuth, async (req, res) => {
     return;
   }
 
-  // If the deployment is on Render, register the domain there too.
+  // If the deployment is on dedicated Render hosting, the domain MUST be
+  // registered with Render so they handle SSL. Fail loudly if Render
+  // rejects it — silently falling back would leave the domain serving
+  // without SSL on a service Render isn't aware of.
   let verificationTarget: string | null = null;
-  if (dep.providerServiceId && isRenderConfigured()) {
+  if (dep.providerServiceId) {
+    if (!isRenderConfigured()) {
+      res.status(503).json({
+        error: "render_not_configured",
+        message: "This deployment uses dedicated Render hosting but RENDER_API_KEY is not set on the server.",
+      });
+      return;
+    }
     const r = await addCustomDomainToService(dep.providerServiceId, domain.toLowerCase());
-    if (r.ok) verificationTarget = r.verificationTarget ?? null;
+    if (!r.ok) {
+      res.status(502).json({
+        error: "render_domain_failed",
+        message: `Render rejected the domain: ${r.error || "unknown error"}`,
+      });
+      return;
+    }
+    verificationTarget =
+      r.verificationTarget ??
+      urlToHostname(dep.providerLiveUrl) ??
+      `${dep.slug}.${BRAND_DOMAIN}`;
+  } else {
+    // Shared edge: instruct user to CNAME → branded subdomain
+    verificationTarget = `${dep.slug}.${BRAND_DOMAIN}`;
   }
-  // Default: instruct user to CNAME → branded subdomain
-  if (!verificationTarget) verificationTarget = `${dep.slug}.${BRAND_DOMAIN}`;
 
   const [cd] = await db
     .insert(customDomainsTable)
@@ -388,6 +629,14 @@ router.delete("/:id/domains/:domainId", requireAuth, async (req, res) => {
   if (!cd) {
     res.status(404).json({ error: "not_found" });
     return;
+  }
+  // If the parent deployment is on dedicated Render hosting, remove the
+  // domain from Render too so we don't leave orphan provider config.
+  const parent = await db.query.deploymentsTable.findFirst({
+    where: eq(deploymentsTable.id, cd.deploymentId),
+  });
+  if (parent?.providerServiceId && isRenderConfigured()) {
+    await removeCustomDomainFromService(parent.providerServiceId, cd.domain).catch(() => undefined);
   }
   await db.delete(customDomainsTable).where(eq(customDomainsTable.id, cd.id));
   res.status(204).send();

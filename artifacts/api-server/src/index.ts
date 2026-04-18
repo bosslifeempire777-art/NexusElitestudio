@@ -3,6 +3,7 @@ import { ensureAdminAccount } from "./seed-admin.js";
 import { db } from "@workspace/db";
 import { projectsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { startRenderPoller } from "./lib/render-poller.js";
 
 const rawPort = process.env["PORT"];
 
@@ -52,4 +53,5 @@ app.listen(port, async () => {
   console.log(`Server listening on port ${port}`);
   await ensureAdminAccount();
   await recoverStuckBuilds();
+  startRenderPoller();
 });
