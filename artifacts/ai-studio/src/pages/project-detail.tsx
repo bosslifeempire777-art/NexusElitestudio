@@ -393,6 +393,7 @@ export default function ProjectDetail() {
               <Rocket className="w-3 h-3 shrink-0" />
               <span className="truncate">Live: <a href={project.deployedUrl} target="_blank" rel="noreferrer" className="underline hover:text-green-300">{project.deployedUrl}</a></span>
               <button onClick={() => { setDeployedUrl(project.deployedUrl!); setShowDeployModal(true); }} className="ml-auto shrink-0 hover:text-green-300">Share</button>
+              <a href="/deployments" className="shrink-0 hover:text-green-300 underline">Manage</a>
             </div>
           )}
 
