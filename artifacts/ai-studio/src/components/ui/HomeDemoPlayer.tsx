@@ -203,7 +203,7 @@ export function HomeDemoPlayer() {
                 <span className="w-3 h-3 rounded-full bg-red-500/60" />
                 <span className="w-3 h-3 rounded-full bg-yellow-500/60" />
                 <span className="w-3 h-3 rounded-full bg-green-500/60" />
-                <span className="ml-3 text-xs font-mono text-muted-foreground">adtracker-pro.nexuselitestudio.nexus</span>
+                <span className="ml-3 text-xs font-mono text-muted-foreground">adtracker-pro.nexuselitestudio.com</span>
                 {showBadge && (
                   <span className="ml-auto text-xs font-mono text-green-400 bg-green-400/10 border border-green-400/30 px-2 py-0.5 rounded-full animate-pulse">
                     ● LIVE

@@ -64,7 +64,7 @@ function generateAgentLogs(type: string, name: string): string[] {
 }
 
 function getBaseUrl(): string {
-  // Prefer custom domain (e.g. nexuselitestudio.nexus) so deployed project URLs are on the branded domain
+  // Prefer custom domain (e.g. nexuselitestudio.com) so deployed project URLs are on the branded domain
   const domain =
     process.env["CUSTOM_DOMAIN"] ||
     process.env["REPLIT_DOMAINS"]?.split(",")[0] ||

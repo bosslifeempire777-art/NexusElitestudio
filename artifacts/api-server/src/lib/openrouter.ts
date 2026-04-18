@@ -89,7 +89,7 @@ Include multiple screens/sections, realistic data, working UI interactions, and 
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.nexus",
+          "HTTP-Referer": "https://nexuselitestudio.com",
           "X-Title": "NexusElite AI Studio",
         },
         body: JSON.stringify({
@@ -192,7 +192,7 @@ Output the complete updated HTML file with the change applied. Keep everything e
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.nexus",
+          "HTTP-Referer": "https://nexuselitestudio.com",
           "X-Title": "NexusElite AI Studio",
         },
         body: JSON.stringify({
@@ -256,7 +256,7 @@ export async function generateChatResponse(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.nexus",
+          "HTTP-Referer": "https://nexuselitestudio.com",
           "X-Title": "NexusElite AI Studio",
         },
         body: JSON.stringify({

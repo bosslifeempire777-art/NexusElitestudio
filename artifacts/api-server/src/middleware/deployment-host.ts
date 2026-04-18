@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { deploymentsTable, customDomainsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 
-const BRAND_DOMAIN = (process.env["NEXUS_BRAND_DOMAIN"] || "nexuseliteaistudio.nexus").toLowerCase();
+const BRAND_DOMAIN = (process.env["NEXUS_BRAND_DOMAIN"] || "nexuselitestudio.com").toLowerCase();
 
 /**
  * Routes traffic that arrives via a branded subdomain (slug.brand.tld) or a

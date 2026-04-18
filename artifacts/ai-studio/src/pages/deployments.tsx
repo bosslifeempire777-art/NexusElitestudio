@@ -232,7 +232,7 @@ export default function DeploymentsPage() {
         <div className="border border-cyan-500/30 bg-cyan-500/5 rounded p-4 text-sm text-cyan-100/80">
           <p className="font-semibold text-cyan-300 mb-1">How it works</p>
           <ol className="list-decimal list-inside space-y-1">
-            <li>Pick a project (must be built) → we assign <code className="text-cyan-300">your-project.nexuseliteaistudio.nexus</code>.</li>
+            <li>Pick a project (must be built) → we assign <code className="text-cyan-300">your-project.nexuselitestudio.com</code>.</li>
             <li>Visit the URL — it serves your project live, instantly. Re-deploys are also instant.</li>
             <li>For your own domain (e.g. <code className="text-cyan-300">myapp.com</code>), add it below and create a CNAME record at your DNS host.</li>
           </ol>
@@ -366,7 +366,7 @@ export default function DeploymentsPage() {
                   placeholder="my-app"
                   className="flex-1 bg-transparent px-3 py-2 text-foreground outline-none text-sm font-mono"
                 />
-                <span className="px-3 text-muted-foreground text-sm">.nexuseliteaistudio.nexus</span>
+                <span className="px-3 text-muted-foreground text-sm">.nexuselitestudio.com</span>
               </div>
               <button
                 onClick={handleCreate}

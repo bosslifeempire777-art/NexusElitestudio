@@ -9,7 +9,7 @@ import { isRenderConfigured, pingRender, addCustomDomainToService } from "../lib
 
 const router: IRouter = Router();
 
-const BRAND_DOMAIN = process.env["NEXUS_BRAND_DOMAIN"] || "nexuseliteaistudio.nexus";
+const BRAND_DOMAIN = process.env["NEXUS_BRAND_DOMAIN"] || "nexuselitestudio.com";
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const DOMAIN_RE = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
 

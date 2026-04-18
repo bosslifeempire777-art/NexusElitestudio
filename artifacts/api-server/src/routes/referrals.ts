@@ -7,7 +7,7 @@ import { nanoid } from "../lib/nanoid.js";
 
 const router: IRouter = Router();
 
-const DOMAIN = "nexuselitestudio.nexus";
+const DOMAIN = "nexuselitestudio.com";
 
 const CREDIT_RULES = {
   signup:    50,
