@@ -25,6 +25,20 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+async function safeJson(res: Response): Promise<any> {
+  try { return await res.clone().json(); } catch { return null; }
+}
+
+function friendlyHttpError(res: Response, fallback: string): string {
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return "The server is starting up — please wait a moment and try again.";
+  }
+  if (res.status === 401) return "Invalid username or password.";
+  if (res.status === 429) return "Too many attempts — please wait a minute and try again.";
+  if (res.status >= 500) return "The server hit an error. Please try again in a moment.";
+  return `${fallback} (HTTP ${res.status})`;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,8 +79,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Login failed");
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || friendlyHttpError(res, "Login failed"));
     setToken(data.token);
     setUser(data.user);
   }, []);
@@ -76,8 +90,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ username, email, password, ...(referralCode ? { referralCode } : {}) }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Registration failed");
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || friendlyHttpError(res, "Registration failed"));
     setToken(data.token);
     setUser(data.user);
   }, []);
