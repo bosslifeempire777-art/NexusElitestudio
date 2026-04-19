@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { Zap, X } from "lucide-react";
 import { Link } from "wouter";
 
-const PROMO_ENDS_AT = new Date("2026-04-18T23:59:00Z").getTime();
-const DISCOUNT = 50;
+const PROMO_ENDS_AT = new Date("2026-04-22T23:59:00Z").getTime();
+const DISCOUNT = 45;
 
 function getTimeLeft() {
   const diff = Math.max(0, PROMO_ENDS_AT - Date.now());

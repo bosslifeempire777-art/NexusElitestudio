@@ -519,7 +519,7 @@ export default function ProjectDetail() {
                         Upgrade to Unlock — from $29/mo
                       </a>
                       <p className="text-[10px] text-muted-foreground/50 font-mono">
-                        Starter · Pro · Elite — 50% OFF launch promo active
+                        Starter · Pro · Elite — 45% OFF flash promo (72h)
                       </p>
                     </div>
                     <div className="flex items-start gap-3 text-left bg-secondary/30 border border-border/40 rounded p-3 w-full">
