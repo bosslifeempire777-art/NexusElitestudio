@@ -21,6 +21,7 @@ import Characters from "@/pages/characters";
 import Refer from "@/pages/refer";
 import Deployments from "@/pages/deployments";
 import Usage from "@/pages/usage";
+import AiLab from "@/pages/ai-lab";
 
 const queryClient = new QueryClient();
 
@@ -85,6 +86,9 @@ function Router() {
       </Route>
       <Route path="/usage">
         <ProtectedRoute component={Usage} />
+      </Route>
+      <Route path="/ai-lab">
+        <ProtectedRoute component={AiLab} />
       </Route>
       <Route path="/pricing" component={Pricing} />
       <Route path="/admin">

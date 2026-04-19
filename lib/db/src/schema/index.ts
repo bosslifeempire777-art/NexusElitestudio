@@ -8,3 +8,4 @@ export * from "./referrals";
 export * from "./user_secrets";
 export * from "./deployments";
 export * from "./usage_records";
+export * from "./ai_lab";
