@@ -615,26 +615,29 @@ export default function ProjectDetail() {
 
           {/* AGENT TAB — chat terminal */}
           {activeTab === 'agent' && (
-            <AgentTerminal
-              projectId={project.id}
-              projectName={project.name}
-              projectStatus={project.status}
-              projectType={project.type}
-              initialHistory={(project as any).chatHistory ?? []}
-              onUpdateStarted={() => {
-                // Mark that polling should watch for this build to complete
-                waitingForBuildRef.current = true;
-                refetch();
-              }}
-              onBuildComplete={() => {
-                refetch();
-                // Force the preview iframe to remount with fresh content (SSE path)
-                setPreviewVersion(v => v + 1);
-                // Per user request: don't auto-jump to Preview — show the
-                // "Work Complete" banner so the user can review the chat first.
-                setWorkCompleted(true);
-              }}
-            />
+            <div className="flex-1 flex flex-col min-h-0">
+              <ProjectMemoryPanel memory={(project as any).memory ?? null} />
+              <AgentTerminal
+                projectId={project.id}
+                projectName={project.name}
+                projectStatus={project.status}
+                projectType={project.type}
+                initialHistory={(project as any).chatHistory ?? []}
+                onUpdateStarted={() => {
+                  // Mark that polling should watch for this build to complete
+                  waitingForBuildRef.current = true;
+                  refetch();
+                }}
+                onBuildComplete={() => {
+                  refetch();
+                  // Force the preview iframe to remount with fresh content (SSE path)
+                  setPreviewVersion(v => v + 1);
+                  // Per user request: don't auto-jump to Preview — show the
+                  // "Work Complete" banner so the user can review the chat first.
+                  setWorkCompleted(true);
+                }}
+              />
+            </div>
           )}
         </div>
       </div>
@@ -760,6 +763,84 @@ function getStepsForMessage(text: string): string[] {
 }
 
 /* ── Agent Terminal ── */
+interface ProjectMemoryShape {
+  summary?: string;
+  completedTasks?: string[];
+  pendingTasks?: string[];
+  decisions?: string[];
+  lastUpdated?: string;
+}
+
+function ProjectMemoryPanel({ memory }: { memory: ProjectMemoryShape | null }) {
+  const [open, setOpen] = useState(false);
+  const hasContent = !!(memory && (memory.summary || memory.completedTasks?.length || memory.pendingTasks?.length || memory.decisions?.length));
+  const completedCount = memory?.completedTasks?.length ?? 0;
+  const pendingCount = memory?.pendingTasks?.length ?? 0;
+
+  if (!hasContent) {
+    return (
+      <div className="border-b border-border/30 bg-background/60 px-3 py-2 text-[11px] text-muted-foreground font-mono flex items-center gap-2">
+        <Bot className="w-3 h-3 text-accent" />
+        <span>AI memory is empty — start chatting and I'll remember every decision and task across sessions.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-b border-border/30 bg-background/60 shrink-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-mono text-accent uppercase tracking-wider hover:bg-background/80 transition"
+      >
+        <Bot className="w-3 h-3" />
+        <span>AI Project Memory</span>
+        <span className="text-green-400 normal-case tracking-normal">✓ {completedCount} done</span>
+        <span className="text-yellow-400 normal-case tracking-normal">• {pendingCount} pending</span>
+        <span className="ml-auto">{open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-3 text-xs max-h-72 overflow-y-auto">
+          {memory!.summary && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Summary</div>
+              <p className="text-foreground/90 leading-relaxed">{memory!.summary}</p>
+            </div>
+          )}
+          {(memory!.completedTasks?.length ?? 0) > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-green-400 mb-1">✓ Completed ({memory!.completedTasks!.length})</div>
+              <ul className="space-y-0.5 text-foreground/80">
+                {memory!.completedTasks!.map((t, i) => <li key={i} className="leading-snug">• {t}</li>)}
+              </ul>
+            </div>
+          )}
+          {(memory!.pendingTasks?.length ?? 0) > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-yellow-400 mb-1">• Pending ({memory!.pendingTasks!.length})</div>
+              <ul className="space-y-0.5 text-foreground/80">
+                {memory!.pendingTasks!.map((t, i) => <li key={i} className="leading-snug">• {t}</li>)}
+              </ul>
+            </div>
+          )}
+          {(memory!.decisions?.length ?? 0) > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-cyan-400 mb-1">→ Decisions ({memory!.decisions!.length})</div>
+              <ul className="space-y-0.5 text-foreground/80">
+                {memory!.decisions!.map((t, i) => <li key={i} className="leading-snug">• {t}</li>)}
+              </ul>
+            </div>
+          )}
+          {memory!.lastUpdated && (
+            <div className="text-[10px] text-muted-foreground/70 pt-1 border-t border-border/20">
+              Last updated {format(new Date(memory!.lastUpdated), "MMM d, h:mm a")}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentTerminal({
   projectId, projectName, projectStatus, projectType, onBuildComplete, onUpdateStarted, initialHistory,
 }: {

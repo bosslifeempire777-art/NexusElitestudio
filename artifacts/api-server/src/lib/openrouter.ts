@@ -148,9 +148,11 @@ export async function generateUpdatedCode(
   currentCode: string,
   changeRequest: string,
   availableSecretNames: string[] = [],
+  memory: ProjectMemory | null = null,
 ): Promise<string> {
   const API_KEY = getApiKey();
   if (!API_KEY || !currentCode) return currentCode;
+  const memoryBlock = memory ? `\n\n${formatMemoryForPrompt(memory)}\n` : "";
 
   const isGame = type === "game";
 
@@ -179,10 +181,10 @@ CRITICAL RULES:
   const userPrompt = `This is the current code for a ${type} app called "${name}":
 
 ${currentCode}
-
+${memoryBlock}
 Apply this change: ${changeRequest}
 
-Output the complete updated HTML file with the change applied. Keep everything else exactly the same.`;
+Output the complete updated HTML file with the change applied. Keep everything else exactly the same. Honor every prior decision recorded in PROJECT MEMORY above — do not undo or contradict completed work.`;
 
   try {
     const response = await fetchWithTimeout(
@@ -233,6 +235,33 @@ Output the complete updated HTML file with the change applied. Keep everything e
   }
 }
 
+export type ChatTurn = { role: string; content: string; timestamp?: string };
+export type ProjectMemory = {
+  summary?: string;
+  completedTasks?: string[];
+  pendingTasks?: string[];
+  decisions?: string[];
+  lastUpdated?: string;
+};
+
+function formatMemoryForPrompt(memory: ProjectMemory | null | undefined): string {
+  if (!memory || Object.keys(memory).length === 0) {
+    return `PROJECT MEMORY: (empty — this is the first meaningful turn). As you assist, mentally track what gets built and what's still pending.`;
+  }
+  const parts: string[] = [];
+  if (memory.summary) parts.push(`Summary so far: ${memory.summary}`);
+  if (memory.completedTasks?.length) {
+    parts.push(`Completed work:\n${memory.completedTasks.slice(-15).map(t => `  ✓ ${t}`).join("\n")}`);
+  }
+  if (memory.pendingTasks?.length) {
+    parts.push(`Pending / discussed but not yet built:\n${memory.pendingTasks.slice(-15).map(t => `  • ${t}`).join("\n")}`);
+  }
+  if (memory.decisions?.length) {
+    parts.push(`Key decisions made with the user:\n${memory.decisions.slice(-10).map(d => `  → ${d}`).join("\n")}`);
+  }
+  return `PROJECT MEMORY (you MUST honor this — it is the source of truth across sessions):\n${parts.join("\n\n")}`;
+}
+
 /** Generate a chat response for the agent terminal */
 export async function generateChatResponse(
   projectType: string,
@@ -240,6 +269,8 @@ export async function generateChatResponse(
   userMessage: string,
   originalPrompt: string,
   availableSecretNames: string[] = [],
+  chatHistory: ChatTurn[] = [],
+  memory: ProjectMemory | null = null,
 ): Promise<string> {
   const API_KEY = getApiKey();
   if (!API_KEY) return getSimulatedResponse(userMessage, projectType, projectName);
@@ -247,6 +278,15 @@ export async function generateChatResponse(
   const secretsContext = availableSecretNames.length > 0
     ? `The user has saved these API keys in their NexusElite Settings → API Keys (available at runtime as window.USER_SECRETS.<NAME>): ${availableSecretNames.join(", ")}.`
     : `The user has not saved any API keys yet in NexusElite Settings → API Keys.`;
+
+  const memoryBlock = formatMemoryForPrompt(memory);
+
+  // Take last ~20 turns as live conversational context (the memory block above
+  // covers everything older). Map our roles to OpenAI/OpenRouter roles.
+  const recentTurns = chatHistory.slice(-20).map(t => ({
+    role: t.role === "agent" ? "assistant" : "user",
+    content: t.content,
+  }));
 
   try {
     const response = await fetchWithTimeout(
@@ -269,6 +309,10 @@ You are assisting with a ${projectType} project called "${projectName}" original
 
 ${secretsContext}
 
+${memoryBlock}
+
+You have CONTINUOUS MEMORY of this project across every session. Reference what's already been built, never contradict prior decisions, and acknowledge specific completed work or pending items when the user brings them up.
+
 How you operate (every reply must follow this):
 
 1. CONFIRM UNDERSTANDING. Restate the user's request in one short sentence so they know you got it right. If the request is even slightly ambiguous (e.g. "make it better", "add a chart", "fix the login"), ASK 1-2 specific clarifying questions BEFORE making any change. Examples:
@@ -287,6 +331,7 @@ How you operate (every reply must follow this):
 
 Length: 4-8 sentences usually. Use line breaks and short bullets when listing options.`,
             },
+            ...recentTurns,
             { role: "user", content: userMessage },
           ],
           temperature: 0.7,
@@ -336,6 +381,119 @@ function getSimulatedResponse(message: string, type: string, name: string): stri
 }
 
 // ─── Self-contained HTML fallback templates ────────────────────────────────
+
+/**
+ * Updates the persistent project memory after a chat turn. Distills what
+ * actually happened into a compact summary, completed/pending task lists,
+ * and key decisions. Called after every chat exchange so the AI keeps a
+ * continuous understanding of the project across sessions.
+ */
+export async function updateProjectMemory(
+  projectName: string,
+  projectType: string,
+  prevMemory: ProjectMemory | null,
+  userMessage: string,
+  agentReply: string,
+  codeWasChanged: boolean,
+): Promise<ProjectMemory> {
+  const API_KEY = getApiKey();
+  const safePrev: ProjectMemory = {
+    summary: prevMemory?.summary || "",
+    completedTasks: Array.isArray(prevMemory?.completedTasks) ? prevMemory!.completedTasks!.slice(-30) : [],
+    pendingTasks: Array.isArray(prevMemory?.pendingTasks) ? prevMemory!.pendingTasks!.slice(-30) : [],
+    decisions: Array.isArray(prevMemory?.decisions) ? prevMemory!.decisions!.slice(-20) : [],
+  };
+
+  // No API key — fall back to a deterministic append so memory still grows.
+  if (!API_KEY) {
+    if (codeWasChanged) {
+      safePrev.completedTasks!.push(userMessage.slice(0, 140));
+    } else {
+      safePrev.pendingTasks!.push(userMessage.slice(0, 140));
+    }
+    safePrev.lastUpdated = new Date().toISOString();
+    return safePrev;
+  }
+
+  const sys = `You maintain a compact long-term memory record for a ${projectType} project called "${projectName}" inside NexusElite AI Studio. After each chat turn you update the memory.
+
+Output STRICT JSON only — no markdown, no commentary. Schema:
+{
+  "summary": "2-4 sentence running description of what this project IS and how far along it is. Update it; don't restart it.",
+  "completedTasks": ["short bullet of work that has actually been built / shipped"],
+  "pendingTasks": ["short bullet of work discussed but NOT yet built"],
+  "decisions": ["short bullet of important agreed-upon design/tech decisions"]
+}
+
+Rules:
+- KEEP all relevant prior items. Only remove an item if it's truly obsolete or duplicated.
+- Move items from pending → completed when they've been built (codeWasChanged=true and the user's request matches).
+- Each list item must be one short sentence (<= 140 chars).
+- Cap each list at 25 items — drop the oldest if over.
+- Never invent things that weren't discussed.`;
+
+  const user = `PREVIOUS MEMORY:
+${JSON.stringify(safePrev, null, 2)}
+
+LATEST TURN:
+USER: ${userMessage}
+ASSISTANT: ${agentReply}
+CODE_WAS_CHANGED_THIS_TURN: ${codeWasChanged}
+
+Return the updated memory JSON.`;
+
+  try {
+    const response = await fetchWithTimeout(
+      API_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${API_KEY}`,
+          "HTTP-Referer": "https://nexuselitestudio.com",
+          "X-Title": "NexusElite AI Studio",
+        },
+        body: JSON.stringify({
+          model: CHAT_MODEL,
+          messages: [
+            { role: "system", content: sys },
+            { role: "user", content: user },
+          ],
+          temperature: 0.2,
+          max_tokens: 800,
+          response_format: { type: "json_object" },
+        }),
+      },
+      25_000,
+    );
+
+    if (!response.ok) throw new Error(`memory update http ${response.status}`);
+    const data = (await response.json()) as any;
+    const raw = data.choices?.[0]?.message?.content || "";
+    const cleaned = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    const parsed = JSON.parse(cleaned);
+
+    const norm = (v: any): string[] =>
+      Array.isArray(v) ? v.filter(x => typeof x === "string" && x.trim()).map(x => x.trim().slice(0, 200)).slice(-25) : [];
+
+    return {
+      summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 800) : safePrev.summary,
+      completedTasks: norm(parsed.completedTasks),
+      pendingTasks: norm(parsed.pendingTasks),
+      decisions: norm(parsed.decisions),
+      lastUpdated: new Date().toISOString(),
+    };
+  } catch (err: any) {
+    console.warn("updateProjectMemory failed, falling back:", err?.message ?? err);
+    if (codeWasChanged) {
+      safePrev.completedTasks!.push(userMessage.slice(0, 140));
+    } else {
+      safePrev.pendingTasks!.push(userMessage.slice(0, 140));
+    }
+    safePrev.lastUpdated = new Date().toISOString();
+    return safePrev;
+  }
+}
 
 function getDefaultHtml(type: string, name: string, prompt: string): string {
   switch (type) {

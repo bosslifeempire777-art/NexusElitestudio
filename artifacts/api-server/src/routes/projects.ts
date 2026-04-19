@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { projectsTable, usersTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
-import { generateProjectCode, generateChatResponse, generateUpdatedCode } from "../lib/openrouter.js";
+import { generateProjectCode, generateChatResponse, generateUpdatedCode, updateProjectMemory, type ProjectMemory, type ChatTurn } from "../lib/openrouter.js";
 import { recordUsage, consumeOverageCreditIfNeeded, canPerformBuild } from "../lib/usage.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
@@ -631,8 +631,11 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   // The DB update MUST finish before we call res.json() — otherwise the
   // frontend's immediate refetch() races the write and sees status:"ready",
   // which prevents polling from ever starting and the preview never refreshes.
+  const priorChat = (project.chatHistory as ChatTurn[] | null) ?? [];
+  const priorMemory = (project.memory as ProjectMemory | null) ?? null;
+
   const [reply] = await Promise.all([
-    generateChatResponse(project.type, project.name, userMessage, project.prompt, userSecretNames)
+    generateChatResponse(project.type, project.name, userMessage, project.prompt, userSecretNames, priorChat, priorMemory)
       .catch(() => `Got it — applying "${userMessage}" to your project now. The preview will update automatically when done.`),
     hasCode
       ? db.update(projectsTable)
@@ -662,7 +665,24 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   // refetch() will see the right status and start polling immediately.
   res.json({ reply, updating: hasCode });
 
-  if (!hasCode) return;
+  // For chat-only turns (no code rebuild), update memory now in the background.
+  // For turns that trigger a rebuild, the memory update happens inside the
+  // rebuild branch below so it knows whether code actually changed.
+  if (!hasCode) {
+    setImmediate(async () => {
+      try {
+        const newMemory = await updateProjectMemory(
+          project.name, project.type, priorMemory, userMessage, reply, false,
+        );
+        await db.update(projectsTable)
+          .set({ memory: newMemory as any })
+          .where(eq(projectsTable.id, project.id));
+      } catch (memErr) {
+        console.warn("Memory update (chat-only) failed:", memErr);
+      }
+    });
+    return;
+  }
 
   // Stream agent update steps
   setImmediate(async () => {
@@ -681,9 +701,28 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         project.generatedCode!,
         userMessage,
         userSecretNames,
+        priorMemory,
       );
 
       const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;
+
+      // Update long-term project memory after every chat turn so the AI keeps
+      // continuous context of what's been built and what's still pending.
+      try {
+        const newMemory = await updateProjectMemory(
+          project.name,
+          project.type,
+          priorMemory,
+          userMessage,
+          reply,
+          changed,
+        );
+        await db.update(projectsTable)
+          .set({ memory: newMemory as any })
+          .where(eq(projectsTable.id, project.id));
+      } catch (memErr) {
+        console.warn("Memory update failed:", memErr);
+      }
 
       if (changed) {
         emitLog(project.id, `[Code Generator] ✅ Updated ${updatedCode.length.toLocaleString()} bytes — changes applied`);
