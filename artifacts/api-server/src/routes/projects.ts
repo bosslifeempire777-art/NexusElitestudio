@@ -4,6 +4,7 @@ import { projectsTable, usersTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { generateProjectCode, generateChatResponse, generateUpdatedCode } from "../lib/openrouter.js";
+import { recordUsage, consumeOverageCreditIfNeeded, canPerformBuild } from "../lib/usage.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
 import { getPlanLimits } from "./plans.js";
@@ -200,6 +201,9 @@ router.post("/", requireAuth, async (req, res) => {
         await db.update(usersTable)
           .set({ buildsThisMonth: (freshUser?.buildsThisMonth ?? 0) + 1 })
           .where(eq(usersTable.id, userId));
+        // Persist a usage record + consume an overage credit if plan quota was exhausted
+        await recordUsage({ userId, projectId: project.id, kind: "build", description: `Initial build of "${project.name}"` });
+        await consumeOverageCreditIfNeeded(userId, req.auth!.plan);
       }
     } catch (err) {
       console.error("Code generation failed (unexpected):", err);
@@ -453,6 +457,10 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
           updatedAt: new Date(),
         })
         .where(eq(projectsTable.id, project.id));
+      if (hasCode) {
+        await recordUsage({ userId, projectId: project.id, kind: "rebuild", description: `Rebuild of "${project.name}"` });
+        await consumeOverageCreditIfNeeded(userId, req.auth!.plan);
+      }
     } catch (err) {
       console.error("Rebuild failed (unexpected):", err);
       completeBuild(project.id);
@@ -597,6 +605,24 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   const hasCode    = !!project.generatedCode;
   const prevStatus = project.status as string;
 
+  // Enforce monthly build limit on chat-driven code changes (skip for admin/VIP).
+  // We only block when this chat is going to actually rebuild code (`hasCode`).
+  if (hasCode && !req.auth!.isAdmin && !req.auth!.isVip) {
+    const check = await canPerformBuild(userId, req.auth!.plan);
+    if (!check.allowed) {
+      res.status(402).json({
+        error: "plan_limit",
+        code: check.reason === "overage_required" ? "OVERAGE_REQUIRED" : "BUILD_LIMIT",
+        message: check.reason === "overage_required"
+          ? `You've used all ${check.usage.builds.limit} builds this month. Buy a build pack to continue, or upgrade your plan.`
+          : `You've used all ${check.usage.builds.limit} builds this month on the ${req.auth!.plan} plan. Upgrade for more builds.`,
+        currentPlan: req.auth!.plan,
+        usage: check.usage,
+      });
+      return;
+    }
+  }
+
   // Fetch user's secret NAMES (not values) so the AI can suggest using them
   // OR explicitly tell the user which API key they need to add.
   const userSecretNames = await getUserSecretNames(project.userId);
@@ -614,6 +640,23 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           .where(eq(projectsTable.id, project.id))
       : Promise.resolve(),
   ]);
+
+  // Persist the user message + agent reply to chat_history so it's available
+  // across sessions. We append rather than overwrite to keep full transcript.
+  try {
+    const existing = (project.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
+    const nowIso = new Date().toISOString();
+    const updated = [
+      ...existing,
+      { role: "user", content: userMessage, timestamp: nowIso },
+      { role: "agent", content: reply, timestamp: nowIso },
+    ];
+    await db.update(projectsTable)
+      .set({ chatHistory: updated as any })
+      .where(eq(projectsTable.id, project.id));
+  } catch (err) {
+    console.warn("Failed to persist chat history:", err);
+  }
 
   // By the time we respond the DB already shows "building", so the frontend's
   // refetch() will see the right status and start polling immediately.
@@ -656,6 +699,13 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
             updatedAt: new Date(),
           })
           .where(eq(projectsTable.id, project.id));
+        await recordUsage({
+          userId: project.userId,
+          projectId: project.id,
+          kind: "chat_change",
+          description: `Chat update: "${userMessage.slice(0, 80)}"`,
+        });
+        await consumeOverageCreditIfNeeded(project.userId, req.auth!.plan);
       } else {
         emitLog(project.id, `[Orchestrator] ✅ Code reviewed — no structural changes needed for this request.`);
         await db.update(projectsTable)

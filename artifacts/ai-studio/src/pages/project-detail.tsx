@@ -8,7 +8,7 @@ import {
   RotateCcw, Send, Bot, User, Sparkles, Bug, Palette, FilePlus, Lock, Database,
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
   Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
-  ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity,
+  ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity, ArrowRight,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { getToken } from "@/lib/auth";
@@ -100,6 +100,9 @@ export default function ProjectDetail() {
   const prevProjectStatusRef = useRef<string | undefined>(undefined);
   // True while waiting for a user-initiated update (chat or rebuild) to finish
   const waitingForBuildRef   = useRef(false);
+  // True after a build completes; shows "Work Complete — View Result" banner
+  // until the user clicks it (no more auto-redirect).
+  const [workCompleted, setWorkCompleted] = useState(false);
 
   function authHeaders(): Record<string, string> {
     const token = getToken();
@@ -178,7 +181,10 @@ export default function ProjectDetail() {
     ) {
       waitingForBuildRef.current = false;
       setPreviewVersion(v => v + 1);
-      setActiveTab("preview");
+      // Per user request: do NOT auto-switch to Preview tab. Show a manual
+      // "Work Complete — View Result" banner instead so the user controls
+      // when they're ready to look at the result.
+      setWorkCompleted(true);
     }
 
     prevProjectStatusRef.current = curr;
@@ -337,6 +343,39 @@ export default function ProjectDetail() {
       )}
 
       <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-4rem)] -m-4 md:-m-6">
+
+        {/* ── Work Complete Banner ── */}
+        {workCompleted && activeTab !== 'preview' && (
+          <div className="shrink-0 border-b border-green-400/40 bg-gradient-to-r from-green-500/10 via-green-400/5 to-transparent px-4 py-3 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-green-400/20 border border-green-400/40 flex items-center justify-center shrink-0">
+                <span className="text-green-300 text-lg leading-none">✓</span>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-display font-bold text-green-300 truncate">Work complete — your project is ready to view</p>
+                <p className="text-[11px] font-mono text-green-200/70 truncate">All agents finished. Click below when you're ready to see the result.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={() => { setActiveTab('preview'); setWorkCompleted(false); }}
+                className="h-8 px-4 bg-green-500 hover:bg-green-400 text-black font-mono text-xs gap-1.5"
+              >
+                View Result <ArrowRight className="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setWorkCompleted(false)}
+                className="h-8 w-8 p-0 text-green-300/60 hover:text-green-300"
+                title="Dismiss"
+              >
+                ×
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* ── Top Header ── */}
         <div className="border-b border-border/50 bg-secondary/30 px-4 py-2 shrink-0 flex flex-col gap-2">
@@ -581,6 +620,7 @@ export default function ProjectDetail() {
               projectName={project.name}
               projectStatus={project.status}
               projectType={project.type}
+              initialHistory={(project as any).chatHistory ?? []}
               onUpdateStarted={() => {
                 // Mark that polling should watch for this build to complete
                 waitingForBuildRef.current = true;
@@ -590,8 +630,9 @@ export default function ProjectDetail() {
                 refetch();
                 // Force the preview iframe to remount with fresh content (SSE path)
                 setPreviewVersion(v => v + 1);
-                // Switch to Preview so the user immediately sees the result
-                setActiveTab('preview');
+                // Per user request: don't auto-jump to Preview — show the
+                // "Work Complete" banner so the user can review the chat first.
+                setWorkCompleted(true);
               }}
             />
           )}
@@ -720,7 +761,7 @@ function getStepsForMessage(text: string): string[] {
 
 /* ── Agent Terminal ── */
 function AgentTerminal({
-  projectId, projectName, projectStatus, projectType, onBuildComplete, onUpdateStarted,
+  projectId, projectName, projectStatus, projectType, onBuildComplete, onUpdateStarted, initialHistory,
 }: {
   projectId: string;
   projectName: string;
@@ -728,16 +769,21 @@ function AgentTerminal({
   projectType?: string;
   onBuildComplete?: () => void;
   onUpdateStarted?: () => void;
+  initialHistory?: ChatMessage[];
 }) {
   const [, navigate] = useLocation();
   const isGame = projectType === "game";
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "agent",
-      content: `Agent swarm standing by for "${projectName}". You can ask me to add features, fix bugs, redesign UI, add pages, integrate auth, set up a database, or anything else. Use the quick actions below or type your own instruction.`,
-      timestamp: new Date().toISOString(),
-    },
-  ]);
+  // Build initial messages: greeting first, then full saved chat history
+  // (so users can scroll back through every prior conversation on this project).
+  const greeting: ChatMessage = {
+    role: "agent",
+    content: `Agent swarm standing by for "${projectName}". I can add features, fix bugs, redesign the UI, add pages, integrate auth or APIs — anything. If your request is open-ended I'll suggest 2-3 approaches before building so we get exactly what you want. Use the quick actions below or type your own instruction.`,
+    timestamp: new Date().toISOString(),
+  };
+  const savedHistory = Array.isArray(initialHistory) ? initialHistory : [];
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    savedHistory.length > 0 ? [greeting, ...savedHistory] : [greeting]
+  );
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState("");

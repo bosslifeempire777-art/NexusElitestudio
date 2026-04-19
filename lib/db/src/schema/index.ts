@@ -7,3 +7,4 @@ export * from "./characters";
 export * from "./referrals";
 export * from "./user_secrets";
 export * from "./deployments";
+export * from "./usage_records";

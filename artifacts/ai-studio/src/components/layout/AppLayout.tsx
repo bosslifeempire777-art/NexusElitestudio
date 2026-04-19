@@ -18,6 +18,7 @@ import {
   Sword,
   Gift,
   Globe,
+  Activity,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/agents",       label: "Agent Swarm",      icon: Bot },
   { href: "/marketplace",  label: "Marketplace",      icon: Store },
   { href: "/deployments",  label: "Deployments",      icon: Globe },
+  { href: "/usage",        label: "Usage & Billing",  icon: Activity },
   { href: "/pricing",      label: "Plans & Pricing",  icon: CreditCard },
   { href: "/refer",        label: "Refer & Earn",     icon: Gift },
   { href: "/settings",     label: "Settings",         icon: Settings },

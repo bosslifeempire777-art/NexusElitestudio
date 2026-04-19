@@ -14,6 +14,7 @@ import charactersRouter from "./characters.js";
 import referralsRouter from "./referrals.js";
 import secretsRouter from "./secrets.js";
 import deploymentsRouter from "./deployments.js";
+import usageRouter from "./usage.js";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use("/characters", charactersRouter);
 router.use("/referrals", referralsRouter);
 router.use("/secrets", secretsRouter);
 router.use("/deployments", deploymentsRouter);
+router.use("/usage", usageRouter);
 
 export default router;

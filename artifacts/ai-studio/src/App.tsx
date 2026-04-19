@@ -20,6 +20,7 @@ import NotFound from "@/pages/not-found";
 import Characters from "@/pages/characters";
 import Refer from "@/pages/refer";
 import Deployments from "@/pages/deployments";
+import Usage from "@/pages/usage";
 
 const queryClient = new QueryClient();
 
@@ -81,6 +82,9 @@ function Router() {
       </Route>
       <Route path="/deployments">
         <ProtectedRoute component={Deployments} />
+      </Route>
+      <Route path="/usage">
+        <ProtectedRoute component={Usage} />
       </Route>
       <Route path="/pricing" component={Pricing} />
       <Route path="/admin">
