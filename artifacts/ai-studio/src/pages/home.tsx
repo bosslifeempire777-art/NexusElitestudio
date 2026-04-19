@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/cyber-ui";
-import { Cpu, Rocket, Code, Shield, BrainCircuit, Zap, TrendingDown, Layers } from "lucide-react";
+import { Cpu, Rocket, Code, Shield, BrainCircuit, Zap, TrendingDown, Layers, Beaker, Sparkles, Trophy, Coins } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { HomeDemoPlayer } from "@/components/ui/HomeDemoPlayer";
 import { PromoBanner } from "@/components/ui/PromoBanner";
@@ -138,6 +138,72 @@ export default function Home() {
         </div>
       </section>
 
+      {/* AI Lab — NEW Feature Spotlight */}
+      <section className="relative z-10 py-24 border-t border-border/50">
+        <div className="container mx-auto px-6">
+          <div className="max-w-5xl mx-auto">
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <span className="px-2.5 py-1 text-[10px] font-mono bg-accent text-background rounded uppercase tracking-wider font-bold">New</span>
+              <span className="text-xs font-mono text-accent uppercase tracking-widest">AI Lab — Test Drive</span>
+            </div>
+            <h2 className="text-center text-3xl md:text-4xl font-display font-bold mb-4 text-glow uppercase">
+              Try Every Top Model. <span className="text-accent">Side-by-Side.</span>
+            </h2>
+            <p className="text-center text-muted-foreground font-mono text-sm md:text-base mb-12 max-w-2xl mx-auto">
+              The only platform that lets you race GPT-4o, Claude 3.5 Sonnet, Gemini, Llama, Mistral and DeepSeek against the same prompt — then graduate to your winner with one click.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+              <div className="glass-panel p-6 cyber-clip border-l-4 border-l-accent">
+                <Beaker className="w-10 h-10 text-accent mb-4" />
+                <h3 className="text-lg font-display font-bold mb-2">Pay Per Prompt</h3>
+                <p className="text-muted-foreground font-mono text-xs leading-relaxed">Start at <span className="text-accent font-bold">$5 for 100 prompts</span>. No subscription. Test as little or as much as you need.</p>
+              </div>
+              <div className="glass-panel p-6 cyber-clip border-l-4 border-l-accent">
+                <Sparkles className="w-10 h-10 text-accent mb-4" />
+                <h3 className="text-lg font-display font-bold mb-2">3-Way Compare</h3>
+                <p className="text-muted-foreground font-mono text-xs leading-relaxed">Run the same prompt across the top 3 models for your app type. See the differences instantly. Pick the winner.</p>
+              </div>
+              <div className="glass-panel p-6 cyber-clip border-l-4 border-l-accent">
+                <Trophy className="w-10 h-10 text-accent mb-4" />
+                <h3 className="text-lg font-display font-bold mb-2">Graduate Direct</h3>
+                <p className="text-muted-foreground font-mono text-xs leading-relaxed">Found your model? We hand you the sign-up link to OpenAI, Anthropic, Google or OpenRouter — your account, your bill, no markup.</p>
+              </div>
+            </div>
+
+            <div className="text-center">
+              <Button size="lg" variant="outline" className="text-base" asChild>
+                <Link href="/ai-lab">Open the AI Lab <Beaker className="ml-2 w-4 h-4" /></Link>
+              </Button>
+              <p className="text-[11px] font-mono text-muted-foreground mt-4">
+                <Coins className="inline w-3 h-3 text-yellow-400 mr-1" />
+                Available on every plan — including Free.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* What Makes Us One-of-a-Kind */}
+      <section className="relative z-10 py-24 border-t border-border/50 bg-secondary/30">
+        <div className="container mx-auto px-6">
+          <h2 className="text-center text-3xl md:text-4xl font-display font-bold mb-4 text-glow uppercase">
+            What Makes NexusElite <span className="text-accent">One of a Kind</span>
+          </h2>
+          <p className="text-center text-muted-foreground font-mono text-sm mb-12 max-w-2xl mx-auto">
+            Five things you can do here that no other AI app builder offers.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            <UniqueCard num="01" title="Persistent Project Memory" desc="Your AI remembers every decision, completed feature, and pending task across sessions. Pick up exactly where you left off — no re-explaining." />
+            <UniqueCard num="02" title="21-Agent Coordinated Swarm" desc="Architect, designer, security auditor, game engine, DevOps — all working in parallel. Other tools use one model for everything." />
+            <UniqueCard num="03" title="AI Lab Model Race" desc="Run the same prompt across 3 frontier models side-by-side. Find the perfect AI for your project before committing." />
+            <UniqueCard num="04" title="Character Studio for Games" desc="Generate game-ready characters with stats, lore, and sprites. Drop them straight into your game project." />
+            <UniqueCard num="05" title="One-Click Deploy to Live URL" desc="From idea to public URL in minutes. Render-backed deployments with custom domains, SSL, and CI/CD baked in." />
+            <UniqueCard num="06" title="Marketplace + Refer & Earn" desc="Sell what you build. Earn from every friend you bring in. Your studio becomes a revenue stream, not just an expense." />
+          </div>
+        </div>
+      </section>
+
       {/* Model Highlight Banner */}
       <section className="relative z-10 py-16 border-t border-border/50">
         <div className="container mx-auto px-6 text-center">
@@ -168,6 +234,16 @@ function FeatureCard({ icon: Icon, title, desc }: { icon: any, title: string, de
       <Icon className="w-12 h-12 text-primary mb-6 group-hover:text-accent transition-colors" />
       <h3 className="text-xl font-display font-bold mb-3">{title}</h3>
       <p className="text-muted-foreground font-mono text-sm leading-relaxed">{desc}</p>
+    </div>
+  );
+}
+
+function UniqueCard({ num, title, desc }: { num: string; title: string; desc: string }) {
+  return (
+    <div className="border border-border/50 bg-background/40 p-6 rounded-lg hover:border-accent transition-colors group">
+      <div className="text-3xl font-display font-black text-accent/40 group-hover:text-accent mb-2 transition-colors">{num}</div>
+      <h3 className="text-base font-display font-bold mb-2 text-foreground">{title}</h3>
+      <p className="text-muted-foreground font-mono text-xs leading-relaxed">{desc}</p>
     </div>
   );
 }
