@@ -1,8 +1,18 @@
 const API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-// Best fast model for code generation — reliable, large context, quick
-const CODE_MODEL = "google/gemini-2.0-flash-001";
-const CHAT_MODEL = "google/gemini-2.0-flash-001";
+// Ordered list of models to try. The first one is preferred; if it returns
+// a transient error (429 rate limit, 5xx outage, etc.) we automatically
+// fall through to the next model so builds keep working when an upstream
+// provider is throttled. All have generous context windows + good code
+// quality.
+const CODE_MODELS = [
+  "google/gemini-2.0-flash-001",
+  "openai/gpt-4o-mini",
+  "anthropic/claude-3.5-haiku",
+  "deepseek/deepseek-chat",
+  "meta-llama/llama-3.3-70b-instruct",
+];
+const CHAT_MODELS = CODE_MODELS;
 const FETCH_TIMEOUT_MS = 90_000; // 90 seconds
 
 function getApiKey(): string | undefined {
@@ -18,6 +28,66 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Call OpenRouter with automatic model fallback. Tries each model in `models`
+ * in order; advances to the next one on retryable errors (429, 5xx, network
+ * timeouts). Returns the first successful response (already-parsed JSON) and
+ * the model that produced it, or throws if every model fails.
+ */
+async function callOpenRouter(
+  bodyWithoutModel: Record<string, any>,
+  models: string[],
+  timeoutMs: number,
+  apiKey: string,
+): Promise<{ data: any; model: string }> {
+  let lastErr: any = null;
+  for (const model of models) {
+    try {
+      const response = await fetchWithTimeout(
+        API_URL,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            "HTTP-Referer": "https://nexuselitestudio.com",
+            "X-Title": "NexusElite AI Studio",
+          },
+          body: JSON.stringify({ ...bodyWithoutModel, model }),
+        },
+        timeoutMs,
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        return { data, model };
+      }
+
+      // Retryable: rate-limited, server errors, or upstream provider failure.
+      // Anything else (400, 401, 403) is a hard error — stop trying.
+      const retryable = response.status === 429 || response.status >= 500;
+      const errText = await response.text().catch(() => "");
+      lastErr = new Error(`http ${response.status} from ${model}: ${errText.slice(0, 200)}`);
+      if (!retryable) {
+        console.error(`OpenRouter non-retryable error on ${model}:`, response.status, errText.slice(0, 300));
+        throw lastErr;
+      }
+      console.warn(`OpenRouter ${response.status} on ${model} — trying next fallback`);
+      continue;
+    } catch (err: any) {
+      lastErr = err;
+      if (err?.name === "AbortError") {
+        console.warn(`OpenRouter timed out on ${model} — trying next fallback`);
+        continue;
+      }
+      // Network error or non-retryable thrown above — try next anyway for safety
+      console.warn(`OpenRouter exception on ${model}: ${err?.message || err} — trying next fallback`);
+      continue;
+    }
+  }
+  throw lastErr || new Error("All OpenRouter models failed");
 }
 
 /** Generate a complete self-contained HTML app for the preview iframe */
@@ -82,40 +152,23 @@ User's requirements: ${prompt}
 Include multiple screens/sections, realistic data, working UI interactions, and a professional visual design.`;
 
   try {
-    const response = await fetchWithTimeout(
-      API_URL,
+    const { data, model } = await callOpenRouter(
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.com",
-          "X-Title": "NexusElite AI Studio",
-        },
-        body: JSON.stringify({
-          model: CODE_MODEL,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user",   content: userPrompt   },
-          ],
-          temperature: 0.7,
-          max_tokens: 8000,
-        }),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user",   content: userPrompt   },
+        ],
+        temperature: 0.7,
+        max_tokens: 8000,
       },
+      CODE_MODELS,
       FETCH_TIMEOUT_MS,
+      API_KEY,
     );
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error(`OpenRouter error ${response.status}:`, errText);
-      return getDefaultHtml(type, name, prompt);
-    }
-
-    const data = (await response.json()) as any;
     const content: string = data.choices?.[0]?.message?.content || "";
-
     if (!content) {
-      console.warn("OpenRouter returned empty content, using fallback");
+      console.warn(`OpenRouter (${model}) returned empty content, using fallback`);
       return getDefaultHtml(type, name, prompt);
     }
 
@@ -126,17 +179,14 @@ Include multiple screens/sections, realistic data, working UI interactions, and 
       .trim();
 
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+      console.log(`generateProjectCode: success via ${model}`);
       return stripped;
     }
 
-    console.warn("OpenRouter returned non-HTML content, using fallback");
+    console.warn(`OpenRouter (${model}) returned non-HTML content, using fallback`);
     return getDefaultHtml(type, name, prompt);
   } catch (err: any) {
-    if (err?.name === "AbortError") {
-      console.error(`OpenRouter timed out after ${FETCH_TIMEOUT_MS / 1000}s, using fallback`);
-    } else {
-      console.error("OpenRouter API error:", err);
-    }
+    console.error("All OpenRouter models failed for generateProjectCode:", err?.message ?? err);
     return getDefaultHtml(type, name, prompt);
   }
 }
@@ -187,35 +237,20 @@ Apply this change: ${changeRequest}
 Output the complete updated HTML file with the change applied. Keep everything else exactly the same. Honor every prior decision recorded in PROJECT MEMORY above — do not undo or contradict completed work.`;
 
   try {
-    const response = await fetchWithTimeout(
-      API_URL,
+    const { data, model } = await callOpenRouter(
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.com",
-          "X-Title": "NexusElite AI Studio",
-        },
-        body: JSON.stringify({
-          model: CODE_MODEL,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user",   content: userPrompt   },
-          ],
-          temperature: 0.5,
-          max_tokens: 16000,
-        }),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user",   content: userPrompt   },
+        ],
+        temperature: 0.5,
+        max_tokens: 16000,
       },
+      CODE_MODELS,
       FETCH_TIMEOUT_MS,
+      API_KEY,
     );
 
-    if (!response.ok) {
-      console.error(`OpenRouter update error ${response.status}`);
-      return currentCode;
-    }
-
-    const data = (await response.json()) as any;
     const content: string = data.choices?.[0]?.message?.content || "";
     if (!content) return currentCode;
 
@@ -225,12 +260,13 @@ Output the complete updated HTML file with the change applied. Keep everything e
       .trim();
 
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+      console.log(`generateUpdatedCode: success via ${model}`);
       return stripped;
     }
 
     return currentCode; // fallback: keep existing code if AI returned garbage
   } catch (err: any) {
-    console.error("generateUpdatedCode error:", err?.message ?? err);
+    console.error("All OpenRouter models failed for generateUpdatedCode:", err?.message ?? err);
     return currentCode;
   }
 }
@@ -289,22 +325,12 @@ export async function generateChatResponse(
   }));
 
   try {
-    const response = await fetchWithTimeout(
-      API_URL,
+    const { data } = await callOpenRouter(
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.com",
-          "X-Title": "NexusElite AI Studio",
-        },
-        body: JSON.stringify({
-          model: CHAT_MODEL,
-          messages: [
-            {
-              role: "system",
-              content: `You are an elite AI engineer inside "NexusElite AI Studio" — the premier AI-powered app & game builder.
+        messages: [
+          {
+            role: "system",
+            content: `You are an elite AI engineer inside "NexusElite AI Studio" — the premier AI-powered app & game builder.
 
 YOUR PRIME DIRECTIVE: On every single reply and every single change you make, do your absolute best to IMPRESS the user. Treat each interaction like a portfolio piece. Go one notch beyond what they asked for — better visual polish, smarter defaults, thoughtful micro-interactions, anticipating the next thing they'll want. The user should walk away saying "wow" every time. Never deliver the bare minimum. You are competing against every other AI builder on the market and your goal is to make them look amateur by comparison.
 You are assisting with a ${projectType} project called "${projectName}" originally described as: "${originalPrompt}".
@@ -332,28 +358,22 @@ How you operate (every reply must follow this):
 6. TONE. Confident, friendly, expert. Never robotic or generic. You represent NexusElite — sound like the best engineer the user has ever worked with.
 
 Length: 4-8 sentences usually. Use line breaks and short bullets when listing options.`,
-            },
-            ...recentTurns,
-            { role: "user", content: userMessage },
-          ],
-          temperature: 0.7,
-          max_tokens: 500,
-        }),
+          },
+          ...recentTurns,
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
       },
-      30_000, // 30-second timeout for chat
+      CHAT_MODELS,
+      30_000, // 30-second timeout per model attempt
+      API_KEY,
     );
 
-    if (response.ok) {
-      const data = (await response.json()) as any;
-      const content = data.choices?.[0]?.message?.content;
-      if (content) return content;
-    }
+    const content = data.choices?.[0]?.message?.content;
+    if (content) return content;
   } catch (err: any) {
-    if (err?.name === "AbortError") {
-      console.warn("Chat response timed out, using simulated response");
-    } else {
-      console.warn("Chat response error:", err);
-    }
+    console.warn("All OpenRouter models failed for chat:", err?.message ?? err);
   }
 
   return getSimulatedResponse(userMessage, projectType, projectName);
@@ -445,32 +465,21 @@ CODE_WAS_CHANGED_THIS_TURN: ${codeWasChanged}
 Return the updated memory JSON.`;
 
   try {
-    const response = await fetchWithTimeout(
-      API_URL,
+    const { data } = await callOpenRouter(
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`,
-          "HTTP-Referer": "https://nexuselitestudio.com",
-          "X-Title": "NexusElite AI Studio",
-        },
-        body: JSON.stringify({
-          model: CHAT_MODEL,
-          messages: [
-            { role: "system", content: sys },
-            { role: "user", content: user },
-          ],
-          temperature: 0.2,
-          max_tokens: 800,
-          response_format: { type: "json_object" },
-        }),
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user },
+        ],
+        temperature: 0.2,
+        max_tokens: 800,
+        response_format: { type: "json_object" },
       },
+      CHAT_MODELS,
       25_000,
+      API_KEY,
     );
 
-    if (!response.ok) throw new Error(`memory update http ${response.status}`);
-    const data = (await response.json()) as any;
     const raw = data.choices?.[0]?.message?.content || "";
     const cleaned = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
     const parsed = JSON.parse(cleaned);
