@@ -177,13 +177,12 @@ CRITICAL RULES:
 - Be surgical AND complete. Don't skip wiring (e.g. if you create a route, register it; if you create a page, link to it from a nav menu).
 - If the request is unsafe or impossible, return empty "files"/"sql" and explain in "message".`;
 
-    // Use a strong, code-capable model for platform repairs (defaulting to Claude
-    // Sonnet which handles multi-file refactors well). Project-mode (single HTML
-    // file) can run on a cheaper model.
+    // Self-repair AI = Claude Opus 4.7 — same top-tier brain that powers code
+    // generation. Best-in-class at multi-file refactors and HTML rewrites.
     const REPAIR_MODEL =
       mode === "platform"
-        ? (process.env.REPAIR_MODEL || "anthropic/claude-sonnet-4")
-        : (process.env.REPAIR_MODEL_PROJECT || "anthropic/claude-sonnet-4");
+        ? (process.env.REPAIR_MODEL         || "anthropic/claude-opus-4.7")
+        : (process.env.REPAIR_MODEL_PROJECT || "anthropic/claude-opus-4.7");
 
     const aiRes = await fetch(API_URL, {
       method: "POST",
