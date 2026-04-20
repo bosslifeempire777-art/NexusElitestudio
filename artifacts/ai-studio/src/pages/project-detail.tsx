@@ -15,6 +15,8 @@ import { getToken } from "@/lib/auth";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
+import { SwarmTerminal } from "@/components/SwarmTerminal";
+import { Rows2 } from "lucide-react";
 
 type Device = 'mobile' | 'tablet' | 'desktop';
 type Tab = 'editor' | 'preview' | 'agent';
@@ -103,6 +105,8 @@ export default function ProjectDetail() {
   // True after a build completes; shows "Work Complete — View Result" banner
   // until the user clicks it (no more auto-redirect).
   const [workCompleted, setWorkCompleted] = useState(false);
+  // Split view: when true AND activeTab==='preview', shows preview top + SwarmTerminal bottom
+  const [splitView, setSplitView] = useState(false);
 
   function authHeaders(): Record<string, string> {
     const token = getToken();
@@ -465,6 +469,16 @@ export default function ProjectDetail() {
 
               {/* Right side utilities */}
               <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant={splitView ? "default" : "ghost"}
+                  onClick={() => setSplitView(v => !v)}
+                  title={splitView ? "Hide swarm terminal" : "Show swarm terminal below preview"}
+                  className="h-7 px-2 gap-1"
+                >
+                  <Rows2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline text-xs">{splitView ? "Single" : "Split"}</span>
+                </Button>
                 <Button size="sm" variant="ghost" onClick={refreshPreview} title="Refresh preview" className="h-7 px-2 gap-1">
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline text-xs">Refresh</span>
@@ -571,10 +585,10 @@ export default function ProjectDetail() {
 
           {/* PREVIEW TAB — full-width with device framing */}
           {activeTab === 'preview' && (
-            <div className="flex-1 flex overflow-hidden relative">
+            <div className={`flex-1 flex overflow-hidden relative ${splitView ? 'flex-col' : ''}`}>
 
               {/* Preview canvas */}
-              <div className="flex-1 flex flex-col items-center overflow-auto bg-[#0a0a0f]">
+              <div className={`flex-1 flex flex-col items-center overflow-auto bg-[#0a0a0f] ${splitView ? 'min-h-0' : ''}`} style={splitView ? { flex: '1 1 55%' } : undefined}>
                 {project.status === 'building' ? (
                   <BuildingState logs={logs} />
                 ) : (
@@ -608,6 +622,27 @@ export default function ProjectDetail() {
                     <Button size="sm" variant="ghost" onClick={() => setLogsOpen(false)} className="h-6 w-6 p-0 text-muted-foreground">×</Button>
                   </div>
                   <LogsPanel logs={logs} isBuilding={project.status === 'building'} />
+                </div>
+              )}
+
+              {/* Split-view: SwarmTerminal under the live preview */}
+              {splitView && (
+                <div
+                  className="border-t-2 border-primary/40 bg-[#06060f] flex flex-col min-h-0 shadow-[0_-4px_24px_rgba(0,212,255,0.15)]"
+                  style={{ flex: '1 1 45%' }}
+                >
+                  <SwarmTerminal
+                    projectId={project.id}
+                    projectName={project.name}
+                    onUpdateStarted={() => {
+                      waitingForBuildRef.current = true;
+                      refetch();
+                    }}
+                    onBuildComplete={() => {
+                      refetch();
+                      setPreviewVersion(v => v + 1);
+                    }}
+                  />
                 </div>
               )}
             </div>
