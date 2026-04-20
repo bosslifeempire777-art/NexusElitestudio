@@ -1225,10 +1225,108 @@ function AgentTerminal({
           </div>
         )}
 
-        {/* New exchanges: collapsible work folders (newest stays expanded) */}
-        {workBlocks.map((b, i) => (
-          <WorkBlockFolder key={b.id} block={b} defaultOpen={i === workBlocks.length - 1} />
+        {/* Older exchanges collapse into folders; the newest renders as
+            classic chat so the agent can describe its plan, ask for
+            confirmation, etc. (Replit-Agent-style). */}
+        {workBlocks.slice(0, -1).map(b => (
+          <WorkBlockFolder key={b.id} block={b} defaultOpen={false} />
         ))}
+
+        {workBlocks.length > 0 && (() => {
+          const b = workBlocks[workBlocks.length - 1];
+          const inProgress = b.completedAt === null;
+          return (
+            <div key={b.id} className="space-y-3">
+              {/* User bubble */}
+              <div className="flex gap-3 flex-row-reverse">
+                <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-accent/10 border-accent/40 text-accent">
+                  <User className="w-3.5 h-3.5" />
+                </div>
+                <div className="max-w-[80%] rounded px-3 py-2 text-xs leading-relaxed bg-primary/10 border border-primary/30 text-primary">
+                  <div className="whitespace-pre-wrap break-words">{b.userMessage}</div>
+                  <div className="text-[9px] text-muted-foreground/40 mt-1.5 text-right">
+                    {format(new Date(b.startedAt), 'HH:mm:ss')}
+                  </div>
+                </div>
+              </div>
+
+              {/* Live narration steps (while working) */}
+              {inProgress && b.steps.length > 0 && (
+                <div className="flex gap-3">
+                  <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
+                    <Bot className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="flex-1 bg-secondary/20 border border-primary/20 rounded px-3 py-2 space-y-1.5 max-w-[85%]">
+                    <div className="text-[10px] text-primary/60 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                      Swarm Working...
+                    </div>
+                    {b.steps.map((step, si) => (
+                      <div key={si} className={`text-[11px] font-mono flex items-start gap-1.5 ${
+                        si === b.steps.length - 1 ? 'text-primary' : 'text-muted-foreground/60'
+                      }`}>
+                        {si === b.steps.length - 1 ? (
+                          <Loader2 className="w-3 h-3 animate-spin shrink-0 mt-0.5" />
+                        ) : (
+                          <span className="shrink-0 mt-0.5 text-[10px]">›</span>
+                        )}
+                        <span>{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Live build logs (compact) */}
+              {b.buildLogs.length > 0 && (
+                <div className="ml-10 border border-primary/15 bg-primary/5 rounded max-h-40 overflow-y-auto">
+                  <div className="px-2 py-1 border-b border-primary/10 text-[9px] font-mono text-primary/70 uppercase tracking-wider flex items-center gap-1.5">
+                    {inProgress
+                      ? <><span className="w-1 h-1 bg-primary rounded-full animate-pulse" /> Live build · {b.agents.length} agent{b.agents.length === 1 ? '' : 's'}</>
+                      : <><span className="w-1 h-1 bg-green-400 rounded-full" /> Build log · {b.agents.length} agent{b.agents.length === 1 ? '' : 's'}</>
+                    }
+                  </div>
+                  <div className="px-2 py-1 space-y-0.5">
+                    {b.buildLogs.map((log, li) => {
+                      const agent = log.match(/\[([^\]]+)\]/)?.[1] || "";
+                      const body  = log.replace(/\[[^\]]+\]\s?/, "");
+                      const isErr = log.includes("❌") || log.includes("Error");
+                      const isOk  = log.includes("✅") || log.includes("🎉");
+                      return (
+                        <div key={li} className={`flex items-start gap-2 text-[10px] font-mono ${
+                          isErr ? "text-red-400" : isOk ? "text-green-400" : "text-muted-foreground"
+                        }`}>
+                          <span className="shrink-0 text-[9px] font-bold min-w-[100px] text-primary/60">
+                            {agent || "System"}
+                          </span>
+                          <span className="flex-1 leading-relaxed">{body}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Agent reply bubble (verification asks, plan, results) */}
+              {b.reply && (
+                <div className="flex gap-3">
+                  <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
+                    <Bot className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="max-w-[80%] rounded px-3 py-2 text-xs leading-relaxed bg-secondary/30 border border-border/30 text-[#E0E2EA]">
+                    <div className="text-[10px] text-primary/60 mb-1 uppercase tracking-wider">Nexus Agent</div>
+                    <div className="whitespace-pre-wrap break-words">{b.reply}</div>
+                    {b.completedAt && (
+                      <div className="text-[9px] text-muted-foreground/40 mt-1.5 text-right">
+                        {format(new Date(b.completedAt), 'HH:mm:ss')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Initial dispatching (before block appears) */}
         {isLoading && workBlocks.length === 0 && (
