@@ -15,7 +15,7 @@ import { getToken } from "@/lib/auth";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
-import { SwarmTerminal, WorkBlockFolder, type WorkBlock } from "@/components/SwarmTerminal";
+import { SwarmTerminal, SwarmGrid, WorkBlockFolder, matchAgent, type WorkBlock } from "@/components/SwarmTerminal";
 import { Rows2 } from "lucide-react";
 
 type Device = 'mobile' | 'tablet' | 'desktop';
@@ -904,6 +904,20 @@ function AgentTerminal({
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Live swarm-grid state: which of the 21 agents are currently working, which
+  // have finished, and what the latest agent is doing (for the top-bar ticker).
+  const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set());
+  const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set());
+  const [currentTask, setCurrentTask] = useState<string | null>(null);
+  // The agent key for the most-recent log event — drives the "working on X"
+  // ticker so it always reflects the latest event, not a fixed list order.
+  const [currentAgentKey, setCurrentAgentKey] = useState<string | null>(null);
+  const agentFadeTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  // Clear all pending per-agent fade timers (used on unmount + start of a new run)
+  const clearAgentTimers = useCallback(() => {
+    agentFadeTimersRef.current.forEach(t => clearTimeout(t));
+    agentFadeTimersRef.current.clear();
+  }, []);
   // ── Work folders: new exchanges (since page load) auto-collapse into
   // collapsible folders so the conversation doesn't fill up endlessly.
   // Saved history (`messages`) still renders as classic chat at the top.
@@ -941,6 +955,16 @@ function AgentTerminal({
               ? { ...b, completedAt: Date.now() } : b));
             currentBlockIdRef.current = null;
           }
+          // Migrate any still-active agents to "complete" for final green ✓
+          setActiveKeys(prev => {
+            setCompletedKeys(done => {
+              const next = new Set(done);
+              prev.forEach(k => next.add(k));
+              return next;
+            });
+            return new Set();
+          });
+          setCurrentTask(null);
           // Only fire onBuildComplete when a real chat-triggered build just finished
           if (pendingBuildRef.current) {
             pendingBuildRef.current = false;
@@ -960,6 +984,35 @@ function AgentTerminal({
             return { ...b, buildLogs: [...b.buildLogs, msg], agents };
           }));
         }
+        // ── Drive the live 21-agent grid ──
+        const agentName = msg.match(/\[([^\]]+)\]/)?.[1] || msg;
+        const body      = msg.replace(/\[[^\]]+\]\s?/, "").trim();
+        setCurrentTask(body.slice(0, 80));
+        const key = matchAgent(agentName);
+        if (key) {
+          // The ticker reads this — always reflects the MOST RECENT agent event
+          setCurrentAgentKey(key);
+          setActiveKeys(prev => {
+            const next = new Set(prev);
+            next.add(key);
+            return next;
+          });
+          // After 3s the agent transitions from WORKING → COMPLETE (green ✓)
+          const t = setTimeout(() => {
+            setActiveKeys(prev => {
+              const next = new Set(prev);
+              next.delete(key);
+              return next;
+            });
+            setCompletedKeys(prev => {
+              const next = new Set(prev);
+              next.add(key);
+              return next;
+            });
+            agentFadeTimersRef.current.delete(t);
+          }, 3000);
+          agentFadeTimersRef.current.add(t);
+        }
       } catch {
         // ignore malformed
       }
@@ -973,8 +1026,10 @@ function AgentTerminal({
     return () => {
       es.close();
       esRef.current = null;
+      // Prevent setState-on-unmounted-component warnings from pending fade timers
+      clearAgentTimers();
     };
-  }, [projectId, projectStatus]);
+  }, [projectId, projectStatus, clearAgentTimers]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -986,6 +1041,15 @@ function AgentTerminal({
 
     setIsLoading(true);
     setInput("");
+
+    // Reset the swarm grid for a fresh run (clear prior ✓ marks, live ticker,
+    // and any still-pending fade timers from a previous build so they can't
+    // fire mid-run and pollute the new state).
+    clearAgentTimers();
+    setCompletedKeys(new Set());
+    setActiveKeys(new Set());
+    setCurrentAgentKey(null);
+    setCurrentTask("Dispatching swarm…");
 
     // Open a new work-block folder for this exchange. Set pendingBuildRef
     // BEFORE the fetch so an early SSE __DONE__ can never be lost (race fix).
@@ -1069,7 +1133,16 @@ function AgentTerminal({
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#06060f]">
 
-      {/* Live Build Log Panel — visible during builds */}
+      {/* ── Live 21-Agent Swarm Grid — always at the very top ── */}
+      <SwarmGrid
+        activeKeys={activeKeys}
+        completedKeys={completedKeys}
+        isStreaming={isStreaming}
+        currentTask={currentTask}
+        currentAgentKey={currentAgentKey}
+      />
+
+      {/* Live Build Log Panel — visible during builds (under the grid) */}
       {buildLogs.length > 0 && (
         <div className="shrink-0 border-b border-primary/20 bg-primary/5 max-h-48 overflow-y-auto">
           <div className="sticky top-0 bg-[#06060f]/90 backdrop-blur px-3 pt-2 pb-1 border-b border-primary/10">
@@ -1100,6 +1173,14 @@ function AgentTerminal({
           </div>
         </div>
       )}
+
+      {/* ── Live 21-Agent Swarm Grid (futuristic status at the very top) ── */}
+      <SwarmGrid
+        activeKeys={activeKeys}
+        completedKeys={completedKeys}
+        isStreaming={isStreaming}
+        currentTask={currentTask}
+      />
 
       {/* Orchestrator narration panel */}
       <OrchestratorPanel

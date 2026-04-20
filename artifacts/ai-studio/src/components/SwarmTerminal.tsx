@@ -51,7 +51,7 @@ const SWARM_AGENTS: Array<{ key: string; name: string; short: string; color: str
 ];
 
 /** Map a free-text agent label (parsed from a build log) to a swarm-grid key. */
-function matchAgent(text: string): string | null {
+export function matchAgent(text: string): string | null {
   const t = text.toLowerCase();
   if (t.includes("orchestrat"))                       return "orch";
   if (t.includes("architect"))                        return "arch";
@@ -76,7 +76,7 @@ function matchAgent(text: string): string | null {
   return null;
 }
 
-function colorClasses(color: string, active: boolean): string {
+function colorClasses(color: string, state: "idle" | "active" | "done"): string {
   const map: Record<string, { bg: string; border: string; text: string; glow: string }> = {
     primary: { bg: "bg-primary/15", border: "border-primary/40", text: "text-primary", glow: "shadow-[0_0_12px_rgba(0,212,255,0.55)]" },
     accent:  { bg: "bg-accent/15",  border: "border-accent/40",  text: "text-accent",  glow: "shadow-[0_0_12px_rgba(168,85,247,0.55)]" },
@@ -86,49 +86,103 @@ function colorClasses(color: string, active: boolean): string {
     yellow:  { bg: "bg-yellow-400/15",border:"border-yellow-400/40",text:"text-yellow-300",glow:"shadow-[0_0_12px_rgba(250,204,21,0.55)]"},
   };
   const c = map[color] || map.primary;
-  if (active) return `${c.bg} ${c.border} ${c.text} ${c.glow} scale-105`;
+  if (state === "active") return `${c.bg} ${c.border} ${c.text} ${c.glow} scale-105`;
+  if (state === "done")   return `bg-green-400/10 border-green-400/50 text-green-300 shadow-[0_0_8px_rgba(74,222,128,0.35)]`;
   return `bg-background/40 border-border/30 text-muted-foreground/50`;
 }
 
 /* ────────────────────────────────────────────────
    Swarm Grid — live 21-agent activity visualization
+   Each cell shows one of three states:
+     · idle   — dim, waiting
+     · active — glowing + pulsing dot ("working on …")
+     · done   — green + ✓ checkmark ("complete")
    ──────────────────────────────────────────────── */
-function SwarmGrid({ activeKeys, isStreaming }: { activeKeys: Set<string>; isStreaming: boolean }) {
+export function SwarmGrid({
+  activeKeys,
+  completedKeys,
+  isStreaming,
+  currentTask,
+  currentAgentKey,
+  compact = false,
+}: {
+  activeKeys: Set<string>;
+  completedKeys?: Set<string>;
+  isStreaming: boolean;
+  currentTask?: string | null;
+  /** The most-recently-activated agent key. If omitted, falls back to
+   *  the first key in `activeKeys`. */
+  currentAgentKey?: string | null;
+  compact?: boolean;
+}) {
+  const done = completedKeys ?? new Set<string>();
+  // Prefer the explicit "latest event" agent when provided (fixes ticker showing
+  // the wrong agent when multiple are active). Fall back to any active agent.
+  const activeAgent =
+    (currentAgentKey && activeKeys.has(currentAgentKey)
+      ? SWARM_AGENTS.find(a => a.key === currentAgentKey)
+      : null) ??
+    (activeKeys.size > 0
+      ? SWARM_AGENTS.find(a => activeKeys.has(a.key))
+      : null);
   return (
-    <div className="shrink-0 border-b border-primary/20 bg-gradient-to-b from-[#0a0a18] to-[#06060f] px-3 py-2.5">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded bg-primary/15 border border-primary/40 flex items-center justify-center">
+    <div className={`shrink-0 border-b border-primary/20 bg-gradient-to-b from-[#0a0a18] to-[#06060f] px-3 ${compact ? "py-2" : "py-2.5"}`}>
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-1.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-5 h-5 rounded bg-primary/15 border border-primary/40 flex items-center justify-center shrink-0">
             <Cpu className="w-3 h-3 text-primary" />
           </div>
-          <span className="text-[10px] font-mono font-bold text-primary uppercase tracking-widest">
+          <span className="text-[10px] font-mono font-bold text-primary uppercase tracking-widest shrink-0">
             21-Agent Swarm
           </span>
-          <span className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+          <span className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${
             isStreaming
               ? "bg-primary/10 border-primary/30 text-primary"
-              : "bg-green-400/10 border-green-400/30 text-green-300"
+              : done.size > 0
+                ? "bg-green-400/10 border-green-400/30 text-green-300"
+                : "bg-muted/20 border-border/40 text-muted-foreground"
           }`}>
-            <span className={`w-1 h-1 rounded-full ${isStreaming ? "bg-primary animate-pulse" : "bg-green-400"}`} />
-            {isStreaming ? `${activeKeys.size} ACTIVE` : "STANDBY"}
+            <span className={`w-1 h-1 rounded-full ${isStreaming ? "bg-primary animate-pulse" : done.size > 0 ? "bg-green-400" : "bg-muted-foreground"}`} />
+            {isStreaming
+              ? `${activeKeys.size} ACTIVE · ${done.size} DONE`
+              : done.size > 0
+                ? `${done.size} COMPLETE`
+                : "STANDBY"}
           </span>
+          {/* Live "working on…" ticker */}
+          {isStreaming && activeAgent && (
+            <span className="text-[10px] font-mono text-primary/90 truncate max-w-[200px] hidden sm:inline">
+              › {activeAgent.name}
+              {currentTask ? <span className="text-muted-foreground/70"> — {currentTask}</span> : null}
+            </span>
+          )}
         </div>
         <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest">
-          Swarm Status: Online
+          {isStreaming ? "Processing…" : done.size > 0 ? "Build Complete" : "Swarm Online"}
         </span>
       </div>
       <div className="grid grid-cols-7 sm:grid-cols-11 lg:grid-cols-21 gap-1.5">
         {SWARM_AGENTS.map((a) => {
           const active = activeKeys.has(a.key);
+          const complete = !active && done.has(a.key);
+          const state: "idle" | "active" | "done" = active ? "active" : complete ? "done" : "idle";
+          const label = active
+            ? `${a.name} — WORKING`
+            : complete
+              ? `${a.name} — COMPLETE`
+              : a.name;
           return (
             <div
               key={a.key}
-              title={a.name + (active ? " — ACTIVE" : "")}
-              className={`relative aspect-square flex flex-col items-center justify-center rounded border text-center transition-all duration-300 ${colorClasses(a.color, active)}`}
+              title={label}
+              className={`relative aspect-square flex flex-col items-center justify-center rounded border text-center transition-all duration-300 ${colorClasses(a.color, state)}`}
             >
               <div className="text-[8px] font-mono font-bold leading-none">{a.short}</div>
               {active && (
                 <span className="absolute top-0.5 right-0.5 w-1 h-1 rounded-full bg-current animate-pulse" />
+              )}
+              {complete && (
+                <span className="absolute top-0.5 right-0.5 text-[7px] leading-none text-green-400 font-bold">✓</span>
               )}
             </div>
           );
@@ -248,7 +302,9 @@ export function SwarmTerminal({
   const [input, setInput]         = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set());
+  const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set());
   const [isStreaming, setIsStreaming] = useState(false);
+  const [currentTask, setCurrentTask] = useState<string | null>(null);
 
   const bottomRef    = useRef<HTMLDivElement>(null);
   const esRef        = useRef<EventSource | null>(null);
@@ -272,14 +328,23 @@ export function SwarmTerminal({
         const { msg } = JSON.parse(e.data) as { msg: string };
         if (msg === "__DONE__") {
           setIsStreaming(false);
-          // Mark current block complete + clear active agents
+          // Mark current block complete + migrate all still-active agents to "done"
           if (currentIdRef.current) {
             const id = currentIdRef.current;
             setBlocks(prev => prev.map(b => b.id === id && b.completedAt === null
               ? { ...b, completedAt: Date.now() } : b));
             currentIdRef.current = null;
           }
-          setActiveKeys(new Set());
+          setActiveKeys(prev => {
+            // Any agent that was still active at DONE is now complete
+            setCompletedKeys(done => {
+              const next = new Set(done);
+              prev.forEach(k => next.add(k));
+              return next;
+            });
+            return new Set();
+          });
+          setCurrentTask(null);
           if (pendingBuildRef.current) {
             pendingBuildRef.current = false;
             onBuildCompleteRef.current?.();
@@ -297,8 +362,11 @@ export function SwarmTerminal({
             return { ...b, buildLogs: [...b.buildLogs, msg], agents };
           }));
         }
-        // Light up swarm grid based on agent name
+        // Extract agent + task body for live "working on X" ticker
         const agent = msg.match(/\[([^\]]+)\]/)?.[1] || msg;
+        const body  = msg.replace(/\[[^\]]+\]\s?/, "").trim();
+        setCurrentTask(body.slice(0, 80));
+        // Light up swarm grid based on agent name
         const key = matchAgent(agent);
         if (key) {
           setActiveKeys(prev => {
@@ -306,11 +374,16 @@ export function SwarmTerminal({
             next.add(key);
             return next;
           });
-          // Fade out after 3s — track timer so we can clean up on unmount
+          // After 3s, mark this agent COMPLETE (green check) instead of just fading
           const t = setTimeout(() => {
             setActiveKeys(prev => {
               const next = new Set(prev);
               next.delete(key);
+              return next;
+            });
+            setCompletedKeys(prev => {
+              const next = new Set(prev);
+              next.add(key);
               return next;
             });
             activeKeyTimersRef.current.delete(t);
@@ -424,7 +497,12 @@ export function SwarmTerminal({
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#06060f]">
       {/* Live 21-agent grid */}
-      <SwarmGrid activeKeys={activeKeys} isStreaming={isStreaming} />
+      <SwarmGrid
+        activeKeys={activeKeys}
+        completedKeys={completedKeys}
+        isStreaming={isStreaming}
+        currentTask={currentTask}
+      />
 
       {/* Greeting + work blocks (collapsed folders) */}
       <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-2">
