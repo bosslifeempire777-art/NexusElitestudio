@@ -22,6 +22,7 @@ import Refer from "@/pages/refer";
 import Deployments from "@/pages/deployments";
 import Usage from "@/pages/usage";
 import AiLab from "@/pages/ai-lab";
+import Diagnostics from "@/pages/diagnostics";
 
 const queryClient = new QueryClient();
 
@@ -93,6 +94,9 @@ function Router() {
       <Route path="/pricing" component={Pricing} />
       <Route path="/admin">
         <AdminRoute component={Admin} />
+      </Route>
+      <Route path="/diagnostics">
+        <AdminRoute component={Diagnostics} />
       </Route>
       <Route component={NotFound} />
     </Switch>
