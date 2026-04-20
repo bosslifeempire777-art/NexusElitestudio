@@ -1318,14 +1318,25 @@ function AgentTerminal({
           </div>
         )}
 
-        {/* Older exchanges collapse into folders; the newest renders as
-            classic chat so the agent can describe its plan, ask for
-            confirmation, etc. (Replit-Agent-style). */}
-        {workBlocks.slice(0, -1).map(b => (
-          <WorkBlockFolder key={b.id} block={b} defaultOpen={false} />
-        ))}
+        {/* Older exchanges collapse into folders; only the newest IN-PROGRESS
+            block renders inline as classic chat. Once it completes it also
+            collapses into a folder so the conversation stays tidy. */}
+        {(() => {
+          const lastIdx = workBlocks.length - 1;
+          const last = lastIdx >= 0 ? workBlocks[lastIdx] : null;
+          const lastInProgress = !!last && last.completedAt === null;
+          // Folders for everything except the in-progress newest
+          const foldedCount = lastInProgress ? lastIdx : workBlocks.length;
+          return workBlocks.slice(0, foldedCount).map((b, i) => (
+            <WorkBlockFolder
+              key={b.id}
+              block={b}
+              defaultOpen={i === foldedCount - 1 /* keep most recent folder open by default */}
+            />
+          ));
+        })()}
 
-        {workBlocks.length > 0 && (() => {
+        {workBlocks.length > 0 && workBlocks[workBlocks.length - 1].completedAt === null && (() => {
           const b = workBlocks[workBlocks.length - 1];
           const inProgress = b.completedAt === null;
           return (
