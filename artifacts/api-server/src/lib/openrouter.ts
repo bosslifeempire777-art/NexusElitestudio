@@ -5,14 +5,28 @@ const API_URL = "https://openrouter.ai/api/v1/chat/completions";
 // fall through to the next model so builds keep working when an upstream
 // provider is throttled. All have generous context windows + good code
 // quality.
+//
+// Code generation uses Claude Opus 4.7 as the primary brain — best-in-class
+// for software engineering with a 1M-token context window — then falls
+// through to other top-tier models on rate limit / outage.
 const CODE_MODELS = [
+  "anthropic/claude-opus-4.7",
+  "anthropic/claude-opus-4.6",
+  "anthropic/claude-sonnet-4.6",
+  "openai/gpt-4o-mini",
+  "google/gemini-2.0-flash-001",
+  "deepseek/deepseek-chat",
+];
+
+// Chat replies don't need the heaviest model; lead with a fast one and
+// keep Opus in the chain for resiliency.
+const CHAT_MODELS = [
+  "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-haiku-4.5",
   "google/gemini-2.0-flash-001",
   "openai/gpt-4o-mini",
-  "anthropic/claude-3.5-haiku",
-  "deepseek/deepseek-chat",
-  "meta-llama/llama-3.3-70b-instruct",
+  "anthropic/claude-opus-4.7",
 ];
-const CHAT_MODELS = CODE_MODELS;
 const FETCH_TIMEOUT_MS = 90_000; // 90 seconds
 
 function getApiKey(): string | undefined {
