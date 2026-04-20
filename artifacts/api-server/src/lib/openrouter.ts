@@ -144,7 +144,8 @@ CRITICAL RULES — follow exactly or the output will fail:
 7. The app must be fully interactive — every button must do something, forms must work, navigation must switch views.
 8. Use realistic, plausible data — no placeholder "Lorem ipsum". Make it feel like a real product.
 9. Design must be polished: dark background preferred, smooth animations, hover effects.
-10. localStorage IS available — use it to persist state between interactions.`;
+10. localStorage IS available — use it to persist state between interactions.
+11. ABSOLUTELY DO NOT add any developer overlays, debug panels, "Build Analysis", "Diagnostics", "System Status", "Performance Monitor", "Console", "Telemetry", "Inspector" or similar non-product UI. The end-user is the customer of the product, not a developer. Build the product the user asked for and NOTHING ELSE. No floating widgets, no fixed-corner status badges, no expand-to-debug toolbars.`;
 
   const userPrompt = isGame
     ? `Build a complete, fully-playable HTML5 Canvas browser game called "${name}".
@@ -240,7 +241,8 @@ CRITICAL RULES:
 1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
 2. Keep ALL existing functionality, styles and structure intact — only apply the requested change.
 3. No external resources of any kind in the HTML head — no CDN scripts, no external script src, no web fonts. (You MAY call third-party JSON APIs from JavaScript using fetch().)
-4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`;
+4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.
+5. ABSOLUTELY DO NOT add any developer overlays, debug panels, "Build Analysis", "Diagnostics", "System Status", "Performance Monitor", "Console", "Telemetry" or "Inspector" widgets. If the existing code has any such non-product UI, REMOVE it. The end-user is the customer, not a developer — the app must look like a polished product, not a dev tool.${secretsBlock}`;
 
   const userPrompt = `This is the current code for a ${type} app called "${name}":
 
