@@ -15,7 +15,7 @@ import { getToken } from "@/lib/auth";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
-import { SwarmTerminal } from "@/components/SwarmTerminal";
+import { SwarmTerminal, WorkBlockFolder, type WorkBlock } from "@/components/SwarmTerminal";
 import { Rows2 } from "lucide-react";
 
 type Device = 'mobile' | 'tablet' | 'desktop';
@@ -904,8 +904,11 @@ function AgentTerminal({
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [activeSteps, setActiveSteps] = useState<string[]>([]);
-  const [stepsDone, setStepsDone] = useState(false);
+  // ── Work folders: new exchanges (since page load) auto-collapse into
+  // collapsible folders so the conversation doesn't fill up endlessly.
+  // Saved history (`messages`) still renders as classic chat at the top.
+  const [workBlocks, setWorkBlocks] = useState<WorkBlock[]>([]);
+  const currentBlockIdRef = useRef<string | null>(null);
   const bottomRef       = useRef<HTMLDivElement>(null);
   const inputRef        = useRef<HTMLTextAreaElement>(null);
   const intervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -931,6 +934,13 @@ function AgentTerminal({
         if (msg === "__DONE__") {
           setIsStreaming(false);
           es.close();
+          // Close the currently-open work block, if any
+          if (currentBlockIdRef.current) {
+            const id = currentBlockIdRef.current;
+            setWorkBlocks(prev => prev.map(b => b.id === id && b.completedAt === null
+              ? { ...b, completedAt: Date.now() } : b));
+            currentBlockIdRef.current = null;
+          }
           // Only fire onBuildComplete when a real chat-triggered build just finished
           if (pendingBuildRef.current) {
             pendingBuildRef.current = false;
@@ -939,6 +949,17 @@ function AgentTerminal({
           return;
         }
         setBuildLogs(prev => [...prev, msg]);
+        // Append the log to the active work block (if any)
+        const id = currentBlockIdRef.current;
+        if (id) {
+          setWorkBlocks(prev => prev.map(b => {
+            if (b.id !== id) return b;
+            const agentName = msg.match(/\[([^\]]+)\]/)?.[1] || "";
+            const agents = agentName && !b.agents.includes(agentName)
+              ? [...b.agents, agentName] : b.agents;
+            return { ...b, buildLogs: [...b.buildLogs, msg], agents };
+          }));
+        }
       } catch {
         // ignore malformed
       }
@@ -957,34 +978,46 @@ function AgentTerminal({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, activeSteps, buildLogs]);
+  }, [messages, workBlocks, buildLogs]);
 
   const sendMessage = useCallback(async (text: string, action?: string) => {
     const userText = (text.trim() || action || "").trim();
     if (!userText) return;
 
     setIsLoading(true);
-    setActiveSteps([]);
-    setStepsDone(false);
-
-    const userMsg: ChatMessage = { role: "user", content: userText, timestamp: new Date().toISOString() };
-    setMessages(prev => [...prev, userMsg]);
     setInput("");
 
-    const steps = getStepsForMessage(userText);
-    const STEP_MS = 750;
+    // Open a new work-block folder for this exchange. Set pendingBuildRef
+    // BEFORE the fetch so an early SSE __DONE__ can never be lost (race fix).
+    pendingBuildRef.current = true;
+    const blockId = `wb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    currentBlockIdRef.current = blockId;
+    setWorkBlocks(prev => [...prev, {
+      id: blockId,
+      userMessage: userText,
+      startedAt: Date.now(),
+      completedAt: null,
+      steps: [],
+      buildLogs: [],
+      agents: [],
+      reply: null,
+    }]);
 
+    // Stream simulated narration steps into the block (cosmetic — adds rhythm)
+    const steps = getStepsForMessage(userText);
+    const STEP_MS = 600;
     let stepIdx = 0;
     intervalRef.current = setInterval(() => {
       stepIdx += 1;
-      setActiveSteps(steps.slice(0, stepIdx));
+      const partial = steps.slice(0, stepIdx);
+      setWorkBlocks(prev => prev.map(b => b.id === blockId ? { ...b, steps: partial } : b));
       if (stepIdx >= steps.length) {
         clearInterval(intervalRef.current!);
-        setStepsDone(true);
       }
     }, STEP_MS);
 
     let apiReply = "Task received — agents are processing your request.";
+    let didTriggerBuild = false;
     try {
       const token = typeof localStorage !== "undefined" ? localStorage.getItem("nexus-token") : null;
       const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
@@ -995,38 +1028,36 @@ function AgentTerminal({
       });
       const data = await res.json();
       apiReply = data.reply || apiReply;
-      // If the backend is updating the code, kick off polling immediately
       if (data.updating) {
-        // Mark that a real build is in progress so onBuildComplete fires correctly
-        pendingBuildRef.current = true;
+        // Build is in flight; pendingBuildRef stays true; SSE will close the block.
+        didTriggerBuild = true;
         onUpdateStarted?.();
+      } else {
+        // No build triggered; clear the optimistic flag.
+        pendingBuildRef.current = false;
       }
     } catch {
       apiReply = "Request queued — the swarm will process this when connectivity is restored.";
+      pendingBuildRef.current = false;
     }
 
-    const totalStepTime = steps.length * STEP_MS + 400;
-    const elapsed = steps.length * STEP_MS;
-    const remaining = Math.max(0, totalStepTime - elapsed);
+    // Always attach the reply to the block (visible when expanded)
+    setWorkBlocks(prev => prev.map(b => b.id === blockId ? { ...b, reply: apiReply } : b));
 
-    await new Promise(r => setTimeout(r, remaining));
+    if (!didTriggerBuild) {
+      // No real build — close the block once narration finishes.
+      const totalStepTime = steps.length * STEP_MS + 400;
+      await new Promise(r => setTimeout(r, totalStepTime));
+      clearInterval(intervalRef.current!);
+      setWorkBlocks(prev => prev.map(b => b.id === blockId && b.completedAt === null
+        ? { ...b, completedAt: Date.now(), steps } : b));
+      if (currentBlockIdRef.current === blockId) currentBlockIdRef.current = null;
+    }
+    // If a build WAS triggered, the SSE __DONE__ handler will close the block.
 
-    clearInterval(intervalRef.current!);
-    setActiveSteps(steps);
-    setStepsDone(true);
-
-    await new Promise(r => setTimeout(r, 500));
-
-    setActiveSteps([]);
-    setStepsDone(false);
-    setMessages(prev => [...prev, {
-      role: "agent",
-      content: apiReply,
-      timestamp: new Date().toISOString(),
-    }]);
     setIsLoading(false);
     inputRef.current?.focus();
-  }, [projectId]);
+  }, [projectId, onUpdateStarted]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1155,8 +1186,9 @@ function AgentTerminal({
         )}
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-sm">
+      {/* Messages — saved history (classic chat) + new exchanges (collapsed folders) */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-sm">
+        {/* Classic chat: greeting + previously-saved history */}
         {messages.map((msg, i) => (
           <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`shrink-0 w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold border ${
@@ -1182,44 +1214,24 @@ function AgentTerminal({
           </div>
         ))}
 
-        {/* Live agent progress */}
-        {isLoading && activeSteps.length > 0 && (
-          <div className="flex gap-3">
-            <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
-              <Bot className="w-3.5 h-3.5" />
-            </div>
-            <div className="flex-1 bg-secondary/20 border border-primary/20 rounded px-3 py-2 space-y-1.5 max-w-[85%]">
-              <div className="text-[10px] text-primary/60 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
-                Swarm Working...
-              </div>
-              {activeSteps.map((step, i) => (
-                <div
-                  key={i}
-                  className={`text-[11px] font-mono flex items-start gap-1.5 transition-all ${
-                    i === activeSteps.length - 1 ? 'text-primary' : 'text-muted-foreground/60'
-                  }`}
-                >
-                  {i === activeSteps.length - 1 && !stepsDone ? (
-                    <Loader2 className="w-3 h-3 animate-spin shrink-0 mt-0.5" />
-                  ) : (
-                    <span className="shrink-0 mt-0.5 text-[10px]">›</span>
-                  )}
-                  <span>{step}</span>
-                </div>
-              ))}
-              {!stepsDone && activeSteps.length === 0 && (
-                <div className="flex items-center gap-1.5 text-xs text-primary/60">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>Dispatching agents...</span>
-                </div>
-              )}
-            </div>
+        {/* Divider between saved history and new folders */}
+        {messages.length > 1 && workBlocks.length > 0 && (
+          <div className="flex items-center gap-2 py-1">
+            <div className="flex-1 h-px bg-border/30" />
+            <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest">
+              This Session
+            </span>
+            <div className="flex-1 h-px bg-border/30" />
           </div>
         )}
 
-        {/* Initial dispatching (before first step appears) */}
-        {isLoading && activeSteps.length === 0 && (
+        {/* New exchanges: collapsible work folders (newest stays expanded) */}
+        {workBlocks.map((b, i) => (
+          <WorkBlockFolder key={b.id} block={b} defaultOpen={i === workBlocks.length - 1} />
+        ))}
+
+        {/* Initial dispatching (before block appears) */}
+        {isLoading && workBlocks.length === 0 && (
           <div className="flex gap-3">
             <div className="shrink-0 w-7 h-7 rounded flex items-center justify-center border bg-primary/10 border-primary/40 text-primary">
               <Bot className="w-3.5 h-3.5" />

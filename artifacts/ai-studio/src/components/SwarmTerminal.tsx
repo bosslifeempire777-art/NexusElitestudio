@@ -12,7 +12,7 @@ interface ChatMsg {
   timestamp: string;
 }
 
-interface WorkBlock {
+export interface WorkBlock {
   id: string;
   userMessage: string;
   startedAt: number;
@@ -141,7 +141,7 @@ function SwarmGrid({ activeKeys, isStreaming }: { activeKeys: Set<string>; isStr
 /* ────────────────────────────────────────────────
    Collapsed Work Block — replit-agent-style folder
    ──────────────────────────────────────────────── */
-function WorkBlockFolder({ block, defaultOpen = false }: { block: WorkBlock; defaultOpen?: boolean }) {
+export function WorkBlockFolder({ block, defaultOpen = false }: { block: WorkBlock; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const inProgress = block.completedAt === null;
   const duration = block.completedAt
