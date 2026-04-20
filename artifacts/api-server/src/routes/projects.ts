@@ -10,6 +10,7 @@ import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-log
 import { getPlanLimits } from "./plans.js";
 import { getUserSecretNames, getUserSecretsMap } from "./secrets.js";
 import { verifyToken } from "../middleware/auth.js";
+import { injectDiagnosticsWidget } from "../lib/diagnostics-widget.js";
 
 const router: IRouter = Router();
 
@@ -346,6 +347,14 @@ router.get("/:id/preview", async (req, res) => {
     } catch (err) {
       console.error("Failed to inject user secrets into preview:", err);
     }
+  }
+
+  // Inject the floating "Build Analysis & App Diagnostics" widget into every
+  // generated app. Self-contained, no external resources, opens its own modal
+  // window with live performance/DOM/error/storage data from the running app.
+  if (project.generatedCode) {
+    try { html = injectDiagnosticsWidget(html); }
+    catch (err) { console.error("Failed to inject diagnostics widget:", err); }
   }
 
   res.setHeader("Content-Type", "text/html");
