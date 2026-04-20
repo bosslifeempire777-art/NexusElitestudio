@@ -399,8 +399,20 @@ export default function ProjectDetail() {
               <div className="flex bg-background border border-border cyber-clip">
                 <Button size="sm" variant={activeTab === 'editor'  ? 'default' : 'ghost'} onClick={() => setActiveTab('editor')}  className="h-7 px-3 text-xs rounded-none">Code</Button>
                 <Button size="sm" variant={activeTab === 'preview' ? 'accent'  : 'ghost'} onClick={() => setActiveTab('preview')} className="h-7 px-3 text-xs rounded-none">Live Preview</Button>
-                <Button size="sm" variant={activeTab === 'agent'   ? 'default' : 'ghost'} onClick={() => setActiveTab('agent')}   className="h-7 px-3 text-xs rounded-none gap-1">
-                  <Terminal className="w-3 h-3" />Agent
+                <Button
+                  size="sm"
+                  variant={activeTab === 'agent' ? 'default' : 'ghost'}
+                  onClick={() => setActiveTab('agent')}
+                  className={`h-7 px-3 text-xs rounded-none gap-1 font-bold ${
+                    activeTab === 'agent'
+                      ? ''
+                      : 'bg-primary/15 text-primary border-l border-primary/40 animate-pulse shadow-[0_0_14px_rgba(0,212,255,0.55)] hover:bg-primary/25 hover:shadow-[0_0_20px_rgba(0,212,255,0.75)]'
+                  }`}
+                  title="Chat with the 21-agent swarm to keep building"
+                >
+                  <Terminal className="w-3 h-3" />
+                  <span className="hidden sm:inline">Continue Building with Agent</span>
+                  <span className="sm:hidden">Agent</span>
                 </Button>
               </div>
 
