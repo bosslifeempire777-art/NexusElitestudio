@@ -9,6 +9,53 @@ import { LAUNCH_PROMO, isPromoActive } from '../lib/promo.js';
 
 const router: IRouter = Router();
 
+/**
+ * Pick the right base URL to send Stripe redirects back to. Honors the
+ * Origin/Referer of the incoming request so checkouts initiated from
+ * nexuselitestudio.com return to .com, and ones from nexuselitestudio.nexus
+ * return to .nexus. Allowlist prevents redirect-injection abuse.
+ */
+function buildAllowedHosts(): Set<string> {
+  const hosts = new Set<string>([
+    'nexuselitestudio.com',
+    'www.nexuselitestudio.com',
+    'nexuselitestudio.nexus',
+    'www.nexuselitestudio.nexus',
+  ]);
+  if (process.env.CUSTOM_DOMAIN)     hosts.add(process.env.CUSTOM_DOMAIN);
+  if (process.env.REPLIT_DEV_DOMAIN) hosts.add(process.env.REPLIT_DEV_DOMAIN);
+  if (process.env.REPLIT_DOMAINS) {
+    for (const d of process.env.REPLIT_DOMAINS.split(',')) {
+      const trimmed = d.trim(); if (trimmed) hosts.add(trimmed);
+    }
+  }
+  return hosts;
+}
+const ALLOWED_HOSTS = buildAllowedHosts();
+
+function resolveBaseUrl(req: { headers: Record<string, any> }): string {
+  const candidates: string[] = [];
+  const origin  = String(req.headers.origin  || '');
+  const referer = String(req.headers.referer || '');
+  if (origin)  candidates.push(origin);
+  if (referer) {
+    try { candidates.push(new URL(referer).origin); } catch { /* ignore */ }
+  }
+  const requireHttps = process.env.NODE_ENV === 'production';
+  for (const c of candidates) {
+    try {
+      const u = new URL(c);
+      if (requireHttps && u.protocol !== 'https:') continue;
+      if (ALLOWED_HOSTS.has(u.hostname)) return `${u.protocol}//${u.host}`;
+    } catch { /* ignore */ }
+  }
+  const fallback = process.env.CUSTOM_DOMAIN
+    || process.env.REPLIT_DOMAINS?.split(',')[0]
+    || process.env.REPLIT_DEV_DOMAIN
+    || 'localhost';
+  return `https://${fallback}`;
+}
+
 /* ── Public: product / price listings ─────────────────────── */
 router.get('/products', async (_req, res) => {
   try {
@@ -121,20 +168,42 @@ router.post('/checkout', requireAuth, async (req, res) => {
       customerId = customer.id;
     }
 
-    const domain = process.env.CUSTOM_DOMAIN
-      || process.env.REPLIT_DOMAINS?.split(',')[0]
-      || process.env.REPLIT_DEV_DOMAIN
-      || 'localhost';
-    const baseUrl = `https://${domain}`;
+    // Multi-domain: use the actual origin the user came from so they get sent
+    // back to the SAME website after checkout. Allowlist matches both
+    // nexuselitestudio.com and nexuselitestudio.nexus, plus the *.replit.dev
+    // dev preview, falling back to CUSTOM_DOMAIN if origin is missing.
+    const baseUrl = resolveBaseUrl(req);
 
+    // Try with launch promo coupon first; if Stripe rejects the coupon
+    // (deleted, expired, or never existed), retry without it so checkout
+    // doesn't break for the customer.
     const couponId = isPromoActive() ? LAUNCH_PROMO.couponId : undefined;
-    const session = await stripeService.createCheckoutSession(
-      customerId,
-      priceId,
-      `${baseUrl}/dashboard?upgrade=success`,
-      `${baseUrl}/pricing`,
-      couponId,
-    );
+    let session;
+    try {
+      session = await stripeService.createCheckoutSession(
+        customerId,
+        priceId,
+        `${baseUrl}/dashboard?upgrade=success`,
+        `${baseUrl}/pricing`,
+        couponId,
+        userId,
+      );
+    } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      if (couponId && /coupon|promotion/i.test(msg)) {
+        console.warn(`[stripe-checkout] coupon "${couponId}" failed (${msg}); retrying without coupon`);
+        session = await stripeService.createCheckoutSession(
+          customerId,
+          priceId,
+          `${baseUrl}/dashboard?upgrade=success`,
+          `${baseUrl}/pricing`,
+          undefined,
+          userId,
+        );
+      } else {
+        throw e;
+      }
+    }
 
     res.json({ url: session.url });
   } catch (err: any) {
@@ -154,13 +223,10 @@ router.post('/portal', requireAuth, async (req, res) => {
       return;
     }
 
-    const domain = process.env.CUSTOM_DOMAIN
-      || process.env.REPLIT_DOMAINS?.split(',')[0]
-      || process.env.REPLIT_DEV_DOMAIN
-      || 'localhost';
+    const baseUrl = resolveBaseUrl(req);
     const session = await stripeService.createCustomerPortalSession(
       customerId,
-      `https://${domain}/settings`,
+      `${baseUrl}/settings`,
     );
 
     res.json({ url: session.url });

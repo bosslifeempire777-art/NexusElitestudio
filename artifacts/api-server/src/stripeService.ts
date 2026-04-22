@@ -16,6 +16,7 @@ export class StripeService {
     successUrl: string,
     cancelUrl: string,
     couponId?: string,
+    userId?: string,
   ) {
     const stripe = await getUncachableStripeClient();
     return await stripe.checkout.sessions.create({
@@ -25,7 +26,15 @@ export class StripeService {
       mode: 'subscription',
       success_url: successUrl,
       cancel_url: cancelUrl,
+      // Embed userId in BOTH the session and the subscription so the webhook
+      // handler can map a payment back to our internal user even when the
+      // customer object's metadata is missing.
+      ...(userId ? {
+        metadata: { userId },
+        subscription_data: { metadata: { userId } },
+      } : {}),
       ...(couponId ? { discounts: [{ coupon: couponId }] } : {}),
+      allow_promotion_codes: couponId ? false : true,
     });
   }
 
