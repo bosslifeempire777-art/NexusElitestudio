@@ -1,0 +1,250 @@
+[
+  {
+    "id": "1776979014027-tCm7R9KWbT",
+    "started_at": "2026-04-23T21:16:54.027Z",
+    "operation": "chat",
+    "model": "openai/gpt-4o-mini",
+    "status": "success",
+    "steps": [
+      {
+        "run_id": "1776979014027-tCm7R9KWbT",
+        "step_number": 1,
+        "type": "chat",
+        "started_at": "2026-04-23T21:16:54.027Z",
+        "completed_at": "2026-04-23T21:16:54.610Z",
+        "request": {
+          "model": "openai/gpt-4o-mini",
+          "messages": [
+            {
+              "content": "Reply briefly.",
+              "role": "system"
+            },
+            {
+              "content": "Say only the word: PING-1",
+              "role": "user"
+            }
+          ],
+          "prompt": null,
+          "parameters": {
+            "messages": [
+              {
+                "content": "Reply briefly.",
+                "role": "system"
+              },
+              {
+                "content": "Say only the word: PING-1",
+                "role": "user"
+              }
+            ],
+            "model": "openai/gpt-4o-mini",
+            "stream": false
+          },
+          "raw": {
+            "messages": [
+              {
+                "content": "Reply briefly.",
+                "role": "system"
+              },
+              {
+                "content": "Say only the word: PING-1",
+                "role": "user"
+              }
+            ],
+            "model": "openai/gpt-4o-mini",
+            "stream": false
+          }
+        },
+        "response": {
+          "content": "PING-1",
+          "usage": {
+            "prompt_tokens": 23,
+            "completion_tokens": 4,
+            "total_tokens": 27
+          },
+          "provider": null,
+          "model": "openai/gpt-4o-mini",
+          "finish_reason": "stop",
+          "raw": {
+            "id": "gen-1776979014-Apdedj1Zx3stR7ArkFfD",
+            "object": "chat.completion",
+            "created": 1776979014,
+            "model": "openai/gpt-4o-mini",
+            "provider": "Azure",
+            "system_fingerprint": "fp_eb37e061ec",
+            "choices": [
+              {
+                "index": 0,
+                "logprobs": null,
+                "finish_reason": "stop",
+                "native_finish_reason": "stop",
+                "message": {
+                  "role": "assistant",
+                  "content": "PING-1",
+                  "refusal": null,
+                  "reasoning": null
+                }
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 23,
+              "completion_tokens": 4,
+              "total_tokens": 27,
+              "cost": 0.00000585,
+              "is_byok": false,
+              "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+                "audio_tokens": 0,
+                "video_tokens": 0
+              },
+              "cost_details": {
+                "upstream_inference_cost": 0.00000585,
+                "upstream_inference_prompt_cost": 0.00000345,
+                "upstream_inference_completions_cost": 0.0000024
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "image_tokens": 0,
+                "audio_tokens": 0
+              }
+            }
+          }
+        },
+        "duration_ms": 583,
+        "error": null,
+        "input_summary": "{\n  \"id\": \"gen-1776979014-Apdedj1Zx3stR7ArkFfD\",\n  \"object\": \"chat.completion\",\n  \"created\": 1776979014,\n  \"model\": \"openai/gpt-4o-mini\",\n  \"provider\": \"Azure\",\n  \"system_fingerprint\": \"fp_eb37e061ec\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"logprobs\": null,\n      \"finish_reason\": \"stop\",\n      \"native_finish_reason\": \"stop\",\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"PING-1\",\n        \"refusal\": null,\n        \"reasoning\": null\n      }\n    }\n  ],\n  \"usage\": {\n   ...",
+        "output_summary": null,
+        "truncation_info": {
+          "truncated": true,
+          "original_length": 1066,
+          "reason": "max_length"
+        },
+        "step_category": "response"
+      }
+    ]
+  },
+  {
+    "id": "1776979015059-nI6UElYOlM",
+    "started_at": "2026-04-23T21:16:55.059Z",
+    "operation": "chat",
+    "model": "openai/gpt-4o-mini",
+    "status": "success",
+    "steps": [
+      {
+        "run_id": "1776979015059-nI6UElYOlM",
+        "step_number": 1,
+        "type": "chat",
+        "started_at": "2026-04-23T21:16:55.059Z",
+        "completed_at": "2026-04-23T21:16:55.252Z",
+        "request": {
+          "model": "openai/gpt-4o-mini",
+          "messages": [
+            {
+              "content": "Reply briefly.",
+              "role": "system"
+            },
+            {
+              "content": "Say only the word: PING-2",
+              "role": "user"
+            }
+          ],
+          "prompt": null,
+          "parameters": {
+            "messages": [
+              {
+                "content": "Reply briefly.",
+                "role": "system"
+              },
+              {
+                "content": "Say only the word: PING-2",
+                "role": "user"
+              }
+            ],
+            "model": "openai/gpt-4o-mini",
+            "stream": false
+          },
+          "raw": {
+            "messages": [
+              {
+                "content": "Reply briefly.",
+                "role": "system"
+              },
+              {
+                "content": "Say only the word: PING-2",
+                "role": "user"
+              }
+            ],
+            "model": "openai/gpt-4o-mini",
+            "stream": false
+          }
+        },
+        "response": {
+          "content": "PING-2",
+          "usage": {
+            "prompt_tokens": 23,
+            "completion_tokens": 4,
+            "total_tokens": 27
+          },
+          "provider": null,
+          "model": "openai/gpt-4o-mini",
+          "finish_reason": "stop",
+          "raw": {
+            "id": "gen-1776979015-zB6vhhEZG68tgSeHoOcp",
+            "object": "chat.completion",
+            "created": 1776979015,
+            "model": "openai/gpt-4o-mini",
+            "provider": "Azure",
+            "system_fingerprint": "fp_eb37e061ec",
+            "choices": [
+              {
+                "index": 0,
+                "logprobs": null,
+                "finish_reason": "stop",
+                "native_finish_reason": "stop",
+                "message": {
+                  "role": "assistant",
+                  "content": "PING-2",
+                  "refusal": null,
+                  "reasoning": null
+                }
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 23,
+              "completion_tokens": 4,
+              "total_tokens": 27,
+              "cost": 0.00000585,
+              "is_byok": false,
+              "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+                "audio_tokens": 0,
+                "video_tokens": 0
+              },
+              "cost_details": {
+                "upstream_inference_cost": 0.00000585,
+                "upstream_inference_prompt_cost": 0.00000345,
+                "upstream_inference_completions_cost": 0.0000024
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 0,
+                "image_tokens": 0,
+                "audio_tokens": 0
+              }
+            }
+          }
+        },
+        "duration_ms": 193,
+        "error": null,
+        "input_summary": "{\n  \"id\": \"gen-1776979015-zB6vhhEZG68tgSeHoOcp\",\n  \"object\": \"chat.completion\",\n  \"created\": 1776979015,\n  \"model\": \"openai/gpt-4o-mini\",\n  \"provider\": \"Azure\",\n  \"system_fingerprint\": \"fp_eb37e061ec\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"logprobs\": null,\n      \"finish_reason\": \"stop\",\n      \"native_finish_reason\": \"stop\",\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"PING-2\",\n        \"refusal\": null,\n        \"reasoning\": null\n      }\n    }\n  ],\n  \"usage\": {\n   ...",
+        "output_summary": null,
+        "truncation_info": {
+          "truncated": true,
+          "original_length": 1066,
+          "reason": "max_length"
+        },
+        "step_category": "response"
+      }
+    ]
+  }
+]

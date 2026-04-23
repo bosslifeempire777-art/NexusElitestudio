@@ -285,17 +285,22 @@ router.post("/custom-agents/:id/run", async (req, res) => {
 
   try {
     const sdk = getOpenRouterClient();
-    const completion = await sdk.chat.completions.create({
-      model: agent.model,
-      messages: [
-        { role: "system", content: agent.systemPrompt },
-        { role: "user",   content: String(task) },
-      ],
+    const result: any = await sdk.chat.send({
+      httpReferer: "https://nexuselitestudio.com",
+      appTitle:    "NexusElite AI Studio",
+      chatRequest: {
+        model:    agent.model,
+        messages: [
+          { role: "system", content: agent.systemPrompt },
+          { role: "user",   content: String(task) },
+        ],
+        stream: false,
+      },
     });
-    const choice: any = completion?.choices?.[0];
+    const choice = result?.choices?.[0];
     res.json({
       output: choice?.message?.content ?? "",
-      usage:  (completion as any)?.usage ?? null,
+      usage:  result?.usage ?? null,
       agent:  { id: agent.id, name: agent.name, model: agent.model },
     });
   } catch (err: any) {
