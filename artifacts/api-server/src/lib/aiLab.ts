@@ -11,7 +11,7 @@ import { db } from "@workspace/db";
 import { aiLabPacksTable } from "@workspace/db/schema";
 import { eq, and, sql, gt } from "drizzle-orm";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+import { chatViaSdk } from "./openrouterSdk.js";
 const PROVIDER_FETCH_TIMEOUT_MS = 60_000;
 
 /* ── Available prompt packs (one-time purchase) ─────────────────── */
@@ -145,45 +145,32 @@ export type ModelResult = {
 };
 
 async function callOpenRouter(model: string, prompt: string): Promise<{ ok: boolean; content: string; error?: string; tokensIn?: number; tokensOut?: number }> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) return { ok: false, content: "", error: "OPENROUTER_API_KEY not configured on server" };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROVIDER_FETCH_TIMEOUT_MS);
+  if (!process.env.OPENROUTER_API_KEY) {
+    return { ok: false, content: "", error: "OPENROUTER_API_KEY not configured on server" };
+  }
   try {
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer":  "https://nexuselitestudio.com",
-        "X-Title":       "NexusElite AI Lab",
-      },
-      body: JSON.stringify({
+    const data: any = await chatViaSdk(
+      {
         model,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
         max_tokens: 800,
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      return { ok: false, content: "", error: `HTTP ${res.status}: ${txt.slice(0, 200)}` };
-    }
-    const data: any = await res.json();
-    const content = data.choices?.[0]?.message?.content || "";
+      },
+      { timeoutMs: PROVIDER_FETCH_TIMEOUT_MS },
+    );
+    const content = data?.choices?.[0]?.message?.content || "";
     return {
       ok: true,
       content,
-      tokensIn:  data.usage?.prompt_tokens     ?? undefined,
-      tokensOut: data.usage?.completion_tokens ?? undefined,
+      tokensIn:  data?.usage?.prompt_tokens     ?? undefined,
+      tokensOut: data?.usage?.completion_tokens ?? undefined,
     };
   } catch (err: any) {
-    if (err?.name === "AbortError") return { ok: false, content: "", error: `timeout after ${PROVIDER_FETCH_TIMEOUT_MS / 1000}s` };
-    return { ok: false, content: "", error: err?.message ?? String(err) };
-  } finally {
-    clearTimeout(timer);
+    if (err?.name === "AbortError" || /timeout/i.test(err?.message ?? "")) {
+      return { ok: false, content: "", error: `timeout after ${PROVIDER_FETCH_TIMEOUT_MS / 1000}s` };
+    }
+    const status = err?.statusCode ?? err?.status;
+    return { ok: false, content: "", error: status ? `HTTP ${status}: ${err.message}` : (err?.message ?? String(err)) };
   }
 }
 

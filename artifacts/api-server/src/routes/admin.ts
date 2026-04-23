@@ -12,7 +12,7 @@ const router: IRouter = Router();
 router.use(requireAdmin);
 
 const WORKSPACE_ROOT = "/home/runner/workspace";
-const API_URL = "https://openrouter.ai/api/v1/chat/completions";
+import { chatViaSdk } from "../lib/openrouterSdk.js";
 
 function getApiKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY;
@@ -184,15 +184,9 @@ CRITICAL RULES:
         ? (process.env.REPAIR_MODEL         || "anthropic/claude-opus-4.7")
         : (process.env.REPAIR_MODEL_PROJECT || "anthropic/claude-opus-4.7");
 
-    const aiRes = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://nexuselitestudio.com",
-        "X-Title": "NexusElite Self-Repair",
-      },
-      body: JSON.stringify({
+    let aiData: any;
+    try {
+      aiData = await chatViaSdk({
         model: REPAIR_MODEL,
         max_tokens: 16000,
         response_format: { type: "json_object" },
@@ -203,16 +197,13 @@ CRITICAL RULES:
             content: `${contextBlock}\n\n---\n\nAdmin instruction: ${message}`,
           },
         ],
-      }),
-    });
-
-    if (!aiRes.ok) {
-      const errText = await aiRes.text();
-      return res.status(502).json({ error: `AI error (${aiRes.status}): ${errText.slice(0, 300)}` });
+      });
+    } catch (err: any) {
+      const status = err?.statusCode ?? err?.status ?? 502;
+      return res.status(502).json({ error: `AI error (${status}): ${(err?.message ?? "").slice(0, 300)}` });
     }
 
-    const aiData = await aiRes.json() as any;
-    const raw = aiData.choices?.[0]?.message?.content as string | undefined;
+    const raw = aiData?.choices?.[0]?.message?.content as string | undefined;
     if (!raw) return res.status(502).json({ error: "Empty AI response" });
 
     let parsed: any;

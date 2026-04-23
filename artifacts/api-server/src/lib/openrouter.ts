@@ -1,4 +1,4 @@
-const API_URL = "https://openrouter.ai/api/v1/chat/completions";
+import { chatViaSdk } from "./openrouterSdk.js";
 
 // Ordered list of models to try. The first one is preferred; if it returns
 // a transient error (429 rate limit, 5xx outage, etc.) we automatically
@@ -33,71 +33,37 @@ function getApiKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY;
 }
 
-/** Fetch wrapper with AbortController timeout */
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * Call OpenRouter with automatic model fallback. Tries each model in `models`
- * in order; advances to the next one on retryable errors (429, 5xx, network
- * timeouts). Returns the first successful response (already-parsed JSON) and
- * the model that produced it, or throws if every model fails.
+ * in order; advances to the next one on retryable errors (429, 5xx, timeouts).
+ * Returns the first successful response (OpenAI-shaped JSON) and the model
+ * that produced it, or throws if every model fails.
+ *
+ * Routes through the SDK singleton so all requests are captured by devtools
+ * and visible in the Command Center → Telemetry tab.
  */
 async function callOpenRouter(
   bodyWithoutModel: Record<string, any>,
   models: string[],
   timeoutMs: number,
-  apiKey: string,
+  _apiKey: string, // unused: SDK reads OPENROUTER_API_KEY from env
 ): Promise<{ data: any; model: string }> {
   let lastErr: any = null;
   for (const model of models) {
     try {
-      const response = await fetchWithTimeout(
-        API_URL,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "HTTP-Referer": "https://nexuselitestudio.com",
-            "X-Title": "NexusElite AI Studio",
-          },
-          body: JSON.stringify({ ...bodyWithoutModel, model }),
-        },
-        timeoutMs,
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        return { data, model };
-      }
-
-      // Retryable: rate-limited, server errors, or upstream provider failure.
-      // Anything else (400, 401, 403) is a hard error — stop trying.
-      const retryable = response.status === 429 || response.status >= 500;
-      const errText = await response.text().catch(() => "");
-      lastErr = new Error(`http ${response.status} from ${model}: ${errText.slice(0, 200)}`);
-      if (!retryable) {
-        console.error(`OpenRouter non-retryable error on ${model}:`, response.status, errText.slice(0, 300));
-        throw lastErr;
-      }
-      console.warn(`OpenRouter ${response.status} on ${model} — trying next fallback`);
-      continue;
+      const data = await chatViaSdk({ ...bodyWithoutModel, model }, { timeoutMs });
+      return { data, model };
     } catch (err: any) {
       lastErr = err;
-      if (err?.name === "AbortError") {
-        console.warn(`OpenRouter timed out on ${model} — trying next fallback`);
-        continue;
+      const status: number | undefined =
+        err?.statusCode ?? err?.status ?? err?.response?.status;
+      const isTimeout = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
+      const retryable = isTimeout || status === 429 || (status !== undefined && status >= 500);
+      if (!retryable && status !== undefined) {
+        console.error(`OpenRouter non-retryable error on ${model}:`, status, err?.message);
+        throw err;
       }
-      // Network error or non-retryable thrown above — try next anyway for safety
-      console.warn(`OpenRouter exception on ${model}: ${err?.message || err} — trying next fallback`);
+      console.warn(`OpenRouter ${status ?? "exception"} on ${model}: ${err?.message || err} — trying next fallback`);
       continue;
     }
   }

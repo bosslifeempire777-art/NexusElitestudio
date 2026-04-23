@@ -1,26 +1,26 @@
 [
   {
-    "id": "1776979788696-t3VPlPomaJ",
-    "started_at": "2026-04-23T21:29:48.696Z",
+    "id": "1776986926999-_k7_pefD7K",
+    "started_at": "2026-04-23T23:28:47.000Z",
     "operation": "chat",
     "model": "openai/gpt-4o-mini",
     "status": "success",
     "steps": [
       {
-        "run_id": "1776979788696-t3VPlPomaJ",
+        "run_id": "1776986926999-_k7_pefD7K",
         "step_number": 1,
         "type": "chat",
-        "started_at": "2026-04-23T21:29:48.696Z",
-        "completed_at": "2026-04-23T21:29:49.173Z",
+        "started_at": "2026-04-23T23:28:47.000Z",
+        "completed_at": "2026-04-23T23:28:47.546Z",
         "request": {
           "model": "openai/gpt-4o-mini",
           "messages": [
             {
-              "content": "You are concise.",
+              "content": "Concise.",
               "role": "system"
             },
             {
-              "content": "Say PONG",
+              "content": "Reply only: SHIP IT",
               "role": "user"
             }
           ],
@@ -28,11 +28,11 @@
           "parameters": {
             "messages": [
               {
-                "content": "You are concise.",
+                "content": "Concise.",
                 "role": "system"
               },
               {
-                "content": "Say PONG",
+                "content": "Reply only: SHIP IT",
                 "role": "user"
               }
             ],
@@ -42,11 +42,11 @@
           "raw": {
             "messages": [
               {
-                "content": "You are concise.",
+                "content": "Concise.",
                 "role": "system"
               },
               {
-                "content": "Say PONG",
+                "content": "Reply only: SHIP IT",
                 "role": "user"
               }
             ],
@@ -55,22 +55,22 @@
           }
         },
         "response": {
-          "content": "PONG!",
+          "content": "SHIP IT",
           "usage": {
-            "prompt_tokens": 18,
-            "completion_tokens": 4,
+            "prompt_tokens": 20,
+            "completion_tokens": 2,
             "total_tokens": 22
           },
           "provider": null,
           "model": "openai/gpt-4o-mini",
           "finish_reason": "stop",
           "raw": {
-            "id": "gen-1776979788-r6OsN4fhxyEDovfumfxI",
+            "id": "gen-1776986927-pR7j9mo1bEs1BlQKzYls",
             "object": "chat.completion",
-            "created": 1776979788,
+            "created": 1776986927,
             "model": "openai/gpt-4o-mini",
-            "provider": "Azure",
-            "system_fingerprint": "fp_eb37e061ec",
+            "provider": "OpenAI",
+            "system_fingerprint": "fp_04d92b3965",
             "choices": [
               {
                 "index": 0,
@@ -79,17 +79,17 @@
                 "native_finish_reason": "stop",
                 "message": {
                   "role": "assistant",
-                  "content": "PONG!",
+                  "content": "SHIP IT",
                   "refusal": null,
                   "reasoning": null
                 }
               }
             ],
             "usage": {
-              "prompt_tokens": 18,
-              "completion_tokens": 4,
+              "prompt_tokens": 20,
+              "completion_tokens": 2,
               "total_tokens": 22,
-              "cost": 0.0000051,
+              "cost": 0.0000042,
               "is_byok": false,
               "prompt_tokens_details": {
                 "cached_tokens": 0,
@@ -98,9 +98,9 @@
                 "video_tokens": 0
               },
               "cost_details": {
-                "upstream_inference_cost": 0.0000051,
-                "upstream_inference_prompt_cost": 0.0000027,
-                "upstream_inference_completions_cost": 0.0000024
+                "upstream_inference_cost": 0.0000042,
+                "upstream_inference_prompt_cost": 0.000003,
+                "upstream_inference_completions_cost": 0.0000012
               },
               "completion_tokens_details": {
                 "reasoning_tokens": 0,
@@ -110,13 +110,13 @@
             }
           }
         },
-        "duration_ms": 477,
+        "duration_ms": 546,
         "error": null,
-        "input_summary": "{\n  \"id\": \"gen-1776979788-r6OsN4fhxyEDovfumfxI\",\n  \"object\": \"chat.completion\",\n  \"created\": 1776979788,\n  \"model\": \"openai/gpt-4o-mini\",\n  \"provider\": \"Azure\",\n  \"system_fingerprint\": \"fp_eb37e061ec\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"logprobs\": null,\n      \"finish_reason\": \"stop\",\n      \"native_finish_reason\": \"stop\",\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"PONG!\",\n        \"refusal\": null,\n        \"reasoning\": null\n      }\n    }\n  ],\n  \"usage\": {\n   ...",
+        "input_summary": "{\n  \"id\": \"gen-1776986927-pR7j9mo1bEs1BlQKzYls\",\n  \"object\": \"chat.completion\",\n  \"created\": 1776986927,\n  \"model\": \"openai/gpt-4o-mini\",\n  \"provider\": \"OpenAI\",\n  \"system_fingerprint\": \"fp_04d92b3965\",\n  \"choices\": [\n    {\n      \"index\": 0,\n      \"logprobs\": null,\n      \"finish_reason\": \"stop\",\n      \"native_finish_reason\": \"stop\",\n      \"message\": {\n        \"role\": \"assistant\",\n        \"content\": \"SHIP IT\",\n        \"refusal\": null,\n        \"reasoning\": null\n      }\n    }\n  ],\n  \"usage\": {\n ...",
         "output_summary": null,
         "truncation_info": {
           "truncated": true,
-          "original_length": 1062,
+          "original_length": 1064,
           "reason": "max_length"
         },
         "step_category": "response"

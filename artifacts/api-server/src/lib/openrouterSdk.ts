@@ -44,6 +44,8 @@ export function getOpenRouterClient(): OpenRouter {
 
   cached = new OpenRouter({
     apiKey,
+    httpReferer: "https://nexuselitestudio.com",
+    appTitle:    "NexusElite AI Studio",
     ...(hooks ? { hooks } : {}),
   } as any);
 
@@ -56,4 +58,26 @@ export function getOpenRouterClient(): OpenRouter {
     );
   }
   return cached;
+}
+
+/**
+ * Thin convenience wrapper: same call shape as the OpenRouter REST API
+ * (`{model, messages, max_tokens, response_format, temperature, ...}`),
+ * returns the OpenAI-compatible response (`{choices, usage, ...}`).
+ *
+ * Routes every request through the singleton SDK so devtools captures it.
+ * Use this anywhere in the api-server instead of raw `fetch` to
+ * `https://openrouter.ai/api/v1/chat/completions`.
+ */
+export async function chatViaSdk(
+  body: Record<string, any>,
+  opts?: { timeoutMs?: number },
+): Promise<any> {
+  const sdk = getOpenRouterClient();
+  // The SDK exposes `sdk.chat.send({ chatRequest })` and returns the
+  // upstream OpenAI-shaped JSON unchanged.
+  return await (sdk.chat.send as any)(
+    { chatRequest: { stream: false, ...body } },
+    opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : undefined,
+  );
 }
