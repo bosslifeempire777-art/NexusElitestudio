@@ -23,6 +23,7 @@ import Deployments from "@/pages/deployments";
 import Usage from "@/pages/usage";
 import AiLab from "@/pages/ai-lab";
 import Diagnostics from "@/pages/diagnostics";
+import CommandCenter from "@/pages/command-center";
 
 const queryClient = new QueryClient();
 
@@ -97,6 +98,9 @@ function Router() {
       </Route>
       <Route path="/diagnostics">
         <AdminRoute component={Diagnostics} />
+      </Route>
+      <Route path="/command-center">
+        <AdminRoute component={CommandCenter} />
       </Route>
       <Route component={NotFound} />
     </Switch>

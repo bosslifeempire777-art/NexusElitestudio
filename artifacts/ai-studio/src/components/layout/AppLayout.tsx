@@ -21,6 +21,7 @@ import {
   Activity,
   Beaker,
   Gauge,
+  Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
@@ -207,6 +208,20 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <Gauge className={cn("w-5 h-5 mr-3 shrink-0", location.startsWith("/diagnostics") ? "text-primary" : "group-hover:text-foreground")} />
                 Diagnostics
                 {location.startsWith("/diagnostics") && <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary" />}
+              </Link>
+              <Link
+                href="/command-center"
+                onClick={handleNavClick}
+                className={cn(
+                  "flex items-center px-3 py-2.5 text-sm font-medium transition-all group cyber-clip relative",
+                  location.startsWith("/command-center")
+                    ? "bg-primary/10 text-primary border border-primary/30 glow-primary"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground border border-transparent",
+                )}
+              >
+                <Sparkles className={cn("w-5 h-5 mr-3 shrink-0", location.startsWith("/command-center") ? "text-primary" : "group-hover:text-foreground")} />
+                Command Center
+                {location.startsWith("/command-center") && <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary" />}
               </Link>
             </>
           )}

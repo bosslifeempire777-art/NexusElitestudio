@@ -16,6 +16,7 @@ import secretsRouter from "./secrets.js";
 import deploymentsRouter from "./deployments.js";
 import usageRouter from "./usage.js";
 import aiLabRouter from "./aiLab.js";
+import commandCenterRouter from "./command-center.js";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use("/secrets", secretsRouter);
 router.use("/deployments", deploymentsRouter);
 router.use("/usage", usageRouter);
 router.use("/ai-lab", aiLabRouter);
+router.use("/command-center", commandCenterRouter);
 
 export default router;
