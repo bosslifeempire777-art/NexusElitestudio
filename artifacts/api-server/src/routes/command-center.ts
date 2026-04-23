@@ -10,6 +10,7 @@ import { eq, desc } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
+import { getOpenRouterClient } from "../lib/openrouterSdk.js";
 
 const router: IRouter = Router();
 router.use(requireAdmin);
@@ -278,35 +279,23 @@ router.post("/custom-agents/:id/run", async (req, res) => {
   const [agent] = await db.select().from(customAgentsTable).where(eq(customAgentsTable.id, id));
   if (!agent) { res.status(404).json({ error: "agent not found" }); return; }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) { res.status(500).json({ error: "OPENROUTER_API_KEY not set" }); return; }
+  if (!process.env.OPENROUTER_API_KEY) {
+    res.status(500).json({ error: "OPENROUTER_API_KEY not set" }); return;
+  }
 
   try {
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://nexuselitestudio.com",
-        "X-Title": "NexusElite AI Studio",
-      },
-      body: JSON.stringify({
-        model: agent.model,
-        messages: [
-          { role: "system", content: agent.systemPrompt },
-          { role: "user", content: String(task) },
-        ],
-      }),
-      signal: AbortSignal.timeout(120_000),
+    const sdk = getOpenRouterClient();
+    const completion = await sdk.chat.completions.create({
+      model: agent.model,
+      messages: [
+        { role: "system", content: agent.systemPrompt },
+        { role: "user",   content: String(task) },
+      ],
     });
-    if (!r.ok) {
-      res.status(r.status).json({ error: "openrouter_error", message: await r.text() });
-      return;
-    }
-    const j = await r.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: any };
+    const choice: any = completion?.choices?.[0];
     res.json({
-      output: j.choices?.[0]?.message?.content ?? "",
-      usage:  j.usage ?? null,
+      output: choice?.message?.content ?? "",
+      usage:  (completion as any)?.usage ?? null,
       agent:  { id: agent.id, name: agent.name, model: agent.model },
     });
   } catch (err: any) {

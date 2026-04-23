@@ -15,6 +15,7 @@
     "typescript": "~5.9.2"
   },
   "dependencies": {
+    "@openrouter/sdk": "^0.12.20",
     "stripe": "^20.4.1",
     "stripe-replit-sync": "^1.0.0"
   }
