@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "@workspace/db";
 import { usersTable, referralsTable, creditTransactionsTable } from "@workspace/db/schema";
-import { eq, or } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
 import { signToken, requireAuth } from "../middleware/auth.js";
 
@@ -26,7 +26,7 @@ function userResponse(user: typeof usersTable.$inferSelect) {
 }
 
 router.post("/register", async (req, res) => {
-  const { username, email, password, referralCode } = req.body as {
+  let { username, email, password, referralCode } = req.body as {
     username?: string;
     email?: string;
     password?: string;
@@ -38,13 +38,21 @@ router.post("/register", async (req, res) => {
     return;
   }
 
+  // Normalize: trim everything, lowercase email (emails are case-insensitive
+  // by RFC). Keep username display-case but compare case-insensitively below.
+  username = username.trim();
+  email = email.trim().toLowerCase();
+
   if (password.length < 8) {
     res.status(400).json({ error: "Password must be at least 8 characters" });
     return;
   }
 
   const existing = await db.query.usersTable.findFirst({
-    where: or(eq(usersTable.username, username), eq(usersTable.email, email)),
+    where: or(
+      sql`lower(${usersTable.username}) = lower(${username})`,
+      eq(usersTable.email, email),
+    ),
   });
 
   if (existing) {
@@ -110,7 +118,7 @@ router.post("/register", async (req, res) => {
 });
 
 router.post("/login", async (req, res) => {
-  const { username, password } = req.body as {
+  let { username, password } = req.body as {
     username?: string;
     password?: string;
   };
@@ -120,8 +128,17 @@ router.post("/login", async (req, res) => {
     return;
   }
 
+  // Trim whitespace and do a case-insensitive lookup so users don't get
+  // locked out for typing "JohnDoe" vs "johndoe" or "User@Mail.com" vs
+  // "user@mail.com". This was the #1 source of "wrong credentials" reports.
+  username = username.trim();
+  const lookup = username.toLowerCase();
+
   const user = await db.query.usersTable.findFirst({
-    where: or(eq(usersTable.username, username), eq(usersTable.email, username)),
+    where: or(
+      sql`lower(${usersTable.username}) = ${lookup}`,
+      sql`lower(${usersTable.email})    = ${lookup}`,
+    ),
   });
 
   // Diagnostic flag: only verbose-log for the admin account so we don't leak
