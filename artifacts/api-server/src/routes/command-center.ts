@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "child_process";
+import { promises as fs } from "fs";
+import path from "path";
 import { db } from "@workspace/db";
 import {
   customAgentsTable,
@@ -307,5 +309,103 @@ router.post("/custom-agents/:id/run", async (req, res) => {
     res.status(500).json({ error: "run_failed", message: err.message });
   }
 });
+
+/* ── Telemetry: read devtools capture file ───────────────────── */
+const TELEMETRY_PATH = path.resolve(
+  process.env.OPENROUTER_DEVTOOLS_STORAGE_PATH ??
+    ".devtools/openrouter-generations.json",
+);
+const TELEMETRY_MAX_BYTES = 50 * 1024 * 1024; // 50 MB hard cap to avoid DoS
+const MSG_TRUNCATE = 8_000;                   // per-message char cap in response
+
+function truncStr(s: any): string | null {
+  if (s == null) return s ?? null;
+  const str = String(s);
+  return str.length > MSG_TRUNCATE
+    ? str.slice(0, MSG_TRUNCATE) + `\n…[truncated ${str.length - MSG_TRUNCATE} chars]`
+    : str;
+}
+
+router.get("/telemetry", async (_req, res) => {
+  try {
+    const stat = await fs.stat(TELEMETRY_PATH).catch(() => null);
+    if (!stat) {
+      res.json({ runs: [], stats: empty(), path: TELEMETRY_PATH });
+      return;
+    }
+    if (stat.size > TELEMETRY_MAX_BYTES) {
+      res.status(413).json({
+        error: "telemetry_too_large",
+        message: `Capture file is ${stat.size} bytes (limit ${TELEMETRY_MAX_BYTES}). Clear telemetry to continue.`,
+        path: TELEMETRY_PATH,
+      });
+      return;
+    }
+    const raw = await fs.readFile(TELEMETRY_PATH, "utf8");
+    const all = JSON.parse(raw || "[]");
+    if (!Array.isArray(all)) {
+      res.json({ runs: [], stats: empty(), path: TELEMETRY_PATH });
+      return;
+    }
+    // Newest first, capped to 200 most recent
+    const runs = all.slice(-200).reverse().map((r: any) => {
+      const step = r.steps?.[0] ?? {};
+      const u = step.response?.usage ?? {};
+      const startedAt = step.started_at ?? r.started_at;
+      const completedAt = step.completed_at ?? r.completed_at;
+      const durationMs = startedAt && completedAt
+        ? new Date(completedAt).getTime() - new Date(startedAt).getTime()
+        : null;
+      return {
+        id: r.id,
+        startedAt,
+        completedAt,
+        durationMs,
+        operation: r.operation,
+        model: r.model ?? step.request?.model ?? null,
+        provider: step.response?.provider ?? null,
+        status: r.status,
+        finishReason: step.response?.finish_reason ?? null,
+        promptTokens: u.prompt_tokens ?? null,
+        completionTokens: u.completion_tokens ?? null,
+        totalTokens: u.total_tokens ?? null,
+        messages: (step.request?.messages ?? []).map((m: any) => ({
+          role: m?.role ?? "unknown",
+          content: truncStr(m?.content),
+        })),
+        responseContent: truncStr(step.response?.content),
+        error: step.error ?? null,
+      };
+    });
+
+    const stats = {
+      totalRuns: all.length,
+      success: all.filter((r: any) => r.status === "success").length,
+      errors: all.filter((r: any) => r.status === "error").length,
+      totalTokens: all.reduce(
+        (s: number, r: any) =>
+          s + (r.steps?.[0]?.response?.usage?.total_tokens ?? 0),
+        0,
+      ),
+    };
+    res.json({ runs, stats, path: TELEMETRY_PATH });
+  } catch (err: any) {
+    res.status(500).json({ error: "telemetry_failed", message: err.message });
+  }
+});
+
+router.delete("/telemetry", async (_req, res) => {
+  try {
+    await fs.mkdir(path.dirname(TELEMETRY_PATH), { recursive: true });
+    await fs.writeFile(TELEMETRY_PATH, "[]", "utf8");
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "telemetry_clear_failed", message: err.message });
+  }
+});
+
+function empty() {
+  return { totalRuns: 0, success: 0, errors: 0, totalTokens: 0 };
+}
 
 export default router;

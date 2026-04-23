@@ -5,9 +5,10 @@ import { getToken } from "@/lib/auth";
 import {
   Terminal, Cpu, Bot, Plus, Play, Trash2, Save, Search,
   Loader2, AlertTriangle, ChevronRight, Sparkles, X,
+  Activity, RefreshCw, ChevronDown,
 } from "lucide-react";
 
-type Tab = "console" | "models" | "agents" | "custom";
+type Tab = "console" | "models" | "agents" | "custom" | "telemetry";
 
 type ModelInfo = {
   id: string; name: string; contextLength: number;
@@ -69,6 +70,7 @@ export default function CommandCenter() {
             { id: "models",  label: "Models",         icon: Cpu      },
             { id: "agents",  label: "Built-in Agents", icon: Bot      },
             { id: "custom",  label: "My Agents",      icon: Plus     },
+            { id: "telemetry", label: "Telemetry",    icon: Activity },
           ] as Array<{ id: Tab; label: string; icon: any }>).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -86,6 +88,7 @@ export default function CommandCenter() {
         {tab === "models"  && <ModelsTab  />}
         {tab === "agents"  && <BuiltinAgentsTab />}
         {tab === "custom"  && <CustomAgentsTab    />}
+        {tab === "telemetry" && <TelemetryTab />}
       </div>
     </AppLayout>
   );
@@ -463,6 +466,225 @@ function CustomAgentsTab() {
           </CardContent>
         </Card>
       ))}
+    </div>
+  );
+}
+
+/* ─────────────────────── TELEMETRY ─────────────────────── */
+type TelemetryRun = {
+  id: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  operation: string | null;
+  model: string | null;
+  provider: string | null;
+  status: string | null;
+  finishReason: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  messages: Array<{ role: string; content: string }>;
+  responseContent: string | null;
+  error: any;
+};
+
+type TelemetryStats = {
+  totalRuns: number;
+  success: number;
+  errors: number;
+  totalTokens: number;
+};
+
+function TelemetryTab() {
+  const [runs, setRuns] = useState<TelemetryRun[]>([]);
+  const [stats, setStats] = useState<TelemetryStats>({ totalRuns: 0, success: 0, errors: 0, totalTokens: 0 });
+  const [filePath, setFilePath] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [autoRefresh, setAutoRefresh] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetchJson("/api/command-center/telemetry");
+      setRuns(r.runs || []);
+      setStats(r.stats || { totalRuns: 0, success: 0, errors: 0, totalTokens: 0 });
+      setFilePath(r.path || "");
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [autoRefresh]);
+
+  const clearAll = async () => {
+    if (!confirm("Clear all captured telemetry? This wipes the local capture file.")) return;
+    await fetchJson("/api/command-center/telemetry", { method: "DELETE" });
+    await load();
+  };
+
+  const toggle = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />
+          <CardTitle className="text-sm">OpenRouter Telemetry</CardTitle>
+          <Badge variant="outline" className="ml-auto text-[10px] font-mono truncate max-w-[40ch]">
+            {filePath || "loading…"}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <Stat label="Total runs"   value={stats.totalRuns} />
+            <Stat label="Successful"   value={stats.success} tone="text-green-400" />
+            <Stat label="Errors"       value={stats.errors} tone="text-red-400" />
+            <Stat label="Total tokens" value={stats.totalTokens.toLocaleString()} tone="text-primary" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={load} disabled={loading} variant="outline" className="text-xs">
+              {loading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+              Refresh
+            </Button>
+            <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="accent-primary"
+              />
+              Auto-refresh (4s)
+            </label>
+            <Button onClick={clearAll} variant="outline" className="ml-auto text-xs text-red-400 hover:text-red-300">
+              <Trash2 className="w-3 h-3 mr-1" /> Clear
+            </Button>
+          </div>
+          {err && (
+            <div className="text-xs text-red-400 bg-red-400/5 border border-red-400/30 rounded p-2">
+              {err}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Recent runs (newest first, last 200)</CardTitle></CardHeader>
+        <CardContent>
+          {runs.length === 0 && !loading && (
+            <div className="text-xs text-muted-foreground/60 italic py-6 text-center">
+              No captured runs yet. Run any custom agent to start capturing.
+            </div>
+          )}
+          <div className="space-y-1">
+            {runs.map(r => {
+              const isOpen = expanded.has(r.id);
+              const ok = r.status === "success";
+              return (
+                <div key={r.id} className="border border-border/40 rounded bg-black/40">
+                  <button
+                    onClick={() => toggle(r.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-secondary/30 transition-colors"
+                  >
+                    <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+                    <span className={ok ? "text-green-400" : "text-red-400"}>
+                      {ok ? "●" : "✕"}
+                    </span>
+                    <span className="text-foreground/80 truncate max-w-[28ch]">{r.model || "—"}</span>
+                    {r.provider && <span className="text-muted-foreground/60">via {r.provider}</span>}
+                    <span className="text-muted-foreground ml-auto">
+                      {r.totalTokens != null ? `${r.totalTokens} tok` : "—"}
+                    </span>
+                    <span className="text-muted-foreground/60">
+                      {r.durationMs != null ? `${r.durationMs}ms` : ""}
+                    </span>
+                    <span className="text-muted-foreground/40 hidden md:inline">
+                      {r.startedAt ? new Date(r.startedAt).toLocaleTimeString() : ""}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="px-3 pb-3 pt-1 space-y-2 border-t border-border/30 text-xs">
+                      <Meta label="Run ID"        value={r.id} />
+                      <Meta label="Started"       value={r.startedAt ? new Date(r.startedAt).toISOString() : "—"} />
+                      <Meta label="Operation"     value={r.operation || "—"} />
+                      <Meta label="Finish reason" value={r.finishReason || "—"} />
+                      <Meta label="Tokens" value={
+                        r.totalTokens != null
+                          ? `${r.promptTokens} prompt + ${r.completionTokens} completion = ${r.totalTokens} total`
+                          : "—"
+                      } />
+
+                      <div>
+                        <div className="text-muted-foreground mb-1">Messages</div>
+                        <div className="space-y-1">
+                          {r.messages.map((m, i) => (
+                            <div key={i} className="bg-black/60 border border-border/40 rounded p-2">
+                              <div className="text-[10px] uppercase text-primary mb-1">{m.role}</div>
+                              <pre className="whitespace-pre-wrap font-mono text-foreground/80">{m.content}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {r.responseContent != null && (
+                        <div>
+                          <div className="text-muted-foreground mb-1">Response</div>
+                          <pre className="bg-black/60 border border-border/40 rounded p-2 whitespace-pre-wrap font-mono text-green-300/90">
+                            {r.responseContent}
+                          </pre>
+                        </div>
+                      )}
+
+                      {r.error && (
+                        <div>
+                          <div className="text-muted-foreground mb-1">Error</div>
+                          <pre className="bg-red-500/5 border border-red-500/30 rounded p-2 whitespace-pre-wrap font-mono text-red-400">
+                            {typeof r.error === "string" ? r.error : JSON.stringify(r.error, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
+  return (
+    <div className="bg-black/40 border border-border/40 rounded p-2">
+      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className={`text-lg font-mono ${tone || "text-foreground"}`}>{value}</div>
+    </div>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-muted-foreground w-28 shrink-0">{label}</span>
+      <span className="font-mono text-foreground/80 break-all">{value}</span>
     </div>
   );
 }
