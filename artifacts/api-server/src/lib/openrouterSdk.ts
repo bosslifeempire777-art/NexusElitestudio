@@ -21,11 +21,27 @@ export function getOpenRouterClient(): OpenRouter {
 
   cached = new OpenRouter({
     apiKey,
-    ...(isDev ? { hooks: createOpenRouterDevtools() } : {}),
+    ...(isDev
+      ? {
+          hooks: createOpenRouterDevtools({
+            storagePath:
+              process.env.OPENROUTER_DEVTOOLS_STORAGE_PATH ??
+              ".devtools/openrouter-generations.json",
+            serverUrl:
+              process.env.OPENROUTER_DEVTOOLS_SERVER_URL ??
+              "http://localhost:4983/api/notify",
+          }),
+        }
+      : {}),
   });
 
   if (isDev) {
-    console.log("🔧 OpenRouter SDK initialized with devtools telemetry");
+    console.log(
+      `🔧 OpenRouter SDK initialized with devtools telemetry → ${
+        process.env.OPENROUTER_DEVTOOLS_STORAGE_PATH ??
+        ".devtools/openrouter-generations.json"
+      }`,
+    );
   }
   return cached;
 }
