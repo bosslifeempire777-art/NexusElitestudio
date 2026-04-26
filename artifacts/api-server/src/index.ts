@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import { projectsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { startRenderPoller } from "./lib/render-poller.js";
+import { checkStripeConfig } from "./lib/stripe-config-check.js";
 
 /**
  * GLOBAL CRASH GUARDS.
@@ -142,4 +143,9 @@ app.listen(port, async () => {
   await ensureStripeSyncSchema();
   await recoverStuckBuilds();
   startRenderPoller();
+  // Best-effort Stripe sanity check — verifies key mode and that all
+  // configured price IDs exist in the same mode. Logs only; never throws.
+  void checkStripeConfig().catch(err =>
+    console.warn("[stripe-config] check failed:", err?.message ?? err),
+  );
 });

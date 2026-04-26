@@ -254,32 +254,31 @@ router.get('/subscription', requireAuth, async (req, res) => {
 /* ── Stripe webhook (raw body required) ─────────────────────── */
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  if (!webhookSecret) {
-    console.warn('STRIPE_WEBHOOK_SECRET not set — webhook verification skipped');
-    res.json({ received: true });
-    return;
-  }
 
   if (!sig) {
     res.status(400).json({ error: 'Missing stripe-signature header' });
     return;
   }
 
+  // Body must be raw Buffer — handled by express.raw() in app.ts for this route
+  const payload = req.body as Buffer;
+  if (!Buffer.isBuffer(payload)) {
+    res.status(400).json({ error: 'Webhook body must be raw Buffer. Ensure webhook route uses express.raw().' });
+    return;
+  }
+
   try {
-    // Body must be raw Buffer — handled by express.raw() in app.ts for this route
-    const payload = req.body as Buffer;
-    if (!Buffer.isBuffer(payload)) {
-      res.status(400).json({ error: 'Webhook body must be raw Buffer. Ensure webhook route uses express.raw().' });
-      return;
-    }
     await import('../webhookHandlers.js').then(m =>
       m.WebhookHandlers.processWebhook(payload, sig as string),
     );
     res.json({ received: true });
   } catch (err: any) {
-    console.error('Webhook error:', err.message);
+    // Return 400 (NOT 200) so Stripe will retry the delivery instead of
+    // marking it "Succeeded" while we silently drop the event. Stripe
+    // automatically retries failed webhooks on an exponential backoff for
+    // up to 3 days, which gives us a chance to fix config issues without
+    // losing checkout.session.completed / subscription events.
+    console.error('[stripe-webhook] processing error:', err.message);
     res.status(400).json({ error: err.message });
   }
 });

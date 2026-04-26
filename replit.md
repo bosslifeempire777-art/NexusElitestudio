@@ -91,15 +91,62 @@ Database: Database Agent
 - `build_logs` - Detailed build log entries
 - `marketplace_listings` - Published marketplace items
 
-## Stripe Payments (Pending Setup)
+## Stripe Payments (Live)
 
-Stripe integration is partially set up but requires credentials to activate:
-- All Stripe route code is in place (`artifacts/api-server/src/routes/stripe.ts`, `stripeService.ts`, `storage.ts`, `webhookHandlers.ts`)
-- `stripeClient.ts` is currently a **stub** — it reads from `STRIPE_SECRET_KEY` env var
-- To activate: set `STRIPE_SECRET_KEY` as a secret, then run `pnpm --filter @workspace/scripts exec tsx src/seed-products.ts` to seed plans
-- Stripe routes: `GET /api/stripe/products-with-prices`, `POST /api/stripe/checkout`, `POST /api/stripe/portal`, `GET /api/stripe/subscription`
-- Webhook route: `POST /api/stripe/webhook` (registered before express.json() in app.ts — IMPORTANT)
-- Once real Stripe credentials are set, replace `stripeClient.ts` with the full Replit-connector version
+Stripe is live in production. Account: `acct_1TBYzAJuLDzBrGo8` (US, USD,
+charges and payouts enabled, fully onboarded).
+
+### Configuration
+- Secrets: `STRIPE_SECRET_KEY` (`sk_live_…`), `STRIPE_PUBLISHABLE_KEY` (`pk_live_…`)
+- Shared env: `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_ELITE`
+  — all three IDs exist in live mode and map to active recurring monthly
+  prices ($29 / $60 / $269) on the `NexusElite` products.
+- Webhook signing secret: `STRIPE_WEBHOOK_SECRET`. **Comma-separate
+  multiple secrets** (e.g. `whsec_a,whsec_b`) when more than one webhook
+  endpoint is registered on the Stripe dashboard. Numbered fallbacks
+  `STRIPE_WEBHOOK_SECRET_2…5` and `STRIPE_WEBHOOK_SECRETS` are also
+  honored. The handler (`webhookHandlers.ts`) tries each secret in turn.
+
+### Webhook endpoints (live)
+Two endpoints are registered on the Stripe dashboard, one per domain:
+- `https://nexuselitestudio.com/api/stripe/webhook`
+- `https://nexuselitestudio.nexus/api/stripe/webhook`
+
+Each endpoint has its own signing secret. Both must be put into
+`STRIPE_WEBHOOK_SECRET` (comma-separated) so signature verification
+succeeds for events from either endpoint. Otherwise roughly half of all
+webhook deliveries fail signature verification and the user's plan is
+never updated after checkout.
+
+### Routes
+- `GET  /api/stripe/products-with-prices`
+- `POST /api/stripe/checkout`
+- `POST /api/stripe/portal`
+- `GET  /api/stripe/subscription`
+- `POST /api/stripe/webhook` — must be registered **before** `express.json()`
+  in `app.ts` so the raw `Buffer` body is preserved for signature
+  verification. Returns **400** on signature failure (so Stripe will
+  retry the delivery), not 200.
+
+### Known noisy warning (non-fatal)
+The `stripe-replit-sync` package logs `relation "stripe.accounts" does not
+exist` / `relation "stripe._managed_webhooks" does not exist` on every
+incoming webhook in production. The package expects its own `stripe.*`
+schema in the database but it has never been migrated on the prod DB.
+Plan upgrades still work because our own `webhookHandlers.ts` runs
+independently of the sync step.
+
+### Investigation history
+On 2026-04-26 the owner reported "lots of declined payments" with no
+successful charges. Investigation against the live Stripe account
+revealed: only **1 actual charge attempt** in the last 30 days (declined
+for `insufficient_funds` — a real customer card issue) and **5 expired
+checkout sessions** where the customer abandoned the form. The "many
+declines" perception was abandoned-checkout sessions in the dashboard,
+not configuration failures. The configuration issues that *were* found —
+multi-endpoint webhook signature mismatches and silent 200 OK responses
+on signature failure — are now fixed in `webhookHandlers.ts` and
+`routes/stripe.ts`.
 
 ## Design
 

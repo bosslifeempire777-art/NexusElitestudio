@@ -44,6 +44,35 @@ async function setUserPlan(userId: string, plan: string, subscriptionId: string 
   console.log(`[stripe-webhook] user ${userId} -> plan=${plan} sub=${subscriptionId ?? 'none'}`);
 }
 
+/**
+ * Read every webhook signing secret we should accept. Returns them in
+ * priority order. Supports:
+ *   - STRIPE_WEBHOOK_SECRET = "whsec_…"                    (single)
+ *   - STRIPE_WEBHOOK_SECRET = "whsec_a,whsec_b"            (comma-separated)
+ *   - STRIPE_WEBHOOK_SECRETS = "whsec_a,whsec_b"           (alt name)
+ *   - STRIPE_WEBHOOK_SECRET_2, STRIPE_WEBHOOK_SECRET_3 …   (numbered fallbacks)
+ *
+ * We support multiple because production has TWO live webhook endpoints
+ * registered on the Stripe dashboard (one for nexuselitestudio.com and
+ * one for nexuselitestudio.nexus). Each endpoint has its own signing
+ * secret, so the app must accept either one or roughly half of incoming
+ * webhooks will fail signature verification.
+ */
+function getWebhookSecrets(): string[] {
+  const secrets: string[] = [];
+  const push = (raw: string | undefined) => {
+    if (!raw) return;
+    for (const s of raw.split(',')) {
+      const t = s.trim();
+      if (t && !secrets.includes(t)) secrets.push(t);
+    }
+  };
+  push(process.env.STRIPE_WEBHOOK_SECRET);
+  push(process.env.STRIPE_WEBHOOK_SECRETS);
+  for (let i = 2; i <= 5; i++) push(process.env[`STRIPE_WEBHOOK_SECRET_${i}`]);
+  return secrets;
+}
+
 export class WebhookHandlers {
   static async processWebhook(payload: Buffer, signature: string): Promise<void> {
     if (!Buffer.isBuffer(payload)) {
@@ -54,6 +83,10 @@ export class WebhookHandlers {
     }
 
     // Step 1 — let stripe-replit-sync mirror Stripe state into our DB tables.
+    // This is best-effort: in environments where the `stripe.*` schema has
+    // never been migrated (e.g. the prod DB on Render) every call here
+    // throws "relation does not exist". That's noisy but non-fatal — our
+    // own plan-mapping logic below is what actually upgrades users.
     try {
       const sync = await getStripeSync();
       await sync.processWebhook(payload, signature);
@@ -64,69 +97,94 @@ export class WebhookHandlers {
 
     // Step 2 — verify the event ourselves and run plan-mapping logic.
     const stripe = await getUncachableStripeClient();
-    const secret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!secret) {
-      console.warn('[stripe-webhook] STRIPE_WEBHOOK_SECRET not set — cannot verify event for plan update');
-      return;
+    const secrets = getWebhookSecrets();
+    if (secrets.length === 0) {
+      // Throw so the route returns 4xx and Stripe will RETRY the delivery
+      // once the secret is configured. The previous behaviour was to log
+      // and return 200, which silently dropped events forever.
+      throw new Error(
+        'STRIPE_WEBHOOK_SECRET is not configured. Set it to the signing secret(s) ' +
+        'shown on the Stripe Dashboard "Developers → Webhooks" page. If you have ' +
+        'more than one endpoint registered, set STRIPE_WEBHOOK_SECRET to a ' +
+        'comma-separated list of secrets.',
+      );
     }
 
-    let event: Stripe.Event;
-    try {
-      event = stripe.webhooks.constructEvent(payload, signature, secret);
-    } catch (err: any) {
-      console.error('[stripe-webhook] signature verify failed:', err.message);
-      return;
+    let event: Stripe.Event | null = null;
+    let lastErr: any = null;
+    for (const secret of secrets) {
+      try {
+        event = stripe.webhooks.constructEvent(payload, signature, secret);
+        lastErr = null;
+        break;
+      } catch (err: any) {
+        lastErr = err;
+      }
+    }
+    if (!event) {
+      // Re-throw so the HTTP route returns 4xx → Stripe will retry the
+      // delivery later (and surfaces the failure in the dashboard) instead
+      // of marking it "Succeeded" while we silently drop it.
+      throw new Error(
+        `[stripe-webhook] signature verify failed against ${secrets.length} ` +
+        `configured secret(s): ${lastErr?.message ?? 'unknown error'}. ` +
+        `If you have multiple Stripe webhook endpoints (e.g. one per domain), ` +
+        `set STRIPE_WEBHOOK_SECRET to a comma-separated list of all signing secrets.`,
+      );
     }
 
     const map = priceToPlan();
 
-    try {
-      switch (event.type) {
-        case 'checkout.session.completed': {
-          const session = event.data.object as Stripe.Checkout.Session;
-          if (session.mode !== 'subscription') break;
-          const userId = await resolveUserId(stripe, session.customer as string | null, session.metadata?.userId);
-          if (!userId) { console.warn('[stripe-webhook] checkout.session.completed: no userId resolved'); break; }
-          const subscriptionId = session.subscription as string | null;
-          if (!subscriptionId) break;
-          const sub = await stripe.subscriptions.retrieve(subscriptionId);
-          const priceId = sub.items.data[0]?.price?.id || '';
-          const plan = map[priceId];
-          if (!plan) { console.warn(`[stripe-webhook] No plan mapped for price ${priceId}`); break; }
-          await setUserPlan(userId, plan, subscriptionId, session.customer as string | null);
-          break;
-        }
-
-        case 'customer.subscription.created':
-        case 'customer.subscription.updated': {
-          const sub = event.data.object as Stripe.Subscription;
-          const userId = await resolveUserId(stripe, sub.customer as string, sub.metadata?.userId);
-          if (!userId) break;
-          const priceId = sub.items.data[0]?.price?.id || '';
-          const plan = map[priceId];
-          const status = sub.status;
-          if ((status === 'active' || status === 'trialing') && plan) {
-            await setUserPlan(userId, plan, sub.id, sub.customer as string);
-          } else if (status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired') {
-            await setUserPlan(userId, 'free', null, sub.customer as string);
-          }
-          break;
-        }
-
-        case 'customer.subscription.deleted': {
-          const sub = event.data.object as Stripe.Subscription;
-          const userId = await resolveUserId(stripe, sub.customer as string, sub.metadata?.userId);
-          if (!userId) break;
-          await setUserPlan(userId, 'free', null, sub.customer as string);
-          break;
-        }
-
-        default:
-          /* not interesting — already mirrored by sync */
-          break;
+    // NOTE: this block intentionally does NOT swallow errors anymore.
+    // For billing-critical events, a failed DB write (network blip,
+    // transient connection pool error, etc.) should propagate so the
+    // webhook route returns 4xx and Stripe RETRIES the delivery on its
+    // exponential backoff. The previous `try/catch` around this block
+    // logged the error and returned 200 OK, which silently lost plan
+    // upgrades on every transient DB error.
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        if (session.mode !== 'subscription') break;
+        const userId = await resolveUserId(stripe, session.customer as string | null, session.metadata?.userId);
+        if (!userId) { console.warn('[stripe-webhook] checkout.session.completed: no userId resolved'); break; }
+        const subscriptionId = session.subscription as string | null;
+        if (!subscriptionId) break;
+        const sub = await stripe.subscriptions.retrieve(subscriptionId);
+        const priceId = sub.items.data[0]?.price?.id || '';
+        const plan = map[priceId];
+        if (!plan) { console.warn(`[stripe-webhook] No plan mapped for price ${priceId}`); break; }
+        await setUserPlan(userId, plan, subscriptionId, session.customer as string | null);
+        break;
       }
-    } catch (err: any) {
-      console.error('[stripe-webhook] plan-update handler error:', err?.message ?? err);
+
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated': {
+        const sub = event.data.object as Stripe.Subscription;
+        const userId = await resolveUserId(stripe, sub.customer as string, sub.metadata?.userId);
+        if (!userId) break;
+        const priceId = sub.items.data[0]?.price?.id || '';
+        const plan = map[priceId];
+        const status = sub.status;
+        if ((status === 'active' || status === 'trialing') && plan) {
+          await setUserPlan(userId, plan, sub.id, sub.customer as string);
+        } else if (status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired') {
+          await setUserPlan(userId, 'free', null, sub.customer as string);
+        }
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object as Stripe.Subscription;
+        const userId = await resolveUserId(stripe, sub.customer as string, sub.metadata?.userId);
+        if (!userId) break;
+        await setUserPlan(userId, 'free', null, sub.customer as string);
+        break;
+      }
+
+      default:
+        /* not interesting — already mirrored by sync */
+        break;
     }
   }
 }
