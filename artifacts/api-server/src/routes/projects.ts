@@ -228,9 +228,9 @@ router.get("/:id", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {
@@ -245,7 +245,7 @@ router.get("/:id", requireAuth, async (req, res) => {
 router.delete("/:id", requireAuth, async (req, res) => {
   const userId = req.auth!.userId;
   await db.delete(projectsTable).where(
-    and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId))
+    and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId))
   );
   res.status(204).send();
 });
@@ -256,9 +256,9 @@ router.get("/:id/build-logs", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {
@@ -269,7 +269,7 @@ router.get("/:id/build-logs", requireAuth, async (req, res) => {
   const agentLogs = Array.isArray(project.agentLogs) ? project.agentLogs as string[] : [];
   const logs = agentLogs.map((msg, i) => ({
     id: `log-${i}`,
-    projectId: req.params.id,
+    projectId: String(req.params.id),
     level: msg.includes("✅") || msg.includes("🎉") ? "success" :
            msg.includes("Error") || msg.includes("Failed") ? "error" :
            msg.includes("⚠️") ? "warn" : "info",
@@ -284,7 +284,7 @@ router.get("/:id/build-logs", requireAuth, async (req, res) => {
 // Live preview — public (anyone with the URL can view)
 router.get("/:id/preview", async (req, res) => {
   const project = await db.query.projectsTable.findFirst({
-    where: eq(projectsTable.id, req.params.id),
+    where: eq(projectsTable.id, String(req.params.id)),
   });
 
   if (!project) {
@@ -389,9 +389,9 @@ router.get("/:id/source", requireAuth, async (req, res) => {
   }
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {
@@ -427,9 +427,9 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
   }
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {
@@ -488,7 +488,7 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
 
 // SSE — real-time build log stream (no auth required so iframe previews work)
 router.get("/:id/build-stream", async (req, res) => {
-  const projectId = req.params.id;
+  const projectId = String(req.params.id);
 
   // Check project exists
   const project = await db.query.projectsTable.findFirst({
@@ -554,9 +554,9 @@ router.post("/:id/deploy", requireAuth, async (req, res) => {
   }
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {
@@ -593,9 +593,9 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {
@@ -791,9 +791,9 @@ router.get("/:id/files", requireAuth, async (req, res) => {
   }
 
   const project = isAdmin
-    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, req.params.id) })
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
     : await db.query.projectsTable.findFirst({
-        where: and(eq(projectsTable.id, req.params.id), eq(projectsTable.userId, userId)),
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
       });
 
   if (!project) {

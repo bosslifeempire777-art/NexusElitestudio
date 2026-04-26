@@ -53,11 +53,12 @@ router.post("/", requireAuth, async (req, res) => {
 router.get("/:id", requireAuth, async (req, res) => {
   const { userId } = req.auth!;
   const { isAdmin } = req.auth!;
+  const id = String(req.params.id);
 
   const character = isAdmin
-    ? await db.query.charactersTable.findFirst({ where: eq(charactersTable.id, req.params.id) })
+    ? await db.query.charactersTable.findFirst({ where: eq(charactersTable.id, id) })
     : await db.query.charactersTable.findFirst({
-        where: and(eq(charactersTable.id, req.params.id), eq(charactersTable.userId, userId)),
+        where: and(eq(charactersTable.id, id), eq(charactersTable.userId, userId)),
       });
 
   if (!character) { res.status(404).json({ error: "not_found" }); return; }
@@ -68,9 +69,10 @@ router.get("/:id", requireAuth, async (req, res) => {
 router.patch("/:id", requireAuth, async (req, res) => {
   const { userId } = req.auth!;
   const { name, gameStyle, prompt, imageUrl, imageData, imageType, tags, notes } = req.body;
+  const id = String(req.params.id);
 
   const existing = await db.query.charactersTable.findFirst({
-    where: and(eq(charactersTable.id, req.params.id), eq(charactersTable.userId, userId)),
+    where: and(eq(charactersTable.id, id), eq(charactersTable.userId, userId)),
   });
   if (!existing) { res.status(404).json({ error: "not_found" }); return; }
 
@@ -86,7 +88,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
       ...(notes     != null && { notes }),
       updatedAt: new Date(),
     })
-    .where(eq(charactersTable.id, req.params.id))
+    .where(eq(charactersTable.id, id))
     .returning();
 
   res.json(updated);
@@ -95,8 +97,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
 /* ─── Delete ─────────────────────────────────────────────── */
 router.delete("/:id", requireAuth, async (req, res) => {
   const { userId } = req.auth!;
+  const id = String(req.params.id);
   await db.delete(charactersTable)
-    .where(and(eq(charactersTable.id, req.params.id), eq(charactersTable.userId, userId)));
+    .where(and(eq(charactersTable.id, id), eq(charactersTable.userId, userId)));
   res.status(204).send();
 });
 
@@ -140,9 +143,10 @@ router.post("/generate", requireAuth, async (_req, res) => {
 router.post("/:id/ai-edit", requireAuth, async (req, res) => {
   const { userId } = req.auth!;
   const { modification, style } = req.body;
+  const id = String(req.params.id);
 
   const character = await db.query.charactersTable.findFirst({
-    where: and(eq(charactersTable.id, req.params.id), eq(charactersTable.userId, userId)),
+    where: and(eq(charactersTable.id, id), eq(charactersTable.userId, userId)),
   });
   if (!character) { res.status(404).json({ error: "not_found" }); return; }
 

@@ -49,7 +49,7 @@ const QUICK_FEATURES = [
 ];
 
 /* ── Helpers ── */
-function authHeader() {
+function authHeader(): Record<string, string> {
   const t = getToken();
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
@@ -688,7 +688,7 @@ export default function Characters() {
                   </div>
 
                   <button
-                    onClick={generateCharacter}
+                    onClick={() => generateCharacter()}
                     disabled={!prompt.trim() || imageLoading}
                     className="w-full flex items-center justify-center gap-2 py-2.5 bg-primary text-background text-sm font-bold rounded hover:brightness-110 transition-all disabled:opacity-40"
                   >

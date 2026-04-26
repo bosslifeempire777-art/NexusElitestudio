@@ -52,7 +52,7 @@ export default function Pricing() {
   const [checkoutError, setCheckoutError]     = useState<string | null>(null);
 
   const userPlan = user?.plan || "free";
-  const displayPlans = plans?.filter(p => p.name !== "vip" && p.name !== "admin") ?? [];
+  const displayPlans = plans?.filter(p => p.name !== "vip") ?? [];
   const promoActive = promo?.active === true;
 
   async function handleUpgrade(planName: string) {

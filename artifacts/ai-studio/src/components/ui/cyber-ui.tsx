@@ -117,12 +117,14 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
 )
 Textarea.displayName = "Textarea"
 
-export function Badge({ className, variant = "default", ...props }: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "secondary" | "destructive" | "outline" }) {
+export function Badge({ className, variant = "default", ...props }: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "secondary" | "destructive" | "outline" | "accent" | "primary" }) {
   const variants = {
     default: "border-primary/50 bg-primary/10 text-primary",
     secondary: "border-border bg-secondary text-secondary-foreground",
     destructive: "border-destructive/50 bg-destructive/10 text-destructive",
     outline: "border-border text-foreground",
+    accent: "border-accent/50 bg-accent/10 text-accent",
+    primary: "border-primary/50 bg-primary/10 text-primary",
   }
   
   return (

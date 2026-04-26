@@ -74,7 +74,7 @@ router.post("/buy-overage", requireAuth, async (req, res) => {
 
     let customerId = (user as any).stripeCustomerId as string | undefined;
     if (!customerId) {
-      const customer = await stripeService.createCustomer(user.email, userId);
+      const customer = await stripeService.createCustomer(user.email ?? `${userId}@nexuselite.local`, userId);
       await db.update(usersTable)
         .set({ stripeCustomerId: customer.id } as any)
         .where(eq(usersTable.id, userId));

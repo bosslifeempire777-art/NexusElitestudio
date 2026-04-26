@@ -15,7 +15,8 @@ router.post("/:id/run", async (req, res) => {
   const agent = AGENT_REGISTRY.find((a) => a.id === req.params.id);
 
   if (!agent) {
-    return res.status(404).json({ error: "not_found", message: "Agent not found" });
+    res.status(404).json({ error: "not_found", message: "Agent not found" });
+    return;
   }
 
   const { task } = req.body;

@@ -28,8 +28,9 @@ router.get("/", requireAdmin, async (req, res) => {
 });
 
 router.get("/:id", requireAuth, async (req, res) => {
+  const id = String(req.params.id);
   const user = await db.query.usersTable.findFirst({
-    where: eq(usersTable.id, req.params.id),
+    where: eq(usersTable.id, id),
   });
   if (!user) {
     res.status(404).json({ error: "not_found", message: "User not found" });
@@ -48,9 +49,10 @@ router.patch("/:id", requireAdmin, async (req, res) => {
     isAdmin?: boolean;
     isVip?: boolean;
   };
+  const id = String(req.params.id);
 
   const user = await db.query.usersTable.findFirst({
-    where: eq(usersTable.id, req.params.id),
+    where: eq(usersTable.id, id),
   });
   if (!user) {
     res.status(404).json({ error: "not_found", message: "User not found" });
@@ -62,13 +64,14 @@ router.patch("/:id", requireAdmin, async (req, res) => {
   if (isAdmin !== undefined) updates.isAdmin = isAdmin;
   if (isVip !== undefined) updates.isVip = isVip;
 
-  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, req.params.id)).returning();
+  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, id)).returning();
   res.json(userResponse(updated!));
 });
 
 router.post("/:id/grant-vip", requireAdmin, async (req, res) => {
+  const id = String(req.params.id);
   const user = await db.query.usersTable.findFirst({
-    where: eq(usersTable.id, req.params.id),
+    where: eq(usersTable.id, id),
   });
   if (!user) {
     res.status(404).json({ error: "not_found", message: "User not found" });
@@ -77,15 +80,16 @@ router.post("/:id/grant-vip", requireAdmin, async (req, res) => {
 
   const [updated] = await db.update(usersTable)
     .set({ isVip: true, plan: "vip", updatedAt: new Date() })
-    .where(eq(usersTable.id, req.params.id))
+    .where(eq(usersTable.id, id))
     .returning();
 
   res.json(userResponse(updated!));
 });
 
 router.post("/:id/revoke-vip", requireAdmin, async (req, res) => {
+  const id = String(req.params.id);
   const user = await db.query.usersTable.findFirst({
-    where: eq(usersTable.id, req.params.id),
+    where: eq(usersTable.id, id),
   });
   if (!user) {
     res.status(404).json({ error: "not_found", message: "User not found" });
@@ -94,7 +98,7 @@ router.post("/:id/revoke-vip", requireAdmin, async (req, res) => {
 
   const [updated] = await db.update(usersTable)
     .set({ isVip: false, plan: "free", updatedAt: new Date() })
-    .where(eq(usersTable.id, req.params.id))
+    .where(eq(usersTable.id, id))
     .returning();
 
   res.json(userResponse(updated!));

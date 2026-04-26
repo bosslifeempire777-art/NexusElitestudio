@@ -1,6 +1,14 @@
 import { useParams } from "wouter";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useGetProject, useGetProjectBuildLogs, useGetProjectFiles } from "@workspace/api-client-react";
+import {
+  useGetProject,
+  useGetProjectBuildLogs,
+  useGetProjectFiles,
+  getGetProjectQueryKey,
+  getGetProjectBuildLogsQueryKey,
+} from "@workspace/api-client-react";
+import type { Project } from "@workspace/api-client-react";
+import type { Query } from "@tanstack/react-query";
 import { Badge, Button } from "@/components/ui/cyber-ui";
 import {
   Terminal, Folder, FileCode2, Play, ChevronRight, Loader2, StopCircle,
@@ -68,18 +76,21 @@ export default function ProjectDetail() {
   const { user } = useAuth();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const { data: project, isLoading, isError, error, refetch } = useGetProject(id || "", {
+  const projectId = id || "";
+  const { data: project, isLoading, isError, error, refetch } = useGetProject(projectId, {
     query: {
-      refetchInterval: (query) => {
+      queryKey: getGetProjectQueryKey(projectId),
+      refetchInterval: (query: Query<Project, Error, Project, readonly unknown[]>) => {
         const status = query.state.data?.status;
         return status === 'building' ? 2000 : false;
       },
       retry: 3,
-      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+      retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 8000),
     },
   });
-  const { data: logs } = useGetProjectBuildLogs(id || "", {
+  const { data: logs } = useGetProjectBuildLogs(projectId, {
     query: {
+      queryKey: getGetProjectBuildLogsQueryKey(projectId),
       refetchInterval: project?.status === 'building' ? 2000 : false,
     },
   });
@@ -203,7 +214,7 @@ export default function ProjectDetail() {
     </AppLayout>
   );
 
-  if (isError || (!project && !isLoading)) {
+  if (isError || !project) {
     const errMsg = (error as any)?.message ?? "Project not found or failed to load.";
     return (
       <AppLayout>
@@ -1096,10 +1107,11 @@ function AgentTerminal({
     let didTriggerBuild = false;
     try {
       const token = typeof localStorage !== "undefined" ? localStorage.getItem("nexus-token") : null;
-      const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(`/api/projects/${projectId}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
+        headers,
         body: JSON.stringify({ message: text.trim() || undefined, action }),
       });
       const data = await res.json();

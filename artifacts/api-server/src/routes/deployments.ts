@@ -107,8 +107,8 @@ router.get("/:id", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
   const dep = await db.query.deploymentsTable.findFirst({
     where: isAdmin
-      ? eq(deploymentsTable.id, req.params.id)
-      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+      ? eq(deploymentsTable.id, String(req.params.id))
+      : and(eq(deploymentsTable.id, String(req.params.id)), eq(deploymentsTable.userId, userId)),
   });
   if (!dep) {
     res.status(404).json({ error: "not_found" });
@@ -272,8 +272,8 @@ router.delete("/:id", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
   const dep = await db.query.deploymentsTable.findFirst({
     where: isAdmin
-      ? eq(deploymentsTable.id, req.params.id)
-      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+      ? eq(deploymentsTable.id, String(req.params.id))
+      : and(eq(deploymentsTable.id, String(req.params.id)), eq(deploymentsTable.userId, userId)),
   });
   if (!dep) {
     res.status(404).json({ error: "not_found" });
@@ -314,8 +314,8 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
 
   const dep = await db.query.deploymentsTable.findFirst({
     where: isAdmin
-      ? eq(deploymentsTable.id, req.params.id)
-      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+      ? eq(deploymentsTable.id, String(req.params.id))
+      : and(eq(deploymentsTable.id, String(req.params.id)), eq(deploymentsTable.userId, userId)),
   });
   if (!dep) {
     res.status(404).json({ error: "not_found" });
@@ -397,8 +397,8 @@ router.post("/:id/sync", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
   const dep = await db.query.deploymentsTable.findFirst({
     where: isAdmin
-      ? eq(deploymentsTable.id, req.params.id)
-      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+      ? eq(deploymentsTable.id, String(req.params.id))
+      : and(eq(deploymentsTable.id, String(req.params.id)), eq(deploymentsTable.userId, userId)),
   });
   if (!dep) {
     res.status(404).json({ error: "not_found" });
@@ -493,8 +493,8 @@ router.post("/:id/domains", requireAuth, async (req, res) => {
 
   const dep = await db.query.deploymentsTable.findFirst({
     where: isAdmin
-      ? eq(deploymentsTable.id, req.params.id)
-      : and(eq(deploymentsTable.id, req.params.id), eq(deploymentsTable.userId, userId)),
+      ? eq(deploymentsTable.id, String(req.params.id))
+      : and(eq(deploymentsTable.id, String(req.params.id)), eq(deploymentsTable.userId, userId)),
   });
   if (!dep) {
     res.status(404).json({ error: "not_found" });
@@ -571,8 +571,8 @@ router.post("/:id/domains/:domainId/verify", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
   const cd = await db.query.customDomainsTable.findFirst({
     where: isAdmin
-      ? eq(customDomainsTable.id, req.params.domainId)
-      : and(eq(customDomainsTable.id, req.params.domainId), eq(customDomainsTable.userId, userId)),
+      ? eq(customDomainsTable.id, String(req.params.domainId))
+      : and(eq(customDomainsTable.id, String(req.params.domainId)), eq(customDomainsTable.userId, userId)),
   });
   if (!cd) {
     res.status(404).json({ error: "not_found" });
@@ -623,8 +623,8 @@ router.delete("/:id/domains/:domainId", requireAuth, async (req, res) => {
   const isAdmin = req.auth!.isAdmin;
   const cd = await db.query.customDomainsTable.findFirst({
     where: isAdmin
-      ? eq(customDomainsTable.id, req.params.domainId)
-      : and(eq(customDomainsTable.id, req.params.domainId), eq(customDomainsTable.userId, userId)),
+      ? eq(customDomainsTable.id, String(req.params.domainId))
+      : and(eq(customDomainsTable.id, String(req.params.domainId)), eq(customDomainsTable.userId, userId)),
   });
   if (!cd) {
     res.status(404).json({ error: "not_found" });

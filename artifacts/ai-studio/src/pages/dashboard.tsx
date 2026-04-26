@@ -40,6 +40,7 @@ export default function Dashboard() {
       }, 8000);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [upgradeSuccess]);
 
   const planLimits = PLAN_LIMITS[user?.plan ?? "free"] ?? PLAN_LIMITS.free;
