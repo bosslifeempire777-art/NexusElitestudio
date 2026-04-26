@@ -5,6 +5,47 @@ import { projectsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { startRenderPoller } from "./lib/render-poller.js";
 
+/**
+ * GLOBAL CRASH GUARDS.
+ *
+ * Prior to this, a single unhandled promise rejection — most commonly an
+ * `AbortSignal.timeout()` firing after an OpenRouter request had already
+ * settled — would terminate the entire API server (Node 24 default
+ * behaviour for `unhandledRejection`). The process would then enter a
+ * crash loop and every in-flight HTTP request would be dropped, which
+ * the front-end surfaced to users as "lost connection to server".
+ *
+ * Catching them here lets the server keep serving everyone else even
+ * when one request misbehaves. We log loudly so the underlying bug is
+ * still visible in the deployment logs.
+ */
+// `unhandledRejection` is the one that was killing us — these are almost
+// always orphan timer / abort rejections that have already been handled
+// elsewhere in the request flow, so logging-and-continuing is safe and
+// is what stops the production crash loop.
+process.on("unhandledRejection", (reason: unknown) => {
+  const err = reason as { message?: string; stack?: string; name?: string } | undefined;
+  console.error(
+    "[unhandledRejection] swallowed — server will keep running.",
+    err?.name ?? "",
+    err?.message ?? reason,
+  );
+  if (err?.stack) console.error(err.stack);
+});
+
+// `uncaughtException` is different — it usually means application state
+// is genuinely corrupted, so we log loudly and exit. The platform
+// (Render / Replit Deployments) will restart us with a clean process.
+// We delay the exit briefly so the log line actually flushes to stdout.
+process.on("uncaughtException", (err: Error) => {
+  console.error(
+    "[uncaughtException] FATAL — process will exit and be restarted.",
+    err?.message,
+  );
+  if (err?.stack) console.error(err.stack);
+  setTimeout(() => process.exit(1), 250).unref();
+});
+
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
@@ -15,6 +56,52 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+/**
+ * stripe-replit-sync ships its own SQL migrations that create the
+ * `stripe.*` schema (accounts, customers, subscriptions, ...). On a
+ * fresh production database those tables don't exist yet, so the
+ * webhook handler's call into `sync.processWebhook` was logging
+ * `relation "stripe.accounts" does not exist`. Run the migrations
+ * once at startup so that schema exists. Idempotent — safe to run
+ * on every boot.
+ */
+function ensureStripeSyncSchema(): void {
+  const dbUrl = process.env["DATABASE_URL"];
+  if (!dbUrl) return;
+  if (!process.env["STRIPE_SECRET_KEY"] && !process.env["REPLIT_CONNECTORS_HOSTNAME"]) {
+    // No Stripe credentials configured at all — nothing to mirror.
+    return;
+  }
+
+  // Fire-and-forget with a 20s upper bound so a hanging Postgres handshake
+  // can never block the API server from coming online. The webhook handler
+  // is already defensive: if the schema isn't ready yet, sync.processWebhook
+  // simply errors and the rest of the webhook still runs.
+  const HARD_TIMEOUT_MS = 20_000;
+  void (async () => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const { runMigrations } = await import("stripe-replit-sync");
+      const guarded = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`runMigrations exceeded ${HARD_TIMEOUT_MS / 1000}s`)),
+          HARD_TIMEOUT_MS,
+        );
+        if (typeof timer.unref === "function") timer.unref();
+      });
+      await Promise.race([runMigrations({ databaseUrl: dbUrl }), guarded]);
+      console.log("✓ stripe-replit-sync schema verified");
+    } catch (err: any) {
+      console.warn(
+        "[stripe-sync] migrations skipped:",
+        err?.message ?? err,
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  })();
 }
 
 /**
@@ -52,6 +139,7 @@ async function recoverStuckBuilds(): Promise<void> {
 app.listen(port, async () => {
   console.log(`Server listening on port ${port}`);
   await ensureAdminAccount();
+  await ensureStripeSyncSchema();
   await recoverStuckBuilds();
   startRenderPoller();
 });

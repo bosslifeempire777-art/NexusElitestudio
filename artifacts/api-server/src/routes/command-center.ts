@@ -12,7 +12,7 @@ import { eq, desc } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
-import { getOpenRouterClient } from "../lib/openrouterSdk.js";
+import { getOpenRouterClient, chatViaSdk } from "../lib/openrouterSdk.js";
 
 const router: IRouter = Router();
 router.use(requireAdmin);
@@ -285,20 +285,24 @@ router.post("/custom-agents/:id/run", async (req, res) => {
     res.status(500).json({ error: "OPENROUTER_API_KEY not set" }); return;
   }
 
+  // Per-model timeout — Opus / Sonnet routinely take > 90s for long
+  // generations. Use 180s for those, 60s for fast models. Routed through
+  // chatViaSdk so the AbortController is owned & cleaned up properly,
+  // which is what stops the 'lost connection to server' crash loop.
+  const isSlowModel = /opus|sonnet|gpt-4o(?!-mini)/i.test(agent.model);
+  const timeoutMs = isSlowModel ? 180_000 : 60_000;
+
   try {
-    const sdk = getOpenRouterClient();
-    const result: any = await sdk.chat.send({
-      httpReferer: "https://nexuselitestudio.com",
-      appTitle:    "NexusElite AI Studio",
-      chatRequest: {
+    const result: any = await chatViaSdk(
+      {
         model:    agent.model,
         messages: [
           { role: "system", content: agent.systemPrompt },
           { role: "user",   content: String(task) },
         ],
-        stream: false,
       },
-    });
+      { timeoutMs },
+    );
     const choice = result?.choices?.[0];
     res.json({
       output: choice?.message?.content ?? "",
@@ -306,7 +310,15 @@ router.post("/custom-agents/:id/run", async (req, res) => {
       agent:  { id: agent.id, name: agent.name, model: agent.model },
     });
   } catch (err: any) {
-    res.status(500).json({ error: "run_failed", message: err.message });
+    const isTimeout = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
+    if (isTimeout) {
+      res.status(504).json({
+        error: "model_timeout",
+        message: `${agent.model} didn't respond in ${Math.round(timeoutMs / 1000)}s. Try a faster model (e.g. gpt-4o-mini, gemini-2.0-flash) or shorten the task and retry.`,
+      });
+      return;
+    }
+    res.status(500).json({ error: "run_failed", message: err?.message ?? String(err) });
   }
 });
 

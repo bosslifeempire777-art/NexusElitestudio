@@ -27,7 +27,18 @@ const CHAT_MODELS = [
   "openai/gpt-4o-mini",
   "anthropic/claude-opus-4.7",
 ];
-const FETCH_TIMEOUT_MS = 90_000; // 90 seconds
+const FETCH_TIMEOUT_MS = 180_000; // 180 seconds — Opus/Sonnet long generations need this
+
+/**
+ * Per-model timeout. Opus + Sonnet routinely take 90-150s for long
+ * code generations; smaller models almost always return in <60s. Giving
+ * the slow models more rope reduces the false-timeout rate that was
+ * burning every fallback in the chain.
+ */
+function timeoutForModel(model: string): number {
+  if (/opus|sonnet|gpt-4o(?!-mini)/i.test(model)) return 180_000;
+  return 60_000;
+}
 
 function getApiKey(): string | undefined {
   return process.env.OPENROUTER_API_KEY;
@@ -50,8 +61,15 @@ async function callOpenRouter(
 ): Promise<{ data: any; model: string }> {
   let lastErr: any = null;
   for (const model of models) {
+    // Each model gets its own timeout based on its known speed profile
+    // (Opus/Sonnet/gpt-4o = 180s, faster models = 60s). The caller's
+    // `timeoutMs` is intentionally ignored: it was usually a stale 30s
+    // ceiling that prematurely aborted Opus, but we also want fast
+    // models to keep their fast-fail behavior in fallback chains.
+    void timeoutMs;
+    const perCallTimeout = timeoutForModel(model);
     try {
-      const data = await chatViaSdk({ ...bodyWithoutModel, model }, { timeoutMs });
+      const data = await chatViaSdk({ ...bodyWithoutModel, model }, { timeoutMs: perCallTimeout });
       return { data, model };
     } catch (err: any) {
       lastErr = err;
