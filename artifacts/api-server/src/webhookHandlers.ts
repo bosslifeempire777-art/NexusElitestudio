@@ -8,7 +8,7 @@ import { getStripeSync, getUncachableStripeClient } from './stripeClient.js';
  * Reverse map: Stripe price_id -> plan name in our DB.
  * Pulled from env vars set in Replit secrets.
  */
-function priceToPlan(): Record<string, string> {
+export function priceToPlan(): Record<string, string> {
   return {
     [process.env.STRIPE_PRICE_STARTER || '__none1']: 'starter',
     [process.env.STRIPE_PRICE_PRO     || '__none2']: 'pro',
@@ -36,7 +36,7 @@ async function resolveUserId(
   return null;
 }
 
-async function setUserPlan(userId: string, plan: string, subscriptionId: string | null, customerId: string | null) {
+export async function setUserPlan(userId: string, plan: string, subscriptionId: string | null, customerId: string | null) {
   const updates: Record<string, any> = { plan };
   if (subscriptionId !== undefined) updates.stripeSubscriptionId = subscriptionId;
   if (customerId)                   updates.stripeCustomerId     = customerId;
