@@ -318,6 +318,26 @@ router.post("/custom-agents/:id/run", async (req, res) => {
       });
       return;
     }
+
+    // OpenRouter returns 402 when the account balance is too low to cover
+    // the request. Surface that explicitly so admins know to top up rather
+    // than seeing a vague "run failed".
+    const status: number | undefined =
+      err?.statusCode ?? err?.status ?? err?.response?.status;
+    const msg = String(err?.message ?? "");
+    const isCreditsError =
+      status === 402 ||
+      /insufficient credits|requires more credits|add more credits/i.test(msg);
+    if (isCreditsError) {
+      res.status(402).json({
+        error: "openrouter_insufficient_credits",
+        message:
+          "OpenRouter account is out of credits. Add credits at https://openrouter.ai/settings/credits, then re-run the agent. (Models tried: " +
+          agent.model + ")",
+      });
+      return;
+    }
+
     res.status(500).json({ error: "run_failed", message: err?.message ?? String(err) });
   }
 });
