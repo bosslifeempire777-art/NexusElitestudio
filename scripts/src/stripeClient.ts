@@ -5,5 +5,7 @@ export async function getUncachableStripeClient(): Promise<Stripe> {
   if (!apiKey) {
     throw new Error('Stripe is not configured. Please set STRIPE_SECRET_KEY.');
   }
-  return new Stripe(apiKey, { apiVersion: '2025-02-24.acacia' });
+  return new Stripe(apiKey, {
+    apiVersion: Stripe.API_VERSION as Stripe.StripeConfig['apiVersion'],
+  });
 }
