@@ -58,7 +58,7 @@ async function setUserPlan(userId: string, plan: string, subscriptionId: string 
  * secret, so the app must accept either one or roughly half of incoming
  * webhooks will fail signature verification.
  */
-function getWebhookSecrets(): string[] {
+export function getWebhookSecrets(): string[] {
   const secrets: string[] = [];
   const push = (raw: string | undefined) => {
     if (!raw) return;

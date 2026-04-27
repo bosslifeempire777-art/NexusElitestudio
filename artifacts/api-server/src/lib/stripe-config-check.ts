@@ -1,4 +1,5 @@
 import { getStripeSecretKey, getUncachableStripeClient } from "../stripeClient.js";
+import { getWebhookSecrets } from "../webhookHandlers.js";
 
 /**
  * Validate Stripe configuration at startup. This catches the common
@@ -33,6 +34,27 @@ export async function checkStripeConfig(): Promise<void> {
       ? "test"
       : "unknown";
   console.log(`[stripe-config] secret key mode = ${keyMode}`);
+
+  // Webhook secret count — production has TWO webhook endpoints registered
+  // (one per domain: nexuselitestudio.com and nexuselitestudio.nexus), each
+  // with its own signing secret. If the count below is < 2 in production
+  // logs, roughly half of incoming webhooks will fail signature verification
+  // and plan upgrades after checkout will silently fail. Set both signing
+  // secrets via STRIPE_WEBHOOK_SECRET (comma-separated) or via
+  // STRIPE_WEBHOOK_SECRET + STRIPE_WEBHOOK_SECRET_2.
+  const webhookSecretCount = getWebhookSecrets().length;
+  if (webhookSecretCount === 0) {
+    console.warn(
+      "[stripe-config] NO webhook signing secrets configured — every Stripe " +
+        "webhook delivery will be rejected with 4xx and plan upgrades after " +
+        "checkout will not apply. Set STRIPE_WEBHOOK_SECRET to the signing " +
+        "secret(s) shown on the Stripe Dashboard 'Developers → Webhooks' page.",
+    );
+  } else {
+    console.log(
+      `[stripe-config] webhook signing secrets configured = ${webhookSecretCount}`,
+    );
+  }
 
   const priceIds: Array<{ name: string; id: string }> = [
     { name: "STARTER", id: process.env.STRIPE_PRICE_STARTER ?? "" },
