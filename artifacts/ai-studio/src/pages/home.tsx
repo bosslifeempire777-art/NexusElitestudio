@@ -62,10 +62,13 @@ export default function Home() {
         </h1>
         
         <p className="text-xl text-muted-foreground mb-4 max-w-2xl font-mono leading-relaxed">
-          Describe your vision. Our swarm of 21 specialized AI agents will architect, code, design, and deploy your software, SaaS, or game in minutes.
+          Describe your vision. Our swarm of 21 specialized AI agents will architect, code, design, and deploy your software, SaaS, or game faster, easier, and better than you ever imagined possible.
         </p>
-        <p className="text-base text-primary/70 mb-10 max-w-xl font-mono leading-relaxed">
-          Powered by <span className="text-primary font-bold">659+ AI models</span> — including Claude Opus 4.5, GPT-4o, and every top model released — the swarm picks the perfect model for every task automatically, cutting your costs without cutting corners.
+        <p className="text-base text-primary/70 mb-4 max-w-xl font-mono leading-relaxed">
+          Powered by <span className="text-primary font-bold">659+ AI models</span> — including <span className="text-primary font-bold">Claude Opus 4.7</span>, <span className="text-primary font-bold">GPT-5.4 Pro</span>, <span className="text-primary font-bold">Kimi 2.6</span>, and every other top model the moment it ships, always kept up to date — the swarm picks the perfect model for every task automatically, cutting your costs without cutting corners.
+        </p>
+        <p className="text-base text-accent/80 mb-10 max-w-xl font-mono leading-relaxed">
+          On any paid plan, choose your <span className="text-accent font-bold">swarm mode</span> — pure cost-optimized, balanced, or <span className="text-accent font-bold">all top-tier models</span> capable of anything and always at their best. Multiple modes, one switch, you decide.
         </p>
 
         <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-6 w-full max-w-md justify-center mb-16">
