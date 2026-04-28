@@ -19,9 +19,16 @@ export class StripeService {
     userId?: string,
   ) {
     const stripe = await getUncachableStripeClient();
+    // Offer multiple payment methods so buyers without a credit card can
+    // still convert. Apple Pay and Google Pay are wallet variants of `card`
+    // and are surfaced automatically by Stripe when `card` is enabled —
+    // they aren't separate `payment_method_types` values.
+    //   - link              — one-tap email-based reuse for returning buyers
+    //   - cashapp           — popular non-card option in the US
+    //   - us_bank_account   — ACH direct debit (lower fees, no card needed)
     return await stripe.checkout.sessions.create({
       customer: customerId,
-      payment_method_types: ['card'],
+      payment_method_types: ['card', 'link', 'cashapp', 'us_bank_account'],
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
       success_url: successUrl,

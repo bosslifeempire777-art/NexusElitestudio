@@ -184,7 +184,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
         customerId,
         priceId,
         `${baseUrl}/dashboard?upgrade=success`,
-        `${baseUrl}/pricing`,
+        `${baseUrl}/pricing?upgrade=cancel&plan=${encodeURIComponent(planName)}`,
         couponId,
         userId,
       );
@@ -196,7 +196,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
           customerId,
           priceId,
           `${baseUrl}/dashboard?upgrade=success`,
-          `${baseUrl}/pricing`,
+          `${baseUrl}/pricing?upgrade=cancel&plan=${encodeURIComponent(planName)}`,
           undefined,
           userId,
         );

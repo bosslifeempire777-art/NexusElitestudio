@@ -5,6 +5,7 @@ import { Card, CardHeader, CardContent, Button, Badge } from "@/components/ui/cy
 import {
   Check, Loader2, Crown, Zap, Rocket, Building2, Star,
   ArrowRight, Sparkles, TrendingUp, Shield, Users, Flame,
+  AlertCircle, X,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { getToken } from "@/lib/auth";
@@ -50,6 +51,23 @@ export default function Pricing() {
   const promo = usePromo();
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [checkoutError, setCheckoutError]     = useState<string | null>(null);
+  const [cancelNotice, setCancelNotice]       = useState<{ plan: string | null } | null>(null);
+
+  // Detect Stripe cancel-return (?upgrade=cancel[&plan=...]) so we can show a
+  // helpful "we noticed you didn't finish — try another card or payment method"
+  // message instead of silently dropping the visitor back on the pricing page.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgrade") === "cancel") {
+      setCancelNotice({ plan: params.get("plan") });
+      params.delete("upgrade");
+      params.delete("plan");
+      const qs = params.toString();
+      const newUrl = window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash;
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []);
 
   const userPlan = user?.plan || "free";
   const displayPlans = plans?.filter(p => p.name !== "vip") ?? [];
@@ -108,6 +126,34 @@ export default function Pricing() {
             </div>
           )}
         </div>
+
+        {cancelNotice && (
+          <div className="mb-6 max-w-2xl mx-auto bg-yellow-500/5 border border-yellow-500/40 rounded-lg px-5 py-4 font-mono">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" />
+              <div className="flex-1 text-left">
+                <p className="text-sm font-bold text-yellow-300 mb-1">
+                  Your payment didn't go through
+                </p>
+                <p className="text-xs text-muted-foreground/80 leading-relaxed">
+                  {cancelNotice.plan
+                    ? <>Your <span className="text-yellow-300 font-bold uppercase">{cancelNotice.plan}</span> upgrade wasn't completed. </>
+                    : <>Your upgrade wasn't completed. </>}
+                  If your card was declined, try a different card — or use Cash App, Link, or your bank account on the next screen. Tap your plan again to try again.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCancelNotice(null)}
+                className="text-muted-foreground/50 hover:text-foreground shrink-0 -mt-1 -mr-1 p-1"
+                aria-label="Dismiss"
+                data-testid="button-dismiss-cancel-notice"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {checkoutError && (
           <div className="mb-8 max-w-lg mx-auto bg-destructive/10 border border-destructive/30 rounded-lg px-4 py-3 text-sm text-destructive font-mono text-center">
