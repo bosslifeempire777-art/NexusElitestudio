@@ -76,11 +76,20 @@ function ensureStripeSyncSchema(): void {
     return;
   }
 
-  // Fire-and-forget with a 20s upper bound so a hanging Postgres handshake
-  // can never block the API server from coming online. The webhook handler
-  // is already defensive: if the schema isn't ready yet, sync.processWebhook
-  // simply errors and the rest of the webhook still runs.
-  const HARD_TIMEOUT_MS = 20_000;
+  // Fire-and-forget with a generous upper bound so a hanging Postgres
+  // handshake can never block the API server from coming online (the
+  // server is already listening before this runs). The webhook handler
+  // is already defensive: if the schema isn't ready yet,
+  // sync.processWebhook simply errors and the rest of the webhook still
+  // runs.
+  //
+  // The previous bound was 20s, but a fresh production database has 50+
+  // migrations to apply over a network connection, and the timeout was
+  // firing every boot before any of them committed — leaving the
+  // `stripe.*` schema permanently empty. 5 minutes is plenty of headroom
+  // for the initial run; subsequent boots are near-instant because
+  // pg-node-migrations skips already-applied migrations.
+  const HARD_TIMEOUT_MS = 5 * 60_000;
   void (async () => {
     let timer: NodeJS.Timeout | undefined;
     try {
