@@ -11,6 +11,7 @@ import { getPlanLimits } from "./plans.js";
 import { getUserSecretNames, getUserSecretsMap } from "./secrets.js";
 import { verifyToken } from "../middleware/auth.js";
 import { injectDiagnosticsWidget } from "../lib/diagnostics-widget.js";
+import AdmZip from "adm-zip";
 
 const router: IRouter = Router();
 
@@ -400,6 +401,71 @@ router.get("/:id/source", requireAuth, async (req, res) => {
   }
 
   res.json({ code: project.generatedCode || "", framework: project.framework });
+});
+
+// Download project as ZIP — paid plans, vip, and admin only
+router.get("/:id/download", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  if (!isAdmin && !isVip && userPlan === "free") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "DOWNLOAD_NOT_ALLOWED",
+      message: "ZIP download requires a paid plan. Upgrade to Starter or higher to download your app's source code.",
+      currentPlan: userPlan,
+    });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  if (!project.generatedCode) {
+    res.status(400).json({ error: "not_ready", message: "Project must be built before downloading." });
+    return;
+  }
+
+  const zip = new AdmZip();
+
+  zip.addFile("index.html", Buffer.from(project.generatedCode, "utf-8"));
+
+  const readme = [
+    `# ${project.name}`,
+    ``,
+    `**Type:** ${project.type}`,
+    `**Framework:** ${project.framework || "HTML/CSS/JS"}`,
+    `**Built with:** NexusElite AI Studio`,
+    ``,
+    `## How to Run`,
+    ``,
+    `Open \`index.html\` in any modern browser — no build step required.`,
+    ``,
+    `## Description`,
+    ``,
+    project.description || project.prompt || "",
+  ].join("\n");
+
+  zip.addFile("README.md", Buffer.from(readme, "utf-8"));
+
+  const safeName = project.name.replace(/[^a-z0-9_-]/gi, "_").slice(0, 60);
+  const filename = `${safeName}.zip`;
+
+  const buffer = zip.toBuffer();
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Length", buffer.length);
+  res.send(buffer);
 });
 
 // Rebuild project

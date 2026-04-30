@@ -100,8 +100,9 @@ export default function ProjectDetail() {
   const [selectedFile, setSelectedFile] = useState<string | null>("index.html");
   const [logsOpen, setLogsOpen]         = useState(false);
   const [device, setDevice]             = useState<Device>('desktop');
-  const [isRebuilding, setIsRebuilding] = useState(false);
-  const [isDeploying, setIsDeploying]   = useState(false);
+  const [isRebuilding, setIsRebuilding]   = useState(false);
+  const [isDeploying, setIsDeploying]     = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [deployedUrl, setDeployedUrl]   = useState<string | null>(null);
   const [showDeployModal, setShowDeployModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
@@ -178,6 +179,42 @@ export default function ProjectDetail() {
       setTimeout(() => setUrlCopied(false), 2000);
     });
   }, [deployedUrl]);
+
+  const downloadZip = useCallback(async () => {
+    if (!id || isDownloading) return;
+
+    if (user && user.plan === "free" && !user.isAdmin && !user.isVip) {
+      setUpgradeMessage("ZIP download requires a paid plan. Upgrade to Starter or higher to download your app's source code as a file.");
+      setShowUpgradeModal(true);
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/download`, { headers: authHeaders() });
+      if (res.status === 402) {
+        const data = await res.json();
+        setUpgradeMessage(data.message || "Upgrade your plan to download projects.");
+        setShowUpgradeModal(true);
+        return;
+      }
+      if (!res.ok) return;
+
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      a.href     = url;
+      a.download = match?.[1] || "project.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [id, isDownloading, user]);
 
   // ── Polling-driven build completion ─────────────────────────────────────
   // When the 2-second poll detects that status has changed from "building" to
@@ -437,6 +474,19 @@ export default function ProjectDetail() {
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRebuilding || project.status === 'building' ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">{isRebuilding || project.status === 'building' ? 'Building...' : 'Rebuild'}</span>
+              </Button>
+              <Button
+                size="sm"
+                onClick={downloadZip}
+                disabled={isDownloading || project.status === 'building' || !(project as any).hasCode}
+                title={user?.plan === 'free' && !user?.isAdmin && !user?.isVip ? "Upgrade to download ZIP" : "Download project as ZIP"}
+                className="h-7 px-2 gap-1 text-xs"
+                variant="outline"
+              >
+                {isDownloading
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span className="hidden sm:inline">Zipping...</span></>
+                  : <><Download className="w-3.5 h-3.5" /><span className="hidden sm:inline">ZIP</span></>
+                }
               </Button>
               <Button
                 size="sm"
