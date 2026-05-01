@@ -16,14 +16,14 @@ export const PLANS = [
     color: "default",
     tagline: "Try it out",
     features: [
-      "3 builds per month",
+      "1 build per month",
       "2 projects max",
       "Core AI agents (5 of 21)",
       "Live preview (not deployable)",
       "Community support",
     ],
     limits: {
-      buildsPerMonth: 3,
+      buildsPerMonth: 1,
       projects: 2,
       deployments: 0,
       aiUsageTokens: 30_000,

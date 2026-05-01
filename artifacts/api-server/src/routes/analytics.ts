@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { projectsTable, buildsTable, usersTable } from "@workspace/db/schema";
 import { eq, count, gte, sql } from "drizzle-orm";
+import { requireAuth } from "../middleware/auth.js";
 
 const router: IRouter = Router();
 
@@ -96,14 +97,13 @@ router.get("/overview", async (_req, res) => {
   }
 });
 
-router.get("/user", async (req, res) => {
-  const userId = (req.headers["x-user-id"] as string) || "demo-user";
+router.get("/user", requireAuth, async (req, res) => {
+  const userId = req.auth!.userId;
 
-  const projects = await db.select().from(projectsTable).where(eq(projectsTable.userId, userId));
-
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  startOfMonth.setHours(0, 0, 0, 0);
+  const [userRecord, projects] = await Promise.all([
+    db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) }),
+    db.select().from(projectsTable).where(eq(projectsTable.userId, userId)),
+  ]);
 
   const projectsByType: Record<string, number> = {
     website: 0, saas: 0, game: 0, mobile_app: 0, ai_tool: 0, automation: 0,
@@ -115,7 +115,8 @@ router.get("/user", async (req, res) => {
     if (p.status === "deployed") totalDeployments++;
   }
 
-  const buildsThisMonth = projects.filter((p) => new Date(p.createdAt) >= startOfMonth).length;
+  // Use the authoritative counter stored on the user row (tracks builds + rebuilds)
+  const buildsThisMonth = userRecord?.buildsThisMonth ?? 0;
 
   // Real activity: project creations grouped by day (last 30d)
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60_000);
@@ -134,7 +135,7 @@ router.get("/user", async (req, res) => {
   });
 
   res.json({
-    projectsCreated: projects.length,
+    projectsCreated: userRecord?.projectCount ?? projects.length,
     buildsThisMonth,
     buildsRemaining: -1,
     totalDeployments,

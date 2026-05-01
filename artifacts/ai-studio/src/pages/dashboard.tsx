@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useEffect, useState } from "react";
 
 const PLAN_LIMITS: Record<string, { builds: number; projects: number; deployments: number }> = {
-  free:    { builds: 3,  projects: 2,  deployments: 0 },
+  free:    { builds: 1,  projects: 2,  deployments: 0 },
   starter: { builds: 20, projects: 10, deployments: -1 },
   pro:     { builds: 75, projects: -1, deployments: -1 },
   elite:   { builds: -1, projects: -1, deployments: -1 },

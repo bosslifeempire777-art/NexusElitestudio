@@ -313,7 +313,7 @@ export function HomeDemoPlayer() {
         <div className="text-center mt-16">
           <div className="inline-flex flex-col items-center gap-4">
             <p className="text-lg font-mono text-muted-foreground">
-              Your first 3 builds are <span className="text-primary font-bold">completely free.</span> No credit card required.
+              Try your first build <span className="text-primary font-bold">completely free.</span> No credit card required.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/register">
