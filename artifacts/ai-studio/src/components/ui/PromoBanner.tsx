@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { Zap, X } from "lucide-react";
 import { Link } from "wouter";
 
-const PROMO_ENDS_AT = new Date("2026-04-22T23:59:00Z").getTime();
-const DISCOUNT = 45;
+const PROMO_ENDS_AT = new Date("2026-05-03T23:59:00Z").getTime();
+const DISCOUNT = 50;
 
 function getTimeLeft() {
   const diff = Math.max(0, PROMO_ENDS_AT - Date.now());
@@ -20,7 +20,7 @@ export function PromoBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("promo-dismissed");
+    const stored = sessionStorage.getItem("promo-dismissed-may");
     if (stored === "1") setDismissed(true);
   }, []);
 
@@ -32,7 +32,7 @@ export function PromoBanner() {
   if (time.expired || dismissed) return null;
 
   function dismiss() {
-    sessionStorage.setItem("promo-dismissed", "1");
+    sessionStorage.setItem("promo-dismissed-may", "1");
     setDismissed(true);
   }
 
