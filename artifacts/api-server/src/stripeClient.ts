@@ -1,8 +1,19 @@
-// Stripe client via Replit Connector (stripe + stripe-replit-sync)
+// Stripe client — prefers explicit STRIPE_SECRET_KEY env var (live key set by
+// the operator) over the Replit connector, which supplies a test key.
 // WARNING: Never cache the client — tokens expire. Always call getUncachableStripeClient() fresh.
 import Stripe from 'stripe';
 
 async function getCredentials() {
+  // ── Priority 1: explicit env var (set in Replit Secrets by the operator) ──
+  // This is always preferred because the Replit Stripe connector supplies a
+  // TEST key even in production, while the prices were created in live mode.
+  const envSecret = process.env.STRIPE_SECRET_KEY;
+  const envPublishable = process.env.STRIPE_PUBLISHABLE_KEY || '';
+  if (envSecret) {
+    return { secretKey: envSecret, publishableKey: envPublishable };
+  }
+
+  // ── Priority 2: Replit connector (fallback for local dev without env var) ──
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
     ? 'repl ' + process.env.REPL_IDENTITY
@@ -10,13 +21,8 @@ async function getCredentials() {
       ? 'depl ' + process.env.WEB_REPL_RENEWAL
       : null;
 
-  // Fallback: use STRIPE_SECRET_KEY env var if Replit connector is not available
   if (!hostname || !xReplitToken) {
-    const apiKey = process.env.STRIPE_SECRET_KEY;
-    if (!apiKey) {
-      throw new Error('Stripe is not configured. Connect your Stripe account via the Replit integration or set STRIPE_SECRET_KEY.');
-    }
-    return { secretKey: apiKey, publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '' };
+    throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY in Replit Secrets or connect your Stripe account via the integration.');
   }
 
   const connectorName = 'stripe';
@@ -43,10 +49,7 @@ async function getCredentials() {
   const connectionSettings = data.items?.[0];
 
   if (!connectionSettings?.settings?.secret) {
-    // Second fallback to env var
-    const apiKey = process.env.STRIPE_SECRET_KEY;
-    if (apiKey) return { secretKey: apiKey, publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '' };
-    throw new Error(`Stripe ${targetEnvironment} connection not found. Connect your Stripe account.`);
+    throw new Error(`Stripe ${targetEnvironment} connection not found. Connect your Stripe account or set STRIPE_SECRET_KEY.`);
   }
 
   return {
