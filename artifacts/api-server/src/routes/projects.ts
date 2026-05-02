@@ -364,10 +364,9 @@ router.get("/:id/preview", async (req, res) => {
     }
   }
 
-  // Inject the floating "Build Analysis & App Diagnostics" widget into every
-  // generated app. Self-contained, no external resources, opens its own modal
-  // window with live performance/DOM/error/storage data from the running app.
-  if (project.generatedCode) {
+  // Inject the floating "Build Analysis & App Diagnostics" widget into non-game
+  // apps. Skipped for games so it doesn't interfere with gameplay.
+  if (project.generatedCode && project.type !== "game") {
     try { html = injectDiagnosticsWidget(html); }
     catch (err) { console.error("Failed to inject diagnostics widget:", err); }
   }
