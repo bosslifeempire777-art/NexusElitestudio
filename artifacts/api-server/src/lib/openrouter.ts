@@ -88,11 +88,32 @@ async function callOpenRouter(
   throw lastErr || new Error("All OpenRouter models failed");
 }
 
+export interface CharacterContext {
+  id: string;
+  name: string;
+  gameStyle: string;
+  prompt: string;
+  imageUrl?: string | null;
+  tags?: string[] | null;
+  notes?: string | null;
+}
+
+function buildCharacterBlock(characters: CharacterContext[]): string {
+  if (!characters.length) return "";
+  const list = characters.map((c, i) => {
+    const tags = c.tags?.length ? ` Tags: ${c.tags.join(", ")}.` : "";
+    const notes = c.notes ? ` Notes: ${c.notes}.` : "";
+    return `${i + 1}. "${c.name}" (${c.gameStyle} style) — ${c.prompt}.${tags}${notes}`;
+  }).join("\n");
+  return `\n\nCHARACTERS TO INCLUDE IN THIS GAME:\n${list}\n\nIntegrate these characters as playable hero, enemies, or NPCs based on their descriptions. Use canvas shapes, colors, and art style that matches each character's style (cartoon = smooth rounded shapes with bright colors; pixel art = grid-aligned blocky shapes; realistic = detailed shading and proportions; chibi = large head small body style). The first character is the player character unless the prompt says otherwise.`;
+}
+
 /** Generate a complete self-contained HTML app for the preview iframe */
 export async function generateProjectCode(
   type: string,
   name: string,
   prompt: string,
+  characters: CharacterContext[] = [],
 ): Promise<string> {
   const API_KEY = getApiKey();
   if (!API_KEY) {
@@ -130,10 +151,11 @@ CRITICAL RULES — follow exactly or the output will fail:
 9. Design must be polished: dark background preferred, smooth animations, hover effects.
 10. localStorage IS available — use it to persist state between interactions.`;
 
+  const characterBlock = buildCharacterBlock(characters);
   const userPrompt = isGame
     ? `Build a complete, fully-playable HTML5 Canvas browser game called "${name}".
 
-Game requirements: ${prompt}
+Game requirements: ${prompt}${characterBlock}
 
 The game must:
 - Have a polished start/menu screen
@@ -197,6 +219,7 @@ export async function generateUpdatedCode(
   changeRequest: string,
   availableSecretNames: string[] = [],
   memory: ProjectMemory | null = null,
+  characters: CharacterContext[] = [],
 ): Promise<string> {
   const API_KEY = getApiKey();
   if (!API_KEY || !currentCode) return currentCode;
@@ -226,10 +249,11 @@ CRITICAL RULES:
 3. No external resources of any kind in the HTML head — no CDN scripts, no external script src, no web fonts. (You MAY call third-party JSON APIs from JavaScript using fetch().)
 4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`;
 
+  const characterBlock = buildCharacterBlock(characters);
   const userPrompt = `This is the current code for a ${type} app called "${name}":
 
 ${currentCode}
-${memoryBlock}
+${memoryBlock}${characterBlock}
 Apply this change: ${changeRequest}
 
 Output the complete updated HTML file with the change applied. Keep everything else exactly the same. Honor every prior decision recorded in PROJECT MEMORY above — do not undo or contradict completed work.`;

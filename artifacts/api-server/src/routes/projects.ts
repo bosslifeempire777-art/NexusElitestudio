@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { projectsTable, usersTable } from "@workspace/db/schema";
+import { projectsTable, usersTable, charactersTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
-import { generateProjectCode, generateChatResponse, generateUpdatedCode, updateProjectMemory, type ProjectMemory, type ChatTurn } from "../lib/openrouter.js";
+import { generateProjectCode, generateChatResponse, generateUpdatedCode, updateProjectMemory, type ProjectMemory, type ChatTurn, type CharacterContext } from "../lib/openrouter.js";
 import { recordUsage, consumeOverageCreditIfNeeded, canPerformBuild } from "../lib/usage.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
@@ -16,6 +16,20 @@ import AdmZip from "adm-zip";
 const router: IRouter = Router();
 
 const PROJECT_TYPES = ["website", "mobile_app", "saas", "automation", "ai_tool", "game"];
+
+/** Fetch characters linked to a game project for AI context injection */
+async function getProjectCharacters(projectId: string): Promise<CharacterContext[]> {
+  const rows = await db.select().from(charactersTable).where(eq(charactersTable.projectId, projectId));
+  return rows.map(r => ({
+    id:        r.id,
+    name:      r.name,
+    gameStyle: r.gameStyle,
+    prompt:    r.prompt,
+    imageUrl:  r.imageUrl,
+    tags:      r.tags,
+    notes:     r.notes,
+  }));
+}
 
 function inferFramework(type: string, prompt: string): string {
   const p = prompt.toLowerCase();
@@ -509,12 +523,13 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
     .where(eq(projectsTable.id, project.id));
 
   const { type: pType, name: pName, prompt: pPrompt } = project;
+  const pCharacters = pType === "game" ? await getProjectCharacters(project.id) : [];
   setImmediate(async () => {
     try {
       const generatedCode = await streamBuild(
         project.id,
         newLogs,
-        () => generateProjectCode(pType, pName, pPrompt),
+        () => generateProjectCode(pType, pName, pPrompt, pCharacters),
       );
       const hasCode = generatedCode && generatedCode.length > 100;
       const finalLogs = [
@@ -770,6 +785,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       await new Promise(r => setTimeout(r, 300));
       emitLog(project.id, `[Orchestrator] 🔧 Generating updated code with AI...`);
 
+      const chatCharacters = project.type === "game" ? await getProjectCharacters(project.id) : [];
       const updatedCode = await generateUpdatedCode(
         project.type,
         project.name,
@@ -777,6 +793,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         userMessage,
         userSecretNames,
         priorMemory,
+        chatCharacters,
       );
 
       const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;
@@ -887,6 +904,68 @@ router.get("/:id/files", requireAuth, async (req, res) => {
     content: project.generatedCode || "",
     language: "tsx",
   }]);
+});
+
+// ── Character ↔ Project linking endpoints ────────────────────────────────────
+
+/** List all characters linked to this project */
+router.get("/:id/characters", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+  const characters = await db.select().from(charactersTable)
+    .where(eq(charactersTable.projectId, project.id));
+  res.json(characters);
+});
+
+/** Link a character to this project */
+router.post("/:id/characters/:characterId", requireAuth, async (req, res) => {
+  const userId      = req.auth!.userId;
+  const isAdmin     = req.auth!.isAdmin;
+  const projectId   = String(req.params.id);
+  const characterId = String(req.params.characterId);
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, projectId), eq(projectsTable.userId, userId)),
+      });
+  if (!project) { res.status(404).json({ error: "project_not_found" }); return; }
+
+  const character = await db.query.charactersTable.findFirst({
+    where: and(eq(charactersTable.id, characterId), eq(charactersTable.userId, userId)),
+  });
+  if (!character) { res.status(404).json({ error: "character_not_found" }); return; }
+
+  const [updated] = await db.update(charactersTable)
+    .set({ projectId, updatedAt: new Date() })
+    .where(eq(charactersTable.id, characterId))
+    .returning();
+  res.json(updated);
+});
+
+/** Unlink a character from this project */
+router.delete("/:id/characters/:characterId", requireAuth, async (req, res) => {
+  const userId      = req.auth!.userId;
+  const projectId   = String(req.params.id);
+  const characterId = String(req.params.characterId);
+
+  const character = await db.query.charactersTable.findFirst({
+    where: and(eq(charactersTable.id, characterId), eq(charactersTable.userId, userId)),
+  });
+  if (!character || character.projectId !== projectId) {
+    res.status(404).json({ error: "not_found" }); return;
+  }
+
+  await db.update(charactersTable)
+    .set({ projectId: null, updatedAt: new Date() })
+    .where(eq(charactersTable.id, characterId));
+  res.json({ ok: true });
 });
 
 function buildMissingCodeHtml(name: string, type: string, id: string): string {

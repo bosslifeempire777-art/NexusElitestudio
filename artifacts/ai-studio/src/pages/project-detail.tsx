@@ -17,9 +17,10 @@ import {
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
   Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
   ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity, ArrowRight,
+  Plus, Users,
 } from "lucide-react";
 import { useLocation } from "wouter";
-import { getToken } from "@/lib/auth";
+import { getToken, apiFetch } from "@/lib/auth";
 import { useAuth } from "@/context/AuthContext";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
@@ -962,6 +963,60 @@ function AgentTerminal({
 }) {
   const [, navigate] = useLocation();
   const isGame = projectType === "game";
+
+  // ── Character integration state (game projects only) ─────────────────────
+  interface LinkedCharacter {
+    id: string; name: string; gameStyle: string; prompt: string;
+    imageUrl?: string | null; imageData?: string | null; imageType?: string;
+    tags?: string[] | null; notes?: string | null;
+  }
+  const [linkedChars, setLinkedChars]           = useState<LinkedCharacter[]>([]);
+  const [allChars, setAllChars]                 = useState<LinkedCharacter[]>([]);
+  const [showCharPicker, setShowCharPicker]     = useState(false);
+  const [charPickerLoading, setCharPickerLoading] = useState(false);
+  const [linkingCharId, setLinkingCharId]       = useState<string | null>(null);
+  const [unlinkingCharId, setUnlinkingCharId]   = useState<string | null>(null);
+
+  const fetchLinkedChars = useCallback(async () => {
+    if (!isGame) return;
+    try {
+      const res = await apiFetch(`/projects/${projectId}/characters`);
+      if (res.ok) setLinkedChars(await res.json());
+    } catch {}
+  }, [isGame, projectId]);
+
+  useEffect(() => { fetchLinkedChars(); }, [fetchLinkedChars]);
+
+  const openCharPicker = async () => {
+    setShowCharPicker(true);
+    setCharPickerLoading(true);
+    try {
+      const res = await apiFetch("/characters");
+      if (res.ok) {
+        const all: LinkedCharacter[] = await res.json();
+        setAllChars(all);
+      }
+    } catch {}
+    setCharPickerLoading(false);
+  };
+
+  const linkCharacter = async (charId: string) => {
+    setLinkingCharId(charId);
+    try {
+      const res = await apiFetch(`/projects/${projectId}/characters/${charId}`, { method: "POST" });
+      if (res.ok) { await fetchLinkedChars(); setShowCharPicker(false); }
+    } catch {}
+    setLinkingCharId(null);
+  };
+
+  const unlinkCharacter = async (charId: string) => {
+    setUnlinkingCharId(charId);
+    try {
+      const res = await apiFetch(`/projects/${projectId}/characters/${charId}`, { method: "DELETE" });
+      if (res.ok) await fetchLinkedChars();
+    } catch {}
+    setUnlinkingCharId(null);
+  };
   // Build initial messages: greeting first, then full saved chat history
   // (so users can scroll back through every prior conversation on this project).
   const greeting: ChatMessage = {
@@ -1266,24 +1321,145 @@ function AgentTerminal({
 
       {/* Character Studio widget — game projects only */}
       {isGame && (
-        <div className="shrink-0 border-b border-primary/20 bg-gradient-to-r from-primary/8 via-primary/5 to-transparent p-3">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
-              <Sword className="w-5 h-5 text-primary" />
+        <div className="shrink-0 border-b border-primary/20 bg-gradient-to-r from-primary/8 via-primary/5 to-transparent">
+          {/* Header row */}
+          <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
+            <div className="w-7 h-7 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
+              <Sword className="w-3.5 h-3.5 text-primary" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-primary font-display tracking-wide">Character Studio</p>
-              <p className="text-[10px] text-muted-foreground/70 leading-snug">
-                Create, generate &amp; customize characters for this game — AI art, pixel sprites, uploads &amp; manual editing
+              <p className="text-[11px] font-bold text-primary font-display tracking-wide">Character Studio</p>
+              <p className="text-[9px] text-muted-foreground/60 leading-none">
+                {linkedChars.length === 0 ? "No characters linked — add one to inject into your game" : `${linkedChars.length} character${linkedChars.length !== 1 ? "s" : ""} integrated into game builds`}
               </p>
             </div>
             <button
-              onClick={() => navigate("/characters")}
-              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-primary text-background text-[11px] font-bold rounded hover:brightness-110 transition-all"
+              onClick={openCharPicker}
+              className="shrink-0 flex items-center gap-1 px-2 py-1 bg-primary/20 border border-primary/40 text-primary text-[10px] font-bold rounded hover:bg-primary/30 transition-all"
             >
-              <Sword className="w-3 h-3" /> Open Studio
+              <Plus className="w-3 h-3" /> Add
+            </button>
+            <button
+              onClick={() => navigate("/characters")}
+              className="shrink-0 flex items-center gap-1 px-2 py-1 bg-background/40 border border-border/40 text-muted-foreground text-[10px] rounded hover:border-primary/40 hover:text-primary transition-all"
+            >
+              Studio
             </button>
           </div>
+
+          {/* Linked character thumbnails */}
+          {linkedChars.length > 0 && (
+            <div className="px-3 pb-2.5 flex gap-2 overflow-x-auto">
+              {linkedChars.map(char => {
+                const imgSrc = char.imageData ? char.imageData : char.imageUrl ?? null;
+                return (
+                  <div key={char.id} className="relative shrink-0 group">
+                    <div className="w-14 h-14 rounded-lg border border-primary/30 bg-background/60 overflow-hidden flex items-center justify-center">
+                      {imgSrc
+                        ? <img src={imgSrc} alt={char.name} className="w-full h-full object-cover" />
+                        : <User className="w-6 h-6 text-muted-foreground/40" />
+                      }
+                    </div>
+                    <p className="text-[8px] text-center text-muted-foreground truncate max-w-[56px] mt-0.5">{char.name}</p>
+                    <button
+                      onClick={() => unlinkCharacter(char.id)}
+                      disabled={unlinkingCharId === char.id}
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                      title="Remove from game"
+                    >
+                      {unlinkingCharId === char.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <X className="w-2.5 h-2.5" />}
+                    </button>
+                    <div className="absolute bottom-0 left-0 right-0 bg-primary/80 text-background text-[7px] text-center font-bold py-0.5 rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity truncate px-0.5">
+                      {char.gameStyle}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Inject into game button (if chars linked) */}
+          {linkedChars.length > 0 && (
+            <div className="px-3 pb-2.5">
+              <button
+                disabled={isLoading}
+                onClick={() => sendMessage("", `Integrate all ${linkedChars.length} linked character${linkedChars.length !== 1 ? "s" : ""} (${linkedChars.map(c => c.name).join(", ")}) into the game — use their visual styles and descriptions to draw them on the canvas as sprites`)}
+                className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-gradient-to-r from-primary/30 to-accent/30 border border-primary/40 text-primary text-[10px] font-bold rounded hover:brightness-110 transition-all disabled:opacity-50"
+              >
+                <Zap className="w-3 h-3" /> Inject Characters into Game
+              </button>
+            </div>
+          )}
+
+          {/* Character picker modal */}
+          {showCharPicker && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="bg-background border border-primary/30 rounded-xl shadow-2xl w-[340px] max-h-[480px] flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-bold text-primary font-display">Add Character to Game</span>
+                  </div>
+                  <button onClick={() => setShowCharPicker(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3">
+                  {charPickerLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    </div>
+                  ) : allChars.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Sword className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+                      <p className="text-xs text-muted-foreground">No characters yet.</p>
+                      <button onClick={() => { setShowCharPicker(false); navigate("/characters"); }} className="mt-2 text-xs text-primary hover:underline">
+                        Open Character Studio →
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {allChars.map(char => {
+                        const alreadyLinked = linkedChars.some(lc => lc.id === char.id);
+                        const imgSrc = char.imageData ? char.imageData : char.imageUrl ?? null;
+                        return (
+                          <button
+                            key={char.id}
+                            onClick={() => !alreadyLinked && linkCharacter(char.id)}
+                            disabled={alreadyLinked || linkingCharId === char.id}
+                            className={`relative rounded-lg border overflow-hidden flex flex-col items-center gap-1 p-1.5 transition-all ${
+                              alreadyLinked
+                                ? "border-primary/60 bg-primary/10 cursor-default"
+                                : "border-border/40 bg-background/40 hover:border-primary/50 hover:bg-primary/5 cursor-pointer"
+                            }`}
+                          >
+                            <div className="w-14 h-14 rounded-md bg-secondary/50 flex items-center justify-center overflow-hidden">
+                              {imgSrc
+                                ? <img src={imgSrc} alt={char.name} className="w-full h-full object-cover" />
+                                : <User className="w-6 h-6 text-muted-foreground/40" />
+                              }
+                            </div>
+                            <p className="text-[9px] font-bold text-foreground truncate w-full text-center">{char.name}</p>
+                            <p className="text-[8px] text-muted-foreground">{char.gameStyle}</p>
+                            {alreadyLinked && <Check className="absolute top-1 right-1 w-3 h-3 text-primary" />}
+                            {linkingCharId === char.id && <Loader2 className="absolute top-1 right-1 w-3 h-3 animate-spin text-primary" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="px-4 py-3 border-t border-border/40 flex items-center justify-between">
+                  <button onClick={() => { setShowCharPicker(false); navigate("/characters"); }} className="text-xs text-muted-foreground hover:text-primary transition-colors">
+                    + Create new character
+                  </button>
+                  <button onClick={() => setShowCharPicker(false)} className="text-xs px-3 py-1.5 bg-secondary rounded hover:bg-secondary/80 transition-colors">
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
