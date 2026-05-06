@@ -735,36 +735,35 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
   // Step 3: Everything else runs in the background — client already responded.
   setImmediate(async () => {
-    // Generate the real AI chat reply in background
-    let reply = quickReply;
-    try {
-      reply = await generateChatResponse(
-        project.type, project.name, userMessage, project.prompt,
-        userSecretNames, priorChat, priorMemory,
-      );
-    } catch {
-      // keep the quick reply as fallback
+    // Kick off chat reply generation IMMEDIATELY as a concurrent promise so it
+    // runs in parallel with the agent build logs. Do NOT await it here — the
+    // agent indicator lights must start firing within the first second.
+    const chatReplyPromise: Promise<string> = generateChatResponse(
+      project.type, project.name, userMessage, project.prompt,
+      userSecretNames, priorChat, priorMemory,
+    ).catch(() => quickReply);
+
+    // Helper — persist chat history once we have the real reply
+    async function persistChatHistory(reply: string) {
+      try {
+        const existing = (project.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
+        const nowIso = new Date().toISOString();
+        await db.update(projectsTable)
+          .set({ chatHistory: [...existing,
+            { role: "user",  content: userMessage, timestamp: nowIso },
+            { role: "agent", content: reply,        timestamp: nowIso },
+          ] as any })
+          .where(eq(projectsTable.id, project.id));
+      } catch (err) {
+        console.warn("Failed to persist chat history:", err);
+      }
     }
 
-    // Deliver the real AI reply to the frontend via SSE
-    emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
-
-    // Persist chat history with the real AI reply
-    try {
-      const existing = (project.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
-      const nowIso = new Date().toISOString();
-      await db.update(projectsTable)
-        .set({ chatHistory: [...existing,
-          { role: "user",  content: userMessage, timestamp: nowIso },
-          { role: "agent", content: reply,        timestamp: nowIso },
-        ] as any })
-        .where(eq(projectsTable.id, project.id));
-    } catch (err) {
-      console.warn("Failed to persist chat history:", err);
-    }
-
-    // For chat-only turns (no code rebuild), update memory and finish.
+    // For chat-only turns (no code rebuild) just wait for the reply then finish.
     if (!hasCode) {
+      const reply = await chatReplyPromise;
+      emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
+      await persistChatHistory(reply);
       try {
         const newMemory = await updateProjectMemory(
           project.name, project.type, priorMemory, userMessage, reply, false,
@@ -778,7 +777,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       return;
     }
 
-    // Code rebuild — stream agent steps then generate updated code
+    // Code rebuild — stream agent logs RIGHT NOW (chat reply runs in parallel)
     try {
       emitLog(project.id, `[Orchestrator] 🧠 Received change request: "${userMessage.slice(0, 80)}"`);
       await new Promise(r => setTimeout(r, 300));
@@ -801,7 +800,16 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
       const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;
 
-      // Update long-term project memory after every chat turn
+      // By now the chat reply has had 90-180s to generate in parallel — collect it.
+      const reply = await chatReplyPromise;
+
+      // Deliver the real AI reply to the frontend via SSE now that build is done
+      emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
+
+      // Persist chat history with the real reply
+      await persistChatHistory(reply);
+
+      // Update long-term project memory
       try {
         const newMemory = await updateProjectMemory(
           project.name, project.type, priorMemory, userMessage, reply, changed,
@@ -843,6 +851,10 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     } catch (err) {
       console.error("Chat code update failed:", err);
       emitLog(project.id, `[Orchestrator] ⚠️ Update encountered an issue — your app is unchanged.`);
+      // Still deliver the chat reply even on error
+      const reply = await chatReplyPromise.catch(() => quickReply);
+      emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
+      await persistChatHistory(reply).catch(() => {});
       await db.update(projectsTable)
         .set({ status: prevStatus === "deployed" ? "deployed" : "ready", updatedAt: new Date() })
         .where(eq(projectsTable.id, project.id));
