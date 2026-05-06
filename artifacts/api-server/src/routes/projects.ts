@@ -716,49 +716,55 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   // OR explicitly tell the user which API key they need to add.
   const userSecretNames = await getUserSecretNames(project.userId);
 
-  // Run the chat reply generation and the "set building" DB write in parallel.
-  // The DB update MUST finish before we call res.json() — otherwise the
-  // frontend's immediate refetch() races the write and sees status:"ready",
-  // which prevents polling from ever starting and the preview never refreshes.
   const priorChat = (project.chatHistory as ChatTurn[] | null) ?? [];
   const priorMemory = (project.memory as ProjectMemory | null) ?? null;
 
-  const [reply] = await Promise.all([
-    generateChatResponse(project.type, project.name, userMessage, project.prompt, userSecretNames, priorChat, priorMemory)
-      .catch(() => `Got it — applying "${userMessage}" to your project now. The preview will update automatically when done.`),
-    hasCode
-      ? db.update(projectsTable)
-          .set({ status: "building", updatedAt: new Date() })
-          .where(eq(projectsTable.id, project.id))
-      : Promise.resolve(),
-  ]);
-
-  // Persist the user message + agent reply to chat_history so it's available
-  // across sessions. We append rather than overwrite to keep full transcript.
-  try {
-    const existing = (project.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
-    const nowIso = new Date().toISOString();
-    const updated = [
-      ...existing,
-      { role: "user", content: userMessage, timestamp: nowIso },
-      { role: "agent", content: reply, timestamp: nowIso },
-    ];
+  // Step 1: Set DB status to "building" FIRST so the frontend's immediate
+  // refetch() sees the right status and starts polling right away.
+  if (hasCode) {
     await db.update(projectsTable)
-      .set({ chatHistory: updated as any })
+      .set({ status: "building", updatedAt: new Date() })
       .where(eq(projectsTable.id, project.id));
-  } catch (err) {
-    console.warn("Failed to persist chat history:", err);
   }
 
-  // By the time we respond the DB already shows "building", so the frontend's
-  // refetch() will see the right status and start polling immediately.
-  res.json({ reply, updating: hasCode });
+  // Step 2: Respond to the client IMMEDIATELY — don't make them wait 30-90s
+  // for the AI chat reply to generate. The real reply will arrive via SSE
+  // as a __REPLY__:{...} message a few seconds later.
+  const quickReply = `Got it! Dispatching the swarm to apply "${userMessage.slice(0, 60)}" to ${project.name}. Building now — the preview will update automatically when done.`;
+  res.json({ reply: quickReply, updating: hasCode });
 
-  // For chat-only turns (no code rebuild), update memory now in the background.
-  // For turns that trigger a rebuild, the memory update happens inside the
-  // rebuild branch below so it knows whether code actually changed.
-  if (!hasCode) {
-    setImmediate(async () => {
+  // Step 3: Everything else runs in the background — client already responded.
+  setImmediate(async () => {
+    // Generate the real AI chat reply in background
+    let reply = quickReply;
+    try {
+      reply = await generateChatResponse(
+        project.type, project.name, userMessage, project.prompt,
+        userSecretNames, priorChat, priorMemory,
+      );
+    } catch {
+      // keep the quick reply as fallback
+    }
+
+    // Deliver the real AI reply to the frontend via SSE
+    emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
+
+    // Persist chat history with the real AI reply
+    try {
+      const existing = (project.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
+      const nowIso = new Date().toISOString();
+      await db.update(projectsTable)
+        .set({ chatHistory: [...existing,
+          { role: "user",  content: userMessage, timestamp: nowIso },
+          { role: "agent", content: reply,        timestamp: nowIso },
+        ] as any })
+        .where(eq(projectsTable.id, project.id));
+    } catch (err) {
+      console.warn("Failed to persist chat history:", err);
+    }
+
+    // For chat-only turns (no code rebuild), update memory and finish.
+    if (!hasCode) {
       try {
         const newMemory = await updateProjectMemory(
           project.name, project.type, priorMemory, userMessage, reply, false,
@@ -769,12 +775,10 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       } catch (memErr) {
         console.warn("Memory update (chat-only) failed:", memErr);
       }
-    });
-    return;
-  }
+      return;
+    }
 
-  // Stream agent update steps
-  setImmediate(async () => {
+    // Code rebuild — stream agent steps then generate updated code
     try {
       emitLog(project.id, `[Orchestrator] 🧠 Received change request: "${userMessage.slice(0, 80)}"`);
       await new Promise(r => setTimeout(r, 300));
@@ -797,16 +801,10 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
       const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;
 
-      // Update long-term project memory after every chat turn so the AI keeps
-      // continuous context of what's been built and what's still pending.
+      // Update long-term project memory after every chat turn
       try {
         const newMemory = await updateProjectMemory(
-          project.name,
-          project.type,
-          priorMemory,
-          userMessage,
-          reply,
-          changed,
+          project.name, project.type, priorMemory, userMessage, reply, changed,
         );
         await db.update(projectsTable)
           .set({ memory: newMemory as any })

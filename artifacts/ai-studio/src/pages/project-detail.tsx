@@ -1060,12 +1060,17 @@ function AgentTerminal({
   // the SSE stream fires the instant __DONE__ on a project that is already ready.
   const pendingBuildRef = useRef(false);
 
-  // Subscribe to SSE build stream
+  // Sync isStreaming with projectStatus changes (separate from SSE subscription
+  // so the SSE connection is NOT torn down every time the poller fires).
+  useEffect(() => {
+    if (projectStatus === "building") setIsStreaming(true);
+  }, [projectStatus]);
+
+  // Subscribe to SSE build stream — depends ONLY on projectId so the connection
+  // stays alive for the full lifetime of the project view. Rebuilding it every
+  // 2 seconds (the poll interval) was causing __DONE__ events to be lost.
   useEffect(() => {
     if (!projectId) return;
-
-    setIsStreaming(projectStatus === "building");
-    setBuildLogs([]);
 
     const es = new EventSource(`/api/projects/${projectId}/build-stream`);
     esRef.current = es;
@@ -1073,9 +1078,23 @@ function AgentTerminal({
     es.onmessage = (e) => {
       try {
         const { msg } = JSON.parse(e.data) as { msg: string; ts: number };
+
+        // __REPLY__:<json> — real AI chat reply delivered asynchronously
+        if (msg.startsWith("__REPLY__:")) {
+          try {
+            const { reply } = JSON.parse(msg.slice("__REPLY__:".length)) as { reply: string };
+            const id = currentBlockIdRef.current;
+            if (id) {
+              setWorkBlocks(prev => prev.map(b => b.id === id ? { ...b, reply } : b));
+            }
+          } catch {
+            // ignore malformed reply payload
+          }
+          return;
+        }
+
         if (msg === "__DONE__") {
           setIsStreaming(false);
-          es.close();
           // Close the currently-open work block, if any
           if (currentBlockIdRef.current) {
             const id = currentBlockIdRef.current;
@@ -1148,7 +1167,6 @@ function AgentTerminal({
 
     es.onerror = () => {
       setIsStreaming(false);
-      es.close();
     };
 
     return () => {
@@ -1157,7 +1175,7 @@ function AgentTerminal({
       // Prevent setState-on-unmounted-component warnings from pending fade timers
       clearAgentTimers();
     };
-  }, [projectId, projectStatus, clearAgentTimers]);
+  }, [projectId, clearAgentTimers]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1171,9 +1189,10 @@ function AgentTerminal({
     setInput("");
 
     // Reset the swarm grid for a fresh run (clear prior ✓ marks, live ticker,
-    // and any still-pending fade timers from a previous build so they can't
-    // fire mid-run and pollute the new state).
+    // build logs, and any still-pending fade timers from a previous build so
+    // they can't fire mid-run and pollute the new state).
     clearAgentTimers();
+    setBuildLogs([]);
     setCompletedKeys(new Set());
     setActiveKeys(new Set());
     setCurrentAgentKey(null);
