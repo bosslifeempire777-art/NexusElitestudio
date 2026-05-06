@@ -2,42 +2,41 @@ import { chatViaSdk } from "./openrouterSdk.js";
 
 // Ordered list of models to try. The first one is preferred; if it returns
 // a transient error (429 rate limit, 5xx outage, etc.) we automatically
-// fall through to the next model so builds keep working when an upstream
-// provider is throttled. All have generous context windows + good code
-// quality.
+// fall through to the next model so builds keep working.
 //
-// Code generation uses Claude Opus 4.7 as the primary brain — best-in-class
-// for software engineering with a 1M-token context window — then falls
-// through to other top-tier models on rate limit / outage.
+// ORDER RATIONALE (learned from production timeouts):
+// Fast/reliable models lead — Gemini Flash confirmed working in prod.
+// Claude stays in the chain for quality but runs AFTER fast models succeed
+// or fail quickly. This prevents a chain of 180s timeouts burning 13+ min
+// before reaching a working model.
 const CODE_MODELS = [
-  "anthropic/claude-opus-4.7",
-  "anthropic/claude-opus-4.6",
-  "anthropic/claude-sonnet-4.6",
-  "openai/gpt-4o-mini",
-  "google/gemini-2.0-flash-001",
-  "deepseek/deepseek-chat",
+  "google/gemini-2.0-flash-001",    // fast, confirmed working in prod
+  "google/gemini-2.5-flash-preview:thinking", // fast + stronger reasoning
+  "openai/gpt-4o-mini",             // fast, 60s timeout
+  "anthropic/claude-sonnet-4.6",    // quality, try after fast models
+  "anthropic/claude-opus-4.7",      // best quality, last resort
+  "deepseek/deepseek-chat",         // final fallback
 ];
 
-// Chat replies don't need the heaviest model; lead with a fast one and
-// keep Opus in the chain for resiliency.
+// Chat replies: speed matters most here — users see this reply first.
 const CHAT_MODELS = [
-  "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-haiku-4.5",
-  "google/gemini-2.0-flash-001",
-  "openai/gpt-4o-mini",
-  "anthropic/claude-opus-4.7",
+  "google/gemini-2.0-flash-001",    // fast, confirmed working
+  "openai/gpt-4o-mini",             // fast fallback
+  "anthropic/claude-sonnet-4.6",    // quality fallback
+  "anthropic/claude-haiku-4.5",     // lightweight Claude
+  "deepseek/deepseek-chat",         // last resort
 ];
-const FETCH_TIMEOUT_MS = 180_000; // 180 seconds — Opus/Sonnet long generations need this
+const FETCH_TIMEOUT_MS = 90_000; // 90s default (was 180s — halved to fail fast)
 
 /**
- * Per-model timeout. Opus + Sonnet routinely take 90-150s for long
- * code generations; smaller models almost always return in <60s. Giving
- * the slow models more rope reduces the false-timeout rate that was
- * burning every fallback in the chain.
+ * Per-model timeout. Gemini/GPT-mini are fast (30-60s). Claude is slower
+ * but capped at 90s now — if it can't respond in 90s it's likely overloaded
+ * and we should fall through to the next model quickly.
  */
 function timeoutForModel(model: string): number {
-  if (/opus|sonnet|gpt-4o(?!-mini)/i.test(model)) return 180_000;
-  return 60_000;
+  if (/opus/i.test(model))   return 90_000;  // was 180s — halved
+  if (/sonnet/i.test(model)) return 90_000;  // was 180s — halved
+  return 60_000;                              // gemini, gpt-mini, deepseek
 }
 
 function getApiKey(): string | undefined {
