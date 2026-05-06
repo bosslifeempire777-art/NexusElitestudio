@@ -1,42 +1,39 @@
 import { chatViaSdk } from "./openrouterSdk.js";
 
-// Ordered list of models to try. The first one is preferred; if it returns
-// a transient error (429 rate limit, 5xx outage, etc.) we automatically
-// fall through to the next model so builds keep working.
+// Ordered list of models to try. Falls through on 429 / 5xx / timeout.
 //
-// ORDER RATIONALE (learned from production timeouts):
-// Fast/reliable models lead — Gemini Flash confirmed working in prod.
-// Claude stays in the chain for quality but runs AFTER fast models succeed
-// or fail quickly. This prevents a chain of 180s timeouts burning 13+ min
-// before reaching a working model.
+// Priority: Claude first (best quality) → Kimi K2.6 → Gemini 3 Flash →
+//           GPT-4.1 → confirmed-working fallbacks.
 const CODE_MODELS = [
-  "google/gemini-2.0-flash-001",    // fast, confirmed working in prod
-  "google/gemini-2.5-flash-preview:thinking", // fast + stronger reasoning
-  "openai/gpt-4o-mini",             // fast, 60s timeout
-  "anthropic/claude-sonnet-4.6",    // quality, try after fast models
-  "anthropic/claude-opus-4.7",      // best quality, last resort
-  "deepseek/deepseek-chat",         // final fallback
+  "anthropic/claude-opus-4.7",         // #1 preferred — best code quality
+  "anthropic/claude-sonnet-4.6",       // #2 Claude Sonnet — faster Claude
+  "moonshotai/kimi-k2.6",              // #3 Kimi K2.6 — strong coder
+  "google/gemini-3-flash-preview",     // #4 latest Gemini Flash
+  "google/gemini-2.5-flash",           // #5 Gemini 2.5 Flash
+  "openai/gpt-4.1",                    // #6 GPT-4.1
+  "google/gemini-2.0-flash-001",       // #7 confirmed working fallback
+  "deepseek/deepseek-chat",            // #8 last resort
 ];
 
-// Chat replies: speed matters most here — users see this reply first.
+// Chat replies: Claude first for quality, fast models as quick fallbacks.
 const CHAT_MODELS = [
-  "google/gemini-2.0-flash-001",    // fast, confirmed working
-  "openai/gpt-4o-mini",             // fast fallback
-  "anthropic/claude-sonnet-4.6",    // quality fallback
-  "anthropic/claude-haiku-4.5",     // lightweight Claude
-  "deepseek/deepseek-chat",         // last resort
+  "anthropic/claude-sonnet-4.6",       // #1 Claude Sonnet — quality replies
+  "moonshotai/kimi-k2.6",              // #2 Kimi K2.6
+  "google/gemini-3-flash-preview",     // #3 latest Gemini Flash
+  "google/gemini-2.5-flash",           // #4 Gemini 2.5 Flash
+  "openai/gpt-4.1-mini",               // #5 fast GPT
+  "google/gemini-2.0-flash-001",       // #6 confirmed working fallback
+  "deepseek/deepseek-chat",            // #7 last resort
 ];
-const FETCH_TIMEOUT_MS = 90_000; // 90s default (was 180s — halved to fail fast)
+const FETCH_TIMEOUT_MS = 90_000;
 
 /**
- * Per-model timeout. Gemini/GPT-mini are fast (30-60s). Claude is slower
- * but capped at 90s now — if it can't respond in 90s it's likely overloaded
- * and we should fall through to the next model quickly.
+ * Per-model timeout. Claude/Kimi are capped at 90s — if they don't
+ * respond in 90s they're overloaded and we move on. Fast models get 60s.
  */
 function timeoutForModel(model: string): number {
-  if (/opus/i.test(model))   return 90_000;  // was 180s — halved
-  if (/sonnet/i.test(model)) return 90_000;  // was 180s — halved
-  return 60_000;                              // gemini, gpt-mini, deepseek
+  if (/opus|sonnet|kimi/i.test(model)) return 90_000;
+  return 60_000; // gemini, gpt-4.1, deepseek
 }
 
 function getApiKey(): string | undefined {
