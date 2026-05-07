@@ -1,39 +1,24 @@
 import { chatViaSdk } from "./openrouterSdk.js";
 
-// Ordered list of models to try. Falls through on 429 / 5xx / timeout.
-//
-// Priority: Claude first (best quality) → Kimi K2.6 → Gemini 3 Flash →
-//           GPT-4.1 → confirmed-working fallbacks.
+// OpenRouter auto-routing: OpenRouter picks the best available model
+// automatically based on availability, cost, and performance.
+// Falls back to Gemini Flash (confirmed working) then DeepSeek as safety nets.
 const CODE_MODELS = [
-  "anthropic/claude-opus-4.7",         // #1 preferred — best code quality
-  "anthropic/claude-sonnet-4.6",       // #2 Claude Sonnet — faster Claude
-  "moonshotai/kimi-k2.6",              // #3 Kimi K2.6 — strong coder
-  "google/gemini-3-flash-preview",     // #4 latest Gemini Flash
-  "google/gemini-2.5-flash",           // #5 Gemini 2.5 Flash
-  "openai/gpt-4.1",                    // #6 GPT-4.1
-  "google/gemini-2.0-flash-001",       // #7 confirmed working fallback
-  "deepseek/deepseek-chat",            // #8 last resort
+  "openrouter/auto",               // #1 — OpenRouter picks best model
+  "google/gemini-2.0-flash-001",   // #2 — confirmed reliable fallback
+  "deepseek/deepseek-chat",        // #3 — last resort
 ];
 
-// Chat replies: Claude first for quality, fast models as quick fallbacks.
 const CHAT_MODELS = [
-  "anthropic/claude-sonnet-4.6",       // #1 Claude Sonnet — quality replies
-  "moonshotai/kimi-k2.6",              // #2 Kimi K2.6
-  "google/gemini-3-flash-preview",     // #3 latest Gemini Flash
-  "google/gemini-2.5-flash",           // #4 Gemini 2.5 Flash
-  "openai/gpt-4.1-mini",               // #5 fast GPT
-  "google/gemini-2.0-flash-001",       // #6 confirmed working fallback
-  "deepseek/deepseek-chat",            // #7 last resort
+  "openrouter/auto",               // #1 — OpenRouter picks best model
+  "google/gemini-2.0-flash-001",   // #2 — confirmed reliable fallback
+  "deepseek/deepseek-chat",        // #3 — last resort
 ];
-const FETCH_TIMEOUT_MS = 90_000;
 
-/**
- * Per-model timeout. Claude/Kimi are capped at 90s — if they don't
- * respond in 90s they're overloaded and we move on. Fast models get 60s.
- */
-function timeoutForModel(model: string): number {
-  if (/opus|sonnet|kimi/i.test(model)) return 90_000;
-  return 60_000; // gemini, gpt-4.1, deepseek
+const FETCH_TIMEOUT_MS = 120_000; // 120s — auto routing may pick larger models
+
+function timeoutForModel(_model: string): number {
+  return FETCH_TIMEOUT_MS;
 }
 
 function getApiKey(): string | undefined {
