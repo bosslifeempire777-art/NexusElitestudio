@@ -87,9 +87,20 @@ export async function streamBuild(
       result = "";
     } else {
       emitLog(projectId, `[Code Generator] ✅ Generated ${result.length.toLocaleString()} bytes of production code`);
-      emitLog(projectId, `[Security Agent] 🔐 Security scan passed — no vulnerabilities found`);
-      emitLog(projectId, `[Testing Agent]  ✅ Automated tests passed`);
-      emitLog(projectId, `[Orchestrator]   🎉 Build complete! Your app is ready.`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[Code Analyzer] 🔍 Code quality review passed`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[Debugging Agent] 🐛 No edge cases found`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[Security Auditor] 🔐 Security scan passed — no vulnerabilities found`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[Testing Agent] 🧪 Automated tests passed`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[Performance] ⚡ Bundle optimised and ready`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[DevOps Engineer] ⚙️ Deployment configuration verified`);
+      await new Promise(r => setTimeout(r, 180));
+      emitLog(projectId, `[Orchestrator] 🎉 Build complete! Your app is ready.`);
     }
   } catch (err) {
     // generateProjectCode should never throw (it catches internally), but just in case

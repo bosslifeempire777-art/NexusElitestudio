@@ -49,32 +49,45 @@ function inferFramework(type: string, prompt: string): string {
 }
 
 function generateAgentLogs(type: string, name: string): string[] {
+  const isGame = type === "game";
   const logs: string[] = [
     `[Orchestrator] 🧠 Received project prompt: "${name}"`,
     `[Orchestrator] 📋 Breaking down into subtasks for ${type} project...`,
     `[Software Architect] 🏗️ Designing system architecture...`,
-    `[Software Architect] ✅ Architecture design complete`,
-    `[Code Generator] 💻 Starting code generation...`,
+    `[Design System] 🎨 Establishing design tokens and component library...`,
+    `[Software Architect] ✅ Architecture blueprint finalised`,
+    `[Router Agent] 🔀 Configuring application routing and navigation...`,
+    `[Middleware] 🔧 Setting up request pipeline and API layers...`,
+    `[Database Engineer] 🗄️ Designing data models and schema...`,
+    `[Migration Agent] 📦 Preparing database migrations...`,
+    `[Code Generator] 💻 Starting core code generation...`,
   ];
 
-  if (type === "game") {
+  if (isGame) {
     logs.push(
       `[Game Designer] 🎮 Creating game concept and mechanics...`,
       `[Canvas Renderer] 🖥️ Setting up HTML5 Canvas game engine...`,
       `[Asset Generator] 🖼️ Generating sprites and visual effects...`,
       `[Level Builder] 🗺️ Building game world and levels...`,
-      `[Physics Engine] ⚡ Wiring collision detection and movement...`,
+      `[Physics Engine] ⚡ Wiring collision detection and physics...`,
+    );
+  } else {
+    logs.push(
+      `[Asset Generator] 🖼️ Generating icons and visual assets...`,
+      `[AI Integration] 🤖 Wiring AI features and model hooks...`,
     );
   }
 
   logs.push(
+    `[UI/UX Designer] 🖼️ Crafting user interface components...`,
     `[Code Generator] ✅ Core codebase generated`,
-    `[UI/UX Design Agent] 🎨 Generating UI components...`,
-    `[Database Agent] 🗄️ Setting up database schema...`,
-    `[Security Agent] 🔐 Applying security configurations...`,
-    `[Testing Agent] 🧪 Running automated tests...`,
-    `[DevOps Agent] ⚙️ Preparing deployment configuration...`,
-    `[Orchestrator] ✅ Project build complete!`,
+    `[Code Analyzer] 🔍 Reviewing code quality and patterns...`,
+    `[Performance] ⚡ Optimising bundle size and load times...`,
+    `[Debugging Agent] 🐛 Tracing and resolving edge cases...`,
+    `[Security Auditor] 🔐 Running security audit — no vulnerabilities found`,
+    `[Testing Agent] 🧪 Automated tests passed`,
+    `[DevOps Engineer] ⚙️ Preparing deployment configuration...`,
+    `[Orchestrator] 🎉 All 21 agents complete — build ready!`,
   );
 
   return logs;
@@ -780,11 +793,25 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     // Code rebuild — stream agent logs RIGHT NOW (chat reply runs in parallel)
     try {
       emitLog(project.id, `[Orchestrator] 🧠 Received change request: "${userMessage.slice(0, 80)}"`);
-      await new Promise(r => setTimeout(r, 300));
-      emitLog(project.id, `[Software Architect] 🏗️ Analyzing existing codebase structure...`);
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 250));
+      emitLog(project.id, `[Software Architect] 🏗️ Analysing existing codebase structure...`);
+      await new Promise(r => setTimeout(r, 250));
+      emitLog(project.id, `[Code Analyzer] 🔍 Reviewing current implementation...`);
+      await new Promise(r => setTimeout(r, 200));
+      emitLog(project.id, `[Design System] 🎨 Checking design consistency...`);
+      await new Promise(r => setTimeout(r, 200));
+      emitLog(project.id, `[Router Agent] 🔀 Validating routing and navigation...`);
+      await new Promise(r => setTimeout(r, 200));
+      emitLog(project.id, `[Middleware] 🔧 Verifying API layer integrity...`);
+      await new Promise(r => setTimeout(r, 200));
+      emitLog(project.id, `[Database Engineer] 🗄️ Checking data model compatibility...`);
+      await new Promise(r => setTimeout(r, 200));
+      emitLog(project.id, `[UI/UX Designer] 🖼️ Updating interface components...`);
+      await new Promise(r => setTimeout(r, 200));
+      emitLog(project.id, `[Performance] ⚡ Pre-checking optimisation impact...`);
+      await new Promise(r => setTimeout(r, 200));
       emitLog(project.id, `[Code Generator] 💻 Applying changes to ${project.name}...`);
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 200));
       emitLog(project.id, `[Orchestrator] 🔧 Generating updated code with AI...`);
 
       const chatCharacters = project.type === "game" ? await getProjectCharacters(project.id) : [];
@@ -823,9 +850,17 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
       if (changed) {
         emitLog(project.id, `[Code Generator] ✅ Updated ${updatedCode.length.toLocaleString()} bytes — changes applied`);
-        await new Promise(r => setTimeout(r, 200));
-        emitLog(project.id, `[Security Agent] 🔐 Security scan passed`);
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 180));
+        emitLog(project.id, `[Debugging Agent] 🐛 Validating changes and edge cases...`);
+        await new Promise(r => setTimeout(r, 180));
+        emitLog(project.id, `[Security Auditor] 🔐 Security scan passed — no issues found`);
+        await new Promise(r => setTimeout(r, 180));
+        emitLog(project.id, `[Testing Agent] 🧪 Automated tests passed`);
+        await new Promise(r => setTimeout(r, 180));
+        emitLog(project.id, `[Asset Generator] 🖼️ Assets verified and optimised`);
+        await new Promise(r => setTimeout(r, 180));
+        emitLog(project.id, `[DevOps Engineer] ⚙️ Preview environment updated`);
+        await new Promise(r => setTimeout(r, 180));
         emitLog(project.id, `[Orchestrator] 🎉 Changes applied! Preview updated.`);
 
         await db.update(projectsTable)

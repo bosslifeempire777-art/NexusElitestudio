@@ -53,26 +53,27 @@ const SWARM_AGENTS: Array<{ key: string; name: string; short: string; color: str
 /** Map a free-text agent label (parsed from a build log) to a swarm-grid key. */
 export function matchAgent(text: string): string | null {
   const t = text.toLowerCase();
-  if (t.includes("orchestrat"))                       return "orch";
-  if (t.includes("architect"))                        return "arch";
+  if (t.includes("orchestrat"))                          return "orch";
+  if (t.includes("architect"))                           return "arch";
   if (t.includes("code generator") || t.includes("generator")) return "code";
-  if (t.includes("ui") || t.includes("design system")) return "ui";
-  if (t.includes("security"))                         return "sec";
-  if (t.includes("database") || t.includes("db "))    return "db";
-  if (t.includes("migration"))                        return "migrate";
-  if (t.includes("test"))                             return "test";
-  if (t.includes("devops") || t.includes("deploy"))   return "devops";
-  if (t.includes("debug"))                            return "debug";
-  if (t.includes("analyz"))                           return "analyze";
-  if (t.includes("performance") || t.includes("optim")) return "perf";
-  if (t.includes("asset"))                            return "asset";
-  if (t.includes("router") || t.includes("route"))    return "router";
-  if (t.includes("middleware"))                       return "mid";
-  if (t.includes("ai "))                              return "ai";
-  if (t.includes("game"))                             return "game";
-  if (t.includes("canvas"))                           return "canvas";
-  if (t.includes("level"))                            return "level";
-  if (t.includes("physic"))                           return "phys";
+  if (t.includes("design system"))                       return "design";
+  if (t.includes("ui") || t.includes("ux"))              return "ui";
+  if (t.includes("security") || t.includes("auditor"))   return "sec";
+  if (t.includes("database") || t.includes("db engineer")) return "db";
+  if (t.includes("migration"))                           return "migrate";
+  if (t.includes("test"))                                return "test";
+  if (t.includes("devops") || t.includes("deploy"))      return "devops";
+  if (t.includes("debug"))                               return "debug";
+  if (t.includes("analyz") || t.includes("code analyzer")) return "analyze";
+  if (t.includes("performance") || t.includes("optim"))  return "perf";
+  if (t.includes("asset"))                               return "asset";
+  if (t.includes("router") || t.includes("routing"))     return "router";
+  if (t.includes("middleware"))                          return "mid";
+  if (t.includes("ai integration"))                      return "ai";
+  if (t.includes("game designer") || t.includes("game design")) return "game";
+  if (t.includes("canvas"))                              return "canvas";
+  if (t.includes("level"))                               return "level";
+  if (t.includes("physic"))                              return "phys";
   return null;
 }
 
