@@ -1,23 +1,33 @@
 import { chatViaSdk } from "./openrouterSdk.js";
 
-// OpenRouter auto-routing: OpenRouter picks the best available model
-// automatically based on availability, cost, and performance.
-// Falls back to Gemini Flash (confirmed working) then DeepSeek as safety nets.
+// Model fallback chain:
+// 1. openrouter/auto  — OpenRouter picks best paid model (30s timeout: fails
+//    fast at $0 credits instead of hanging the full 120s)
+// 2. Paid fallbacks   — confirmed working models
+// 3. :free models     — zero-credit models, always available as safety net
+//    so builds keep working even when the OpenRouter balance hits $0.
 const CODE_MODELS = [
-  "openrouter/auto",               // #1 — OpenRouter picks best model
-  "google/gemini-2.0-flash-001",   // #2 — confirmed reliable fallback
-  "deepseek/deepseek-chat",        // #3 — last resort
+  "openrouter/auto",                    // #1 paid — auto-route (30s, fail fast)
+  "google/gemini-2.0-flash-001",        // #2 paid — confirmed working
+  "deepseek/deepseek-chat",             // #3 paid — fallback
+  "qwen/qwen3-coder:free",              // #4 FREE — strong coder, no credits
+  "openai/gpt-oss-120b:free",           // #5 FREE — 120B model, no credits
+  "meta-llama/llama-3.3-70b-instruct:free", // #6 FREE — last resort
 ];
 
 const CHAT_MODELS = [
-  "openrouter/auto",               // #1 — OpenRouter picks best model
-  "google/gemini-2.0-flash-001",   // #2 — confirmed reliable fallback
-  "deepseek/deepseek-chat",        // #3 — last resort
+  "openrouter/auto",                    // #1 paid — auto-route (30s, fail fast)
+  "google/gemini-2.0-flash-001",        // #2 paid — confirmed working
+  "deepseek/deepseek-chat",             // #3 paid — fallback
+  "meta-llama/llama-3.3-70b-instruct:free", // #4 FREE — strong chat model
+  "qwen/qwen3-coder:free",              // #5 FREE — last resort
 ];
 
-const FETCH_TIMEOUT_MS = 120_000; // 120s — auto routing may pick larger models
+const FETCH_TIMEOUT_MS = 90_000;
 
-function timeoutForModel(_model: string): number {
+function timeoutForModel(model: string): number {
+  if (model === "openrouter/auto") return 30_000; // fail fast at $0 credits
+  if (model.endsWith(":free"))     return 60_000; // free models are usually fast
   return FETCH_TIMEOUT_MS;
 }
 

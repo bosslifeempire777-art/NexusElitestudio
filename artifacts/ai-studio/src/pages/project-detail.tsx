@@ -1094,6 +1094,11 @@ function AgentTerminal({
         }
 
         if (msg === "__DONE__") {
+          // Close immediately — prevents browser EventSource auto-reconnect
+          // which would replay all old logs in a loop.
+          es.close();
+          esRef.current = null;
+
           setIsStreaming(false);
           // Close the currently-open work block, if any
           if (currentBlockIdRef.current) {
