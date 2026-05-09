@@ -5,6 +5,7 @@ import { projectsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { startRenderPoller } from "./lib/render-poller.js";
 import { checkStripeConfig } from "./lib/stripe-config-check.js";
+import { checkEmailConfig } from "./lib/email-config-check.js";
 
 /**
  * GLOBAL CRASH GUARDS.
@@ -156,5 +157,8 @@ app.listen(port, async () => {
   // configured price IDs exist in the same mode. Logs only; never throws.
   void checkStripeConfig().catch(err =>
     console.warn("[stripe-config] check failed:", err?.message ?? err),
+  );
+  void checkEmailConfig().catch(err =>
+    console.warn("[email-config] check failed:", err?.message ?? err),
   );
 });
