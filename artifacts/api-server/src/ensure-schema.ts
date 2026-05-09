@@ -360,6 +360,18 @@ export async function ensureMainSchema(): Promise<void> {
       )
     `);
 
+    // ----------------------------------------------------------------
+    // Column migrations — ADD COLUMN IF NOT EXISTS is idempotent so
+    // these run safely on every boot against both fresh and existing DBs.
+    // ----------------------------------------------------------------
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_recovery_email_at   TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_email_sent_plan TEXT`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_converted_at    TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code            TEXT`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS credit_balance           INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_code TEXT`);
+    await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS memory         JSONB NOT NULL DEFAULT '{}'`);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);
