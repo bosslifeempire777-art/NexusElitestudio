@@ -1,11 +1,12 @@
 import type Stripe from 'stripe';
 import { db } from '@workspace/db';
-import { usersTable } from '@workspace/db/schema';
+import { usersTable, recoveryEmailEventsTable } from '@workspace/db/schema';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { getStripeSync, getUncachableStripeClient } from './stripeClient.js';
 import { defaultPublicBaseUrl, mintCheckoutUrlForUser } from './routes/stripe.js';
 import { sendRecoveryEmail } from './lib/recoveryEmail.js';
 import { LAUNCH_PROMO, isPromoActive } from './lib/promo.js';
+import { nanoid } from './lib/nanoid.js';
 
 /**
  * Reverse map: Stripe price_id -> plan name in our DB.
@@ -158,6 +159,13 @@ export class WebhookHandlers {
         const plan = map[priceId];
         if (!plan) { console.warn(`[stripe-webhook] No plan mapped for price ${priceId}`); break; }
         await setUserPlan(userId, plan, subscriptionId, session.customer as string | null);
+        // Attribution: if this checkout was minted from a recovery email, record the conversion.
+        if (session.metadata?.src === 'recovery') {
+          await db.update(usersTable)
+            .set({ recoveryConvertedAt: new Date() })
+            .where(eq(usersTable.id, userId));
+          console.log(`[stripe-webhook] recovery conversion recorded for user ${userId} (plan=${plan})`);
+        }
         break;
       }
 
@@ -261,7 +269,7 @@ async function handleCheckoutSessionExpired(
   const previousSentAt = user.lastRecoveryEmailAt;
   const cooldownCutoff = new Date(Date.now() - RECOVERY_COOLDOWN_MS);
   const claimed = await db.update(usersTable)
-    .set({ lastRecoveryEmailAt: new Date() })
+    .set({ lastRecoveryEmailAt: new Date(), recoveryEmailSentPlan: planName })
     .where(and(
       eq(usersTable.id, userId),
       or(isNull(usersTable.lastRecoveryEmailAt), lt(usersTable.lastRecoveryEmailAt, cooldownCutoff)),
@@ -273,12 +281,18 @@ async function handleCheckoutSessionExpired(
     return;
   }
 
+  // Step 1: mint URL and send the email. Only release the cooldown lock on
+  // failure here — if the email send itself throws, the user has NOT been
+  // emailed so it's safe to let Stripe retry or a future expired-session
+  // event try again. The cooldown release is scoped to this block only.
+  let checkoutUrl: string;
   try {
     const baseUrl = defaultPublicBaseUrl();
-    const checkoutUrl = await mintCheckoutUrlForUser({ userId, planName, baseUrl });
-    if (!checkoutUrl) {
+    const url = await mintCheckoutUrlForUser({ userId, planName, baseUrl, src: 'recovery' });
+    if (!url) {
       throw new Error('failed to mint recovery checkout URL');
     }
+    checkoutUrl = url;
 
     await sendRecoveryEmail({
       to: user.email,
@@ -288,14 +302,34 @@ async function handleCheckoutSessionExpired(
       promoActive: isPromoActive(),
       discountPercent: LAUNCH_PROMO.discountPercent,
     });
+    console.log(`[stripe-webhook] recovery email sent to user ${userId} for plan=${planName}`);
   } catch (err: any) {
-    // Send failed — release the cooldown slot by restoring the previous
-    // timestamp so a Stripe retry (or a future expired session) can try
-    // again instead of being silently locked out for 7 days.
+    // Email (or URL mint) failed — release the cooldown slot so this user
+    // can be retried. The email was never delivered so no duplicate risk.
     console.error(`[stripe-webhook] recovery email send failed for user ${userId}: ${err.message}; releasing cooldown lock`);
+    // Restore both the timestamp AND the plan field so the user row stays
+    // consistent — the email was never delivered so these values shouldn't
+    // reflect the failed attempt.
+    const previousPlan = user.recoveryEmailSentPlan ?? null;
     await db.update(usersTable)
-      .set({ lastRecoveryEmailAt: previousSentAt ?? null })
+      .set({ lastRecoveryEmailAt: previousSentAt ?? null, recoveryEmailSentPlan: previousPlan })
       .where(eq(usersTable.id, userId));
     throw err;
+  }
+
+  // Step 2: record the send as an immutable analytics event. This is
+  // intentionally outside the email try/catch: if the insert fails, the
+  // email was already delivered and we must NOT release the cooldown (which
+  // would allow a duplicate send). Log the failure and move on — the missing
+  // event row is a minor reporting gap, not a user-facing problem.
+  try {
+    await db.insert(recoveryEmailEventsTable).values({
+      id:      nanoid(),
+      userId,
+      planName,
+      sentAt:  new Date(),
+    });
+  } catch (insertErr: any) {
+    console.error(`[stripe-webhook] failed to insert recovery_email_events row for user ${userId}: ${insertErr.message} (email was sent — cooldown NOT released)`);
   }
 }

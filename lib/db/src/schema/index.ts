@@ -10,3 +10,4 @@ export * from "./deployments";
 export * from "./usage_records";
 export * from "./ai_lab";
 export * from "./command_center";
+export * from "./recovery_email_events";

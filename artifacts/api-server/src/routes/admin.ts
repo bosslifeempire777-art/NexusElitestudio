@@ -2,8 +2,8 @@ import { Router, type IRouter } from "express";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "fs";
 import { join, dirname, resolve, sep } from "path";
 import { db } from "@workspace/db";
-import { projectsTable, referralsTable, creditTransactionsTable, usersTable, buildsTable } from "@workspace/db/schema";
-import { eq, count, sum, desc, sql, inArray } from "drizzle-orm";
+import { projectsTable, referralsTable, creditTransactionsTable, usersTable, buildsTable, recoveryEmailEventsTable } from "@workspace/db/schema";
+import { eq, count, sum, desc, sql, inArray, gte, asc } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth.js";
 import { getRecentTraffic, getTrafficSummary } from "../lib/traffic-log.js";
 
@@ -500,6 +500,115 @@ router.get("/referrals", async (_req, res) => {
   } catch (err) {
     console.error("Admin referrals error:", err);
     res.status(500).json({ error: "Failed to load referral stats" });
+  }
+});
+
+/**
+ * GET /admin/recovery-stats?days=30 — cart-recovery email attribution.
+ *
+ * Uses the immutable `recovery_email_events` table as the source of truth for
+ * send counts so multiple emails to the same user (across separate 7-day
+ * cooldown windows) are counted individually, not collapsed to one.
+ *
+ * Returns:
+ *  - emailsSent:    total recovery emails dispatched in the window
+ *  - conversions:   sends whose user later converted (recoveryConvertedAt set
+ *                   after that specific send's sentAt)
+ *  - conversionRate: conversions / emailsSent (%)
+ *  - mrrCents/mrrDollars: estimated MRR from converted users' current plan
+ *  - byPlan:        per-plan breakdown of sends and conversions
+ */
+const PLAN_PRICE_CENTS: Record<string, number> = {
+  starter: 2900,
+  pro:     6000,
+  elite:   26900,
+};
+
+router.get("/recovery-stats", async (req, res) => {
+  const days = Math.min(parseInt(String(req.query.days ?? "30"), 10) || 30, 365);
+  const since = new Date(Date.now() - days * 24 * 60 * 60_000);
+
+  try {
+    // Fetch all send events in the window, joined to the user for conversion info.
+    // Each row represents one recovery email that was actually dispatched.
+    const events = await db
+      .select({
+        eventId:            recoveryEmailEventsTable.id,
+        userId:             recoveryEmailEventsTable.userId,
+        planName:           recoveryEmailEventsTable.planName,
+        sentAt:             recoveryEmailEventsTable.sentAt,
+        currentPlan:        usersTable.plan,
+        recoveryConvertedAt: usersTable.recoveryConvertedAt,
+      })
+      .from(recoveryEmailEventsTable)
+      .leftJoin(usersTable, eq(recoveryEmailEventsTable.userId, usersTable.id))
+      .where(gte(recoveryEmailEventsTable.sentAt, since))
+      .orderBy(asc(recoveryEmailEventsTable.sentAt));
+
+    const emailsSent = events.length;
+
+    // Identify each unique user who converted: recoveryConvertedAt must be
+    // set AND must fall on or after at least one of their send events in the
+    // window. We record the first qualifying event per user so the conversion
+    // is attributed to a specific plan offer (last-touch would be e.sentAt <=
+    // recoveryConvertedAt with the latest sentAt, but earliest keeps it simple
+    // and deterministic). A user who received 3 emails and then subscribed
+    // counts as exactly 1 conversion regardless of how many sends qualified.
+    const convertedUserMap = new Map<string, typeof events[0]>();
+    for (const e of events) {
+      if (
+        e.recoveryConvertedAt !== null &&
+        new Date(e.recoveryConvertedAt) >= new Date(e.sentAt) &&
+        !convertedUserMap.has(e.userId)
+      ) {
+        convertedUserMap.set(e.userId, e);
+      }
+    }
+    const conversions = convertedUserMap.size;
+    const conversionRate = emailsSent > 0 ? Math.round((conversions / emailsSent) * 10000) / 100 : 0;
+
+    // MRR: one entry per unique converted user priced by their current plan.
+    let mrrCents = 0;
+    for (const e of convertedUserMap.values()) {
+      mrrCents += PLAN_PRICE_CENTS[e.currentPlan ?? ""] ?? 0;
+    }
+
+    // Per-plan breakdown keyed by plan offered in the recovery email.
+    // Sends are counted per event; conversions are counted per unique user
+    // attributed to the plan they were offered when they converted.
+    const planMap: Record<string, { emailsSent: number; conversions: number }> = {};
+    for (const e of events) {
+      const p = e.planName;
+      if (!planMap[p]) planMap[p] = { emailsSent: 0, conversions: 0 };
+      planMap[p].emailsSent++;
+    }
+    for (const e of convertedUserMap.values()) {
+      const p = e.planName;
+      if (!planMap[p]) planMap[p] = { emailsSent: 0, conversions: 0 };
+      planMap[p].conversions++;
+    }
+    const byPlan = Object.entries(planMap).map(([plan, stats]) => ({
+      plan,
+      emailsSent: stats.emailsSent,
+      conversions: stats.conversions,
+      conversionRate:
+        stats.emailsSent > 0
+          ? Math.round((stats.conversions / stats.emailsSent) * 10000) / 100
+          : 0,
+    }));
+
+    res.json({
+      windowDays: days,
+      emailsSent,
+      conversions,
+      conversionRate,
+      mrrCents,
+      mrrDollars: Math.round(mrrCents / 100),
+      byPlan,
+    });
+  } catch (err: any) {
+    console.error("[admin/recovery-stats]", err);
+    res.status(500).json({ error: err.message ?? "Failed to load recovery stats" });
   }
 });
 

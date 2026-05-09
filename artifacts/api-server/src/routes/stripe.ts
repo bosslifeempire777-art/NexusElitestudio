@@ -160,8 +160,9 @@ export async function mintCheckoutUrlForUser(opts: {
   userId: string;
   planName: string;
   baseUrl: string;
+  src?: string;
 }): Promise<string | null> {
-  const { userId, planName, baseUrl } = opts;
+  const { userId, planName, baseUrl, src } = opts;
   const priceId = STRIPE_PRICE_IDS[planName];
   if (!priceId) return null;
 
@@ -184,14 +185,14 @@ export async function mintCheckoutUrlForUser(opts: {
   let session;
   try {
     session = await stripeService.createCheckoutSession(
-      customerId, priceId, successUrl, cancelUrl, couponId, userId,
+      customerId, priceId, successUrl, cancelUrl, couponId, userId, src,
     );
   } catch (e: any) {
     const msg = String(e?.message ?? '');
     if (couponId && /coupon|promotion/i.test(msg)) {
       console.warn(`[stripe-checkout] coupon "${couponId}" failed (${msg}); retrying without coupon`);
       session = await stripeService.createCheckoutSession(
-        customerId, priceId, successUrl, cancelUrl, undefined, userId,
+        customerId, priceId, successUrl, cancelUrl, undefined, userId, src,
       );
     } else {
       throw e;

@@ -17,6 +17,8 @@ export const usersTable = pgTable("users", {
   referralCode: text("referral_code").unique(),
   creditBalance: integer("credit_balance").notNull().default(0),
   lastRecoveryEmailAt: timestamp("last_recovery_email_at"),
+  recoveryEmailSentPlan: text("recovery_email_sent_plan"),
+  recoveryConvertedAt: timestamp("recovery_converted_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

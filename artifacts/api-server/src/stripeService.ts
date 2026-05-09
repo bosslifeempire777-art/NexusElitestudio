@@ -17,6 +17,7 @@ export class StripeService {
     cancelUrl: string,
     couponId?: string,
     userId?: string,
+    src?: string,
   ) {
     const stripe = await getUncachableStripeClient();
     // Offer multiple payment methods so buyers without a credit card can
@@ -26,6 +27,10 @@ export class StripeService {
     //   - link              — one-tap email-based reuse for returning buyers
     //   - cashapp           — popular non-card option in the US
     //   - us_bank_account   — ACH direct debit (lower fees, no card needed)
+    const sessionMetadata: Record<string, string> = {};
+    if (userId) sessionMetadata.userId = userId;
+    if (src)    sessionMetadata.src    = src;
+
     return await stripe.checkout.sessions.create({
       customer: customerId,
       payment_method_types: ['card', 'link', 'cashapp', 'us_bank_account'],
@@ -33,12 +38,12 @@ export class StripeService {
       mode: 'subscription',
       success_url: successUrl,
       cancel_url: cancelUrl,
-      // Embed userId in BOTH the session and the subscription so the webhook
-      // handler can map a payment back to our internal user even when the
-      // customer object's metadata is missing.
-      ...(userId ? {
-        metadata: { userId },
-        subscription_data: { metadata: { userId } },
+      // Embed userId (and optional src tag) in BOTH the session and the
+      // subscription so the webhook handler can map a payment back to our
+      // internal user even when the customer object's metadata is missing.
+      ...(Object.keys(sessionMetadata).length > 0 ? {
+        metadata: sessionMetadata,
+        subscription_data: { metadata: sessionMetadata },
       } : {}),
       ...(couponId ? { discounts: [{ coupon: couponId }] } : {}),
       allow_promotion_codes: couponId ? false : true,
