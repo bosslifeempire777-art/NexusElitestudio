@@ -130,11 +130,75 @@ router.get('/promo', (_req, res) => {
 /* ── Auth-protected: checkout, portal, subscription ─────────── */
 
 /* ── Stripe price ID lookup from env (set these after creating Stripe products) ── */
-const STRIPE_PRICE_IDS: Record<string, string> = {
+export const STRIPE_PRICE_IDS: Record<string, string> = {
   starter: process.env.STRIPE_PRICE_STARTER || "",
   pro:     process.env.STRIPE_PRICE_PRO     || "",
   elite:   process.env.STRIPE_PRICE_ELITE   || "",
 };
+
+/**
+ * Pick a sane public-facing base URL when we don't have an HTTP request to
+ * source it from (e.g. Stripe webhook → recovery email). Falls back to the
+ * configured custom domain, then the first REPLIT_DOMAINS entry.
+ */
+export function defaultPublicBaseUrl(): string {
+  const host = process.env.CUSTOM_DOMAIN
+    || process.env.REPLIT_DOMAINS?.split(',')[0]?.trim()
+    || process.env.REPLIT_DEV_DOMAIN
+    || 'nexuselitestudio.com';
+  return `https://${host}`;
+}
+
+/**
+ * Mint a fresh Stripe Checkout URL for an existing user + plan. Shared by
+ * the interactive `/checkout` route and by the cart-recovery email path
+ * triggered from the `checkout.session.expired` webhook. Re-applies the
+ * launch promo coupon when it's still active (per task spec) and falls back
+ * to a coupon-less session if Stripe rejects the coupon.
+ */
+export async function mintCheckoutUrlForUser(opts: {
+  userId: string;
+  planName: string;
+  baseUrl: string;
+}): Promise<string | null> {
+  const { userId, planName, baseUrl } = opts;
+  const priceId = STRIPE_PRICE_IDS[planName];
+  if (!priceId) return null;
+
+  const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+  if (!user) return null;
+
+  let customerId = user.stripeCustomerId ?? undefined;
+  if (!customerId) {
+    const customer = await stripeService.createCustomer(user.email ?? `${userId}@nexuselite.local`, userId);
+    await db.update(usersTable)
+      .set({ stripeCustomerId: customer.id })
+      .where(eq(usersTable.id, userId));
+    customerId = customer.id;
+  }
+
+  const successUrl = `${baseUrl}/dashboard?upgrade=success`;
+  const cancelUrl  = `${baseUrl}/pricing?upgrade=cancel&plan=${encodeURIComponent(planName)}`;
+  const couponId   = isPromoActive() ? LAUNCH_PROMO.couponId : undefined;
+
+  let session;
+  try {
+    session = await stripeService.createCheckoutSession(
+      customerId, priceId, successUrl, cancelUrl, couponId, userId,
+    );
+  } catch (e: any) {
+    const msg = String(e?.message ?? '');
+    if (couponId && /coupon|promotion/i.test(msg)) {
+      console.warn(`[stripe-checkout] coupon "${couponId}" failed (${msg}); retrying without coupon`);
+      session = await stripeService.createCheckoutSession(
+        customerId, priceId, successUrl, cancelUrl, undefined, userId,
+      );
+    } else {
+      throw e;
+    }
+  }
+  return session.url ?? null;
+}
 
 router.post('/checkout', requireAuth, async (req, res) => {
   try {
@@ -146,8 +210,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
       return;
     }
 
-    const priceId = STRIPE_PRICE_IDS[planName];
-    if (!priceId) {
+    if (!STRIPE_PRICE_IDS[planName]) {
       res.status(400).json({
         error: 'stripe_not_configured',
         message: `Stripe price ID for plan "${planName}" is not configured. Set STRIPE_PRICE_${planName.toUpperCase()} in environment secrets.`,
@@ -158,54 +221,16 @@ router.post('/checkout', requireAuth, async (req, res) => {
     const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
     if (!user) { res.status(404).json({ error: 'User not found' }); return; }
 
-    let customerId = (user as any).stripeCustomerId as string | undefined;
-
-    if (!customerId) {
-      const customer = await stripeService.createCustomer(user.email ?? `${userId}@nexuselite.local`, userId);
-      await db.update(usersTable)
-        .set({ stripeCustomerId: customer.id } as any)
-        .where(eq(usersTable.id, userId));
-      customerId = customer.id;
-    }
-
     // Multi-domain: use the actual origin the user came from so they get sent
     // back to the SAME website after checkout. Allowlist matches both
     // nexuselitestudio.com and nexuselitestudio.nexus, plus the *.replit.dev
     // dev preview, falling back to CUSTOM_DOMAIN if origin is missing.
     const baseUrl = resolveBaseUrl(req);
 
-    // Try with launch promo coupon first; if Stripe rejects the coupon
-    // (deleted, expired, or never existed), retry without it so checkout
-    // doesn't break for the customer.
-    const couponId = isPromoActive() ? LAUNCH_PROMO.couponId : undefined;
-    let session;
-    try {
-      session = await stripeService.createCheckoutSession(
-        customerId,
-        priceId,
-        `${baseUrl}/dashboard?upgrade=success`,
-        `${baseUrl}/pricing?upgrade=cancel&plan=${encodeURIComponent(planName)}`,
-        couponId,
-        userId,
-      );
-    } catch (e: any) {
-      const msg = String(e?.message ?? '');
-      if (couponId && /coupon|promotion/i.test(msg)) {
-        console.warn(`[stripe-checkout] coupon "${couponId}" failed (${msg}); retrying without coupon`);
-        session = await stripeService.createCheckoutSession(
-          customerId,
-          priceId,
-          `${baseUrl}/dashboard?upgrade=success`,
-          `${baseUrl}/pricing?upgrade=cancel&plan=${encodeURIComponent(planName)}`,
-          undefined,
-          userId,
-        );
-      } else {
-        throw e;
-      }
-    }
+    const url = await mintCheckoutUrlForUser({ userId, planName, baseUrl });
+    if (!url) { res.status(500).json({ error: 'Failed to create checkout session' }); return; }
 
-    res.json({ url: session.url });
+    res.json({ url });
   } catch (err: any) {
     console.error('Checkout error:', err.message);
     res.status(500).json({ error: err.message });

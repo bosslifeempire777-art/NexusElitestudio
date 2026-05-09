@@ -1,8 +1,11 @@
 import type Stripe from 'stripe';
 import { db } from '@workspace/db';
 import { usersTable } from '@workspace/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { getStripeSync, getUncachableStripeClient } from './stripeClient.js';
+import { defaultPublicBaseUrl, mintCheckoutUrlForUser } from './routes/stripe.js';
+import { sendRecoveryEmail } from './lib/recoveryEmail.js';
+import { LAUNCH_PROMO, isPromoActive } from './lib/promo.js';
 
 /**
  * Reverse map: Stripe price_id -> plan name in our DB.
@@ -174,6 +177,17 @@ export class WebhookHandlers {
         break;
       }
 
+      case 'checkout.session.expired': {
+        // Cart-recovery: Stripe sends this ~24h after a Checkout Session was
+        // created if the buyer never completed payment. We email the user a
+        // fresh checkout link (re-applying the launch promo if still active),
+        // capped at one recovery email per user per 7 days so we don't spam.
+        const session = event.data.object as Stripe.Checkout.Session;
+        if (session.mode !== 'subscription') break;
+        await handleCheckoutSessionExpired(stripe, session, map);
+        break;
+      }
+
       case 'customer.subscription.deleted': {
         const sub = event.data.object as Stripe.Subscription;
         const userId = await resolveUserId(stripe, sub.customer as string, sub.metadata?.userId);
@@ -186,5 +200,102 @@ export class WebhookHandlers {
         /* not interesting — already mirrored by sync */
         break;
     }
+  }
+}
+
+const RECOVERY_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Handle a Stripe `checkout.session.expired` event for a subscription
+ * checkout. Looks up the originating user, figures out which plan they were
+ * trying to buy, mints a fresh Checkout URL (re-applying the launch promo
+ * if still active), and emails them — at most once per 7 days.
+ */
+async function handleCheckoutSessionExpired(
+  stripe: Stripe,
+  session: Stripe.Checkout.Session,
+  priceMap: Record<string, string>,
+): Promise<void> {
+  const customerId = session.customer as string | null;
+  const userId = await resolveUserId(stripe, customerId, session.metadata?.userId);
+  if (!userId) {
+    console.log('[stripe-webhook] checkout.session.expired: no userId resolved, skipping recovery email');
+    return;
+  }
+
+  const user = await db.query.usersTable.findFirst({ where: eq(usersTable.id, userId) });
+  if (!user) return;
+  if (!user.email) {
+    console.log(`[stripe-webhook] expired session for user ${userId} but no email on file, skipping`);
+    return;
+  }
+  // Don't bother chasing users who already converted between session
+  // creation and the 24h expiry window.
+  if (user.plan && user.plan !== 'free') return;
+
+  // Figure out which plan the buyer was attempting. Stripe doesn't include
+  // line_items on the session payload by default, so fetch them explicitly.
+  // We do this BEFORE acquiring the cooldown lock so we don't burn a 7-day
+  // slot on a session whose plan we can't even identify.
+  let planName: string | undefined;
+  try {
+    const lineItems = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
+    const priceId = lineItems.data[0]?.price?.id ?? '';
+    planName = priceMap[priceId];
+  } catch (err: any) {
+    console.warn(`[stripe-webhook] could not fetch line items for ${session.id}: ${err.message}`);
+  }
+  if (!planName) {
+    console.log(`[stripe-webhook] expired session ${session.id}: could not determine plan, skipping`);
+    return;
+  }
+
+  // Atomic cooldown lock: claim the 7-day slot via a single conditional
+  // UPDATE that only succeeds when the previous send is null or older than
+  // the cooldown window. Anything else (concurrent expired-session events,
+  // Stripe webhook retries after a downstream failure, replays of the same
+  // event id) loses the race and exits without sending. This is the only
+  // way to keep "at most one email per user per 7 days" honest under
+  // realistic retry / concurrency conditions — checking in memory and
+  // writing after the send is racy and double-fires on retry.
+  const previousSentAt = user.lastRecoveryEmailAt;
+  const cooldownCutoff = new Date(Date.now() - RECOVERY_COOLDOWN_MS);
+  const claimed = await db.update(usersTable)
+    .set({ lastRecoveryEmailAt: new Date() })
+    .where(and(
+      eq(usersTable.id, userId),
+      or(isNull(usersTable.lastRecoveryEmailAt), lt(usersTable.lastRecoveryEmailAt, cooldownCutoff)),
+    ))
+    .returning({ id: usersTable.id });
+
+  if (claimed.length === 0) {
+    console.log(`[stripe-webhook] recovery email suppressed for user ${userId} (within 7d cooldown or lost race)`);
+    return;
+  }
+
+  try {
+    const baseUrl = defaultPublicBaseUrl();
+    const checkoutUrl = await mintCheckoutUrlForUser({ userId, planName, baseUrl });
+    if (!checkoutUrl) {
+      throw new Error('failed to mint recovery checkout URL');
+    }
+
+    await sendRecoveryEmail({
+      to: user.email,
+      username: user.username ?? null,
+      planName,
+      checkoutUrl,
+      promoActive: isPromoActive(),
+      discountPercent: LAUNCH_PROMO.discountPercent,
+    });
+  } catch (err: any) {
+    // Send failed — release the cooldown slot by restoring the previous
+    // timestamp so a Stripe retry (or a future expired session) can try
+    // again instead of being silently locked out for 7 days.
+    console.error(`[stripe-webhook] recovery email send failed for user ${userId}: ${err.message}; releasing cooldown lock`);
+    await db.update(usersTable)
+      .set({ lastRecoveryEmailAt: previousSentAt ?? null })
+      .where(eq(usersTable.id, userId));
+    throw err;
   }
 }

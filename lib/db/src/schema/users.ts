@@ -16,6 +16,7 @@ export const usersTable = pgTable("users", {
   stripeSubscriptionId: text("stripe_subscription_id"),
   referralCode: text("referral_code").unique(),
   creditBalance: integer("credit_balance").notNull().default(0),
+  lastRecoveryEmailAt: timestamp("last_recovery_email_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
