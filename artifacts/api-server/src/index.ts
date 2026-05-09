@@ -1,4 +1,5 @@
 import app from "./app";
+import { ensureMainSchema } from "./ensure-schema.js";
 import { ensureAdminAccount } from "./seed-admin.js";
 import { db } from "@workspace/db";
 import { projectsTable } from "@workspace/db/schema";
@@ -147,18 +148,24 @@ async function recoverStuckBuilds(): Promise<void> {
   }
 }
 
-app.listen(port, async () => {
-  console.log(`Server listening on port ${port}`);
+// Apply schema and seed data BEFORE the server opens its port so that no
+// inbound request can race against a missing table.
+void (async () => {
+  await ensureMainSchema();
   await ensureAdminAccount();
-  await ensureStripeSyncSchema();
-  await recoverStuckBuilds();
-  startRenderPoller();
-  // Best-effort Stripe sanity check — verifies key mode and that all
-  // configured price IDs exist in the same mode. Logs only; never throws.
-  void checkStripeConfig().catch(err =>
-    console.warn("[stripe-config] check failed:", err?.message ?? err),
-  );
-  void checkEmailConfig().catch(err =>
-    console.warn("[email-config] check failed:", err?.message ?? err),
-  );
-});
+
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+    ensureStripeSyncSchema();
+    void recoverStuckBuilds();
+    startRenderPoller();
+    // Best-effort Stripe sanity check — verifies key mode and that all
+    // configured price IDs exist in the same mode. Logs only; never throws.
+    void checkStripeConfig().catch(err =>
+      console.warn("[stripe-config] check failed:", err?.message ?? err),
+    );
+    void checkEmailConfig().catch(err =>
+      console.warn("[email-config] check failed:", err?.message ?? err),
+    );
+  });
+})();
