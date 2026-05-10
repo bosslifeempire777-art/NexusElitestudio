@@ -4,7 +4,8 @@ import { execSync } from "child_process";
 
 const connectors = new ReplitConnectors();
 const WORKSPACE = "/home/runner/workspace";
-const REPO_NAME = "nexuselite-ai-studio";
+const REPO_NAME = "NexusElitestudio";
+const GITHUB_OWNER = "bosslifeempire777-art"; // must match the Render-watched repo owner
 const MAX_FILE_BYTES = 50 * 1024; // skip files > 50 KB (proxy body limit ~100 KB)
 
 async function gh(endpoint, options = {}) {
@@ -37,7 +38,14 @@ console.log("🔍 Fetching GitHub user...");
 const user = await gh("/user");
 console.log(`✅ Authenticated as: ${user.login}`);
 
-const repoPath = `/repos/${user.login}/${REPO_NAME}`;
+if (user.login !== GITHUB_OWNER) {
+  throw new Error(
+    `GitHub account mismatch: connected as "${user.login}" but GITHUB_OWNER is "${GITHUB_OWNER}". ` +
+    `Update GITHUB_OWNER or reconnect the correct GitHub account.`
+  );
+}
+
+const repoPath = `/repos/${GITHUB_OWNER}/${REPO_NAME}`;
 
 // ── 2. Collect files ──────────────────────────────────────────────────────────
 console.log("📂 Collecting files...");
