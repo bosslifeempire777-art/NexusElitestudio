@@ -7,10 +7,10 @@ import { chatViaSdk } from "./openrouterSdk.js";
 // Paid models first (use your OpenRouter balance), free-tier (:free) as
 // safety net so builds keep working even if the balance hits $0.
 const CODE_MODELS = [
-  "google/gemini-2.0-flash-001",            // #1 — confirmed working in prod
-  "google/gemini-2.5-flash",                // #2 — newer Gemini
-  "anthropic/claude-sonnet-4.6",            // #3 — quality (uses credits)
-  "moonshotai/kimi-k2.6",                   // #4 — strong coder
+  "moonshotai/kimi-k2.6",                   // #1 — strong coder, leads chain
+  "google/gemini-2.0-flash-001",            // #2 — confirmed working in prod
+  "google/gemini-2.5-flash",                // #3 — newer Gemini
+  "anthropic/claude-sonnet-4.6",            // #4 — quality (uses credits)
   "openai/gpt-4.1",                         // #5 — GPT fallback
   "qwen/qwen3-coder:free",                  // #6 FREE — no credits needed
   "openai/gpt-oss-120b:free",               // #7 FREE — 120B fallback
@@ -18,9 +18,9 @@ const CODE_MODELS = [
 ];
 
 const CHAT_MODELS = [
-  "google/gemini-2.0-flash-001",            // #1 — fast, confirmed working
-  "anthropic/claude-sonnet-4.6",            // #2 — quality replies
-  "moonshotai/kimi-k2.6",                   // #3 — strong fallback
+  "moonshotai/kimi-k2.6",                   // #1 — leads chain
+  "google/gemini-2.0-flash-001",            // #2 — fast, confirmed working
+  "anthropic/claude-sonnet-4.6",            // #3 — quality replies
   "google/gemini-2.5-flash",                // #4 — Gemini fallback
   "meta-llama/llama-3.3-70b-instruct:free", // #5 FREE — no credits needed
   "qwen/qwen3-coder:free",                  // #6 FREE — last resort
