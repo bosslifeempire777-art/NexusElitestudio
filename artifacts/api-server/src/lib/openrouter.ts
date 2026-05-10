@@ -7,9 +7,9 @@ import { chatViaSdk } from "./openrouterSdk.js";
 // Paid models first (use your OpenRouter balance), free-tier (:free) as
 // safety net so builds keep working even if the balance hits $0.
 const CODE_MODELS = [
-  "moonshotai/kimi-k2.6",                   // #1 — strong coder, leads chain
-  "google/gemini-2.0-flash-001",            // #2 — confirmed working in prod
-  "google/gemini-2.5-flash",                // #3 — newer Gemini
+  "google/gemini-2.0-flash-001",            // #1 — confirmed working every time
+  "google/gemini-2.5-flash",                // #2 — newer Gemini
+  "moonshotai/kimi-k2.6",                   // #3 — strong coder (falls back if slow)
   "anthropic/claude-sonnet-4.6",            // #4 — quality (uses credits)
   "openai/gpt-4.1",                         // #5 — GPT fallback
   "qwen/qwen3-coder:free",                  // #6 FREE — no credits needed
@@ -18,10 +18,10 @@ const CODE_MODELS = [
 ];
 
 const CHAT_MODELS = [
-  "moonshotai/kimi-k2.6",                   // #1 — leads chain
-  "google/gemini-2.0-flash-001",            // #2 — fast, confirmed working
-  "anthropic/claude-sonnet-4.6",            // #3 — quality replies
-  "google/gemini-2.5-flash",                // #4 — Gemini fallback
+  "google/gemini-2.0-flash-001",            // #1 — fast, confirmed working
+  "google/gemini-2.5-flash",                // #2 — newer Gemini
+  "moonshotai/kimi-k2.6",                   // #3 — quality (falls back if slow)
+  "anthropic/claude-sonnet-4.6",            // #4 — quality replies
   "meta-llama/llama-3.3-70b-instruct:free", // #5 FREE — no credits needed
   "qwen/qwen3-coder:free",                  // #6 FREE — last resort
 ];
@@ -501,6 +501,7 @@ Return the updated memory JSON.`;
 
     const raw = data.choices?.[0]?.message?.content || "";
     const cleaned = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    if (!cleaned) throw new Error("empty response from model");
     const parsed = JSON.parse(cleaned);
 
     const norm = (v: any): string[] =>
