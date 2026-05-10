@@ -1,34 +1,37 @@
 import { chatViaSdk } from "./openrouterSdk.js";
 
-// Model fallback chain:
-// 1. openrouter/auto  — OpenRouter picks best paid model (30s timeout: fails
-//    fast at $0 credits instead of hanging the full 120s)
-// 2. Paid fallbacks   — confirmed working models
-// 3. :free models     — zero-credit models, always available as safety net
-//    so builds keep working even when the OpenRouter balance hits $0.
+// Fallback chain — openrouter/auto removed (it times out on every request
+// wasting 30s before falling through). Going direct to confirmed-working
+// models eliminates the Cloudflare timeout and wasted wait time.
+//
+// Paid models first (use your OpenRouter balance), free-tier (:free) as
+// safety net so builds keep working even if the balance hits $0.
 const CODE_MODELS = [
-  "openrouter/auto",                    // #1 paid — auto-route (30s, fail fast)
-  "google/gemini-2.0-flash-001",        // #2 paid — confirmed working
-  "deepseek/deepseek-chat",             // #3 paid — fallback
-  "qwen/qwen3-coder:free",              // #4 FREE — strong coder, no credits
-  "openai/gpt-oss-120b:free",           // #5 FREE — 120B model, no credits
-  "meta-llama/llama-3.3-70b-instruct:free", // #6 FREE — last resort
+  "google/gemini-2.0-flash-001",            // #1 — confirmed working in prod
+  "google/gemini-2.5-flash",                // #2 — newer Gemini
+  "anthropic/claude-sonnet-4.6",            // #3 — quality (uses credits)
+  "moonshotai/kimi-k2.6",                   // #4 — strong coder
+  "openai/gpt-4.1",                         // #5 — GPT fallback
+  "qwen/qwen3-coder:free",                  // #6 FREE — no credits needed
+  "openai/gpt-oss-120b:free",               // #7 FREE — 120B fallback
+  "meta-llama/llama-3.3-70b-instruct:free", // #8 FREE — last resort
 ];
 
 const CHAT_MODELS = [
-  "openrouter/auto",                    // #1 paid — auto-route (30s, fail fast)
-  "google/gemini-2.0-flash-001",        // #2 paid — confirmed working
-  "deepseek/deepseek-chat",             // #3 paid — fallback
-  "meta-llama/llama-3.3-70b-instruct:free", // #4 FREE — strong chat model
-  "qwen/qwen3-coder:free",              // #5 FREE — last resort
+  "google/gemini-2.0-flash-001",            // #1 — fast, confirmed working
+  "anthropic/claude-sonnet-4.6",            // #2 — quality replies
+  "moonshotai/kimi-k2.6",                   // #3 — strong fallback
+  "google/gemini-2.5-flash",                // #4 — Gemini fallback
+  "meta-llama/llama-3.3-70b-instruct:free", // #5 FREE — no credits needed
+  "qwen/qwen3-coder:free",                  // #6 FREE — last resort
 ];
 
 const FETCH_TIMEOUT_MS = 90_000;
 
 function timeoutForModel(model: string): number {
-  if (model === "openrouter/auto") return 30_000; // fail fast at $0 credits
-  if (model.endsWith(":free"))     return 60_000; // free models are usually fast
-  return FETCH_TIMEOUT_MS;
+  if (/opus|sonnet|kimi/i.test(model)) return 90_000; // larger models need more time
+  if (model.endsWith(":free"))         return 60_000; // free models are fast
+  return 60_000;                                       // gemini, gpt-4.1 — fast
 }
 
 function getApiKey(): string | undefined {
