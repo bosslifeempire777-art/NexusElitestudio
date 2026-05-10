@@ -6,7 +6,7 @@ import {
   Users, Database, DollarSign, Activity, Terminal, Send, Loader2,
   Wrench, AlertTriangle, CheckCircle2, RefreshCw, FileCode2, Cpu,
   ChevronRight, RotateCcw, ShieldAlert, Crown, Search, UserCheck, UserX, Gift,
-  Radio, UserPlus, Hammer, Box, Coins, Globe2,
+  Radio, UserPlus, Hammer, Box, Coins, Globe2, MailCheck,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { getToken } from "@/lib/auth";
@@ -240,6 +240,9 @@ export default function Admin() {
         {/* Referral Overview */}
         <AdminReferrals />
 
+        {/* Cart Recovery Email Performance */}
+        <CartRecovery />
+
         {/* AI Repair Terminal */}
         <RepairTerminal />
       </div>
@@ -313,6 +316,123 @@ function AdminReferrals() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface RecoveryPlanRow {
+  plan: string;
+  emailsSent: number;
+  conversions: number;
+  conversionRate: number;
+}
+
+interface RecoveryStats {
+  windowDays: number;
+  emailsSent: number;
+  conversions: number;
+  conversionRate: number;
+  mrrCents: number;
+  mrrDollars: number;
+  byPlan: RecoveryPlanRow[];
+}
+
+function CartRecovery() {
+  const [data, setData] = useState<RecoveryStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const token = getToken();
+        const r = await fetch("/api/admin/recovery-stats?days=30", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) setData(await r.json() as RecoveryStats);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const PLAN_ORDER = ["starter", "pro", "elite"];
+
+  return (
+    <Card className="border-border">
+      <CardHeader>
+        <CardTitle className="text-sm font-mono text-muted-foreground flex items-center gap-2">
+          <MailCheck className="w-4 h-4 text-cyan-400" />
+          CART RECOVERY — LAST 30 DAYS
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
+            <RefreshCw className="w-4 h-4 animate-spin" /> Loading recovery stats...
+          </div>
+        ) : !data ? (
+          <p className="text-muted-foreground text-sm">No recovery data available.</p>
+        ) : (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-primary">{data.emailsSent}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Emails Sent</div>
+              </div>
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-green-400">{data.conversions}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Conversions</div>
+              </div>
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-cyan-400">{data.conversionRate}%</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Conversion Rate</div>
+              </div>
+              <div className="bg-secondary/20 border border-border/40 rounded p-4 text-center">
+                <div className="text-2xl font-display font-bold text-yellow-400">${data.mrrDollars.toLocaleString()}</div>
+                <div className="text-xs font-mono text-muted-foreground mt-1">Recovered MRR</div>
+              </div>
+            </div>
+
+            {data.byPlan?.length > 0 && (
+              <div>
+                <p className="text-xs font-mono text-muted-foreground uppercase tracking-widest mb-2">Per-Plan Breakdown</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs font-mono text-left">
+                    <thead className="text-[10px] text-muted-foreground uppercase border-b border-border/50">
+                      <tr>
+                        <th className="px-3 py-2">Plan</th>
+                        <th className="px-3 py-2 text-right">Emails Sent</th>
+                        <th className="px-3 py-2 text-right">Conversions</th>
+                        <th className="px-3 py-2 text-right">Conv. Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/30">
+                      {[...data.byPlan]
+                        .sort((a: RecoveryPlanRow, b: RecoveryPlanRow) => PLAN_ORDER.indexOf(a.plan) - PLAN_ORDER.indexOf(b.plan))
+                        .map((row: RecoveryPlanRow) => (
+                          <tr key={row.plan} className="hover:bg-secondary/20 transition-colors">
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={row.plan === "elite" ? "primary" : "outline"}
+                                className="text-[10px] uppercase"
+                              >
+                                {row.plan}
+                              </Badge>
+                            </td>
+                            <td className="px-3 py-2 text-right text-primary">{row.emailsSent}</td>
+                            <td className="px-3 py-2 text-right text-green-400">{row.conversions}</td>
+                            <td className="px-3 py-2 text-right text-cyan-400">{row.conversionRate}%</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
