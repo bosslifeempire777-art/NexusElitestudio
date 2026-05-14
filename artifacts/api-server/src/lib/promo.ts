@@ -1,8 +1,11 @@
 export const LAUNCH_PROMO = {
-  couponId:        "LAUNCH50",
-  discountPercent: 50,
-  // 72-hour flash promo (Apr 30 → May 3 23:59 UTC) — auto-expires after this
-  endsAt:          new Date("2026-05-03T23:59:00Z").getTime(),
+  promoCode:        "LAUNCH7",         // code users type at Stripe checkout
+  couponId:         "LAUNCH7",         // Stripe coupon ID
+  discountFixed:    22,                // $22 off
+  starterFinalPrice: 7,                // Starter becomes $7 first month
+  discountPercent:  0,                 // not percent-based
+  // 3-day signup bonus — created May 14, expires May 17 2026 02:06 UTC
+  endsAt:           1778983573000,
 };
 
 export function isPromoActive(): boolean {

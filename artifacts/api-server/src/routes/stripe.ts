@@ -120,10 +120,12 @@ router.get('/products/:productId/prices', async (req, res) => {
 /* ── Public: launch promo info ─────────────────────────────── */
 router.get('/promo', (_req, res) => {
   res.json({
-    active:          isPromoActive(),
-    discountPercent: LAUNCH_PROMO.discountPercent,
-    endsAt:          LAUNCH_PROMO.endsAt,
-    couponId:        LAUNCH_PROMO.couponId,
+    active:            isPromoActive(),
+    promoCode:         LAUNCH_PROMO.promoCode,
+    discountFixed:     LAUNCH_PROMO.discountFixed,
+    starterFinalPrice: LAUNCH_PROMO.starterFinalPrice,
+    discountPercent:   LAUNCH_PROMO.discountPercent,
+    endsAt:            LAUNCH_PROMO.endsAt,
   });
 });
 
@@ -180,7 +182,9 @@ export async function mintCheckoutUrlForUser(opts: {
 
   const successUrl = `${baseUrl}/dashboard?upgrade=success`;
   const cancelUrl  = `${baseUrl}/pricing?upgrade=cancel&plan=${encodeURIComponent(planName)}`;
-  const couponId   = isPromoActive() ? LAUNCH_PROMO.couponId : undefined;
+  // Promo is user-entered (LAUNCH7 typed at checkout) — never auto-apply so
+  // allow_promotion_codes stays true and the Stripe coupon box stays visible.
+  const couponId   = undefined;
 
   let session;
   try {

@@ -46,7 +46,7 @@ export class StripeService {
         subscription_data: { metadata: sessionMetadata },
       } : {}),
       ...(couponId ? { discounts: [{ coupon: couponId }] } : {}),
-      allow_promotion_codes: couponId ? false : true,
+      allow_promotion_codes: couponId ? false : true, // true when no coupon auto-applied so users can enter LAUNCH7
     });
   }
 

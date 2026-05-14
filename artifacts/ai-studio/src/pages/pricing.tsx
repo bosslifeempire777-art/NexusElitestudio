@@ -5,18 +5,39 @@ import { Card, CardHeader, CardContent, Button, Badge } from "@/components/ui/cy
 import {
   Check, Loader2, Crown, Zap, Rocket, Building2, Star,
   ArrowRight, Sparkles, TrendingUp, Shield, Users, Flame,
-  AlertCircle, X,
+  AlertCircle, X, Copy, Clock,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { getToken } from "@/lib/auth";
+import { PromoBanner } from "@/components/ui/PromoBanner";
+
+type PromoInfo = {
+  active: boolean;
+  promoCode: string;
+  starterFinalPrice: number;
+  discountFixed: number;
+  endsAt: number;
+};
 
 function usePromo() {
-  const [promo, setPromo] = useState<{ active: boolean; discountPercent: number; endsAt: number } | null>(null);
+  const [promo, setPromo] = useState<PromoInfo | null>(null);
   useEffect(() => {
     fetch("/api/stripe/promo").then(r => r.json()).then(setPromo).catch(() => {});
   }, []);
   return promo;
 }
+
+function useCountdown(endsAt: number) {
+  const calc = () => {
+    const diff = endsAt - Date.now();
+    if (diff <= 0) return { h: 0, m: 0, s: 0, expired: true };
+    return { h: Math.floor(diff / 3_600_000), m: Math.floor((diff % 3_600_000) / 60_000), s: Math.floor((diff % 60_000) / 1_000), expired: false };
+  };
+  const [t, setT] = useState(calc);
+  useEffect(() => { const id = setInterval(() => setT(calc()), 1_000); return () => clearInterval(id); }, [endsAt]);
+  return t;
+}
+const pad = (n: number) => String(n).padStart(2, "0");
 
 const PLAN_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   free:    Star,
@@ -100,6 +121,7 @@ export default function Pricing() {
 
   return (
     <AppLayout>
+      <PromoBanner />
       <div className="max-w-7xl mx-auto py-12">
 
         {/* Header */}
@@ -159,6 +181,11 @@ export default function Pricing() {
           <div className="mb-8 max-w-lg mx-auto bg-destructive/10 border border-destructive/30 rounded-lg px-4 py-3 text-sm text-destructive font-mono text-center">
             {checkoutError}
           </div>
+        )}
+
+        {/* 3-Day promo callout */}
+        {promoActive && promo && (
+          <PromoCallout promo={promo} />
         )}
 
         {/* Plans grid */}
@@ -408,5 +435,66 @@ export default function Pricing() {
 
       </div>
     </AppLayout>
+  );
+}
+
+/* ── Promo callout component (shown on pricing page while deal is active) ── */
+function PromoCallout({ promo }: { promo: PromoInfo }) {
+  const countdown = useCountdown(promo.endsAt);
+  const [copied, setCopied] = useState(false);
+
+  if (countdown.expired) return null;
+
+  const copy = () => {
+    navigator.clipboard.writeText(promo.promoCode).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2_000);
+  };
+
+  return (
+    <div className="mb-8 relative overflow-hidden rounded-2xl border border-yellow-500/50 bg-gradient-to-br from-yellow-500/10 via-orange-500/5 to-transparent p-6">
+      {/* Glow decoration */}
+      <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-yellow-500/10 blur-2xl pointer-events-none" />
+
+      <div className="flex flex-col md:flex-row items-center gap-6">
+        {/* Left: text */}
+        <div className="flex-1 text-center md:text-left">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-xs font-mono mb-3">
+            <Flame className="w-3 h-3 animate-pulse" />
+            3-DAY SIGNUP BONUS · ENDS IN {pad(countdown.h)}:{pad(countdown.m)}:{pad(countdown.s)}
+          </div>
+          <h2 className="text-2xl md:text-3xl font-black text-white mb-1">
+            First month of Starter for{" "}
+            <span className="text-yellow-300">$7</span>
+            <span className="text-muted-foreground line-through text-lg ml-2">${29}</span>
+          </h2>
+          <p className="text-sm text-muted-foreground/80 font-mono">
+            Enter the code below at checkout. One-time discount — regular billing resumes after month one.
+          </p>
+        </div>
+
+        {/* Right: code + CTA */}
+        <div className="flex flex-col items-center gap-3 shrink-0">
+          <button
+            onClick={copy}
+            className="group flex items-center gap-3 px-5 py-3 rounded-xl border-2 border-yellow-400/60 bg-yellow-400/10 hover:bg-yellow-400/20 transition-all cursor-pointer"
+            title="Click to copy"
+          >
+            <span className="font-mono text-2xl font-black tracking-widest text-yellow-300">
+              {promo.promoCode}
+            </span>
+            <span className="text-muted-foreground group-hover:text-yellow-300 transition-colors">
+              {copied
+                ? <Check className="w-5 h-5 text-green-400" />
+                : <Copy className="w-5 h-5" />
+              }
+            </span>
+          </button>
+          <span className="text-xs text-muted-foreground font-mono">
+            {copied ? "✓ Code copied!" : "Click to copy · apply at checkout"}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
