@@ -1,4 +1,6 @@
 import { chatViaSdk } from "./openrouterSdk.js";
+import { db } from "@workspace/db";
+import { agentModelAssignmentsTable } from "@workspace/db/schema";
 
 // Fallback chain — openrouter/auto removed (it times out on every request
 // wasting 30s before falling through). Going direct to confirmed-working
@@ -27,6 +29,49 @@ const CHAT_MODELS = [
 ];
 
 const FETCH_TIMEOUT_MS = 90_000;
+
+/* ── Agent-assignment lookup ──────────────────────────────────────────────
+ * Reads the admin's per-agent model choices from the DB (set in Command Center
+ * → Built-in Agents tab). Results are cached for 30 s to avoid a DB hit on
+ * every single request. Returns a model list with the admin's chosen models
+ * prepended so they run FIRST, with the default fallback chain behind them.
+ * ─────────────────────────────────────────────────────────────────────── */
+let _agentCache: { ts: number; map: Record<string, string> } | null = null;
+const AGENT_CACHE_MS = 30_000;
+
+async function getAgentAssignments(): Promise<Record<string, string>> {
+  if (_agentCache && Date.now() - _agentCache.ts < AGENT_CACHE_MS) {
+    return _agentCache.map;
+  }
+  try {
+    const rows = await db.select().from(agentModelAssignmentsTable);
+    const map: Record<string, string> = {};
+    for (const r of rows) map[r.agentId] = r.model;
+    _agentCache = { ts: Date.now(), map };
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Returns a deduplicated model list with admin-assigned agent models prepended.
+ * If no assignments exist the default fallback list is used unchanged.
+ */
+async function modelsForAgents(agentIds: string[], fallback: string[]): Promise<string[]> {
+  const assignments = await getAgentAssignments();
+  const pinned: string[] = [];
+  for (const id of agentIds) {
+    const m = assignments[id];
+    if (m && !pinned.includes(m)) pinned.push(m);
+  }
+  if (pinned.length > 0) {
+    const tag = pinned.map(m => `[cc:${agentIds[0]}=${m}]`).join(" ");
+    console.log(`Command Center override — ${tag}`);
+  }
+  const rest = fallback.filter(m => !pinned.includes(m));
+  return [...pinned, ...rest];
+}
 
 function timeoutForModel(model: string): number {
   if (/opus|sonnet|kimi/i.test(model)) return 90_000; // larger models need more time
@@ -169,6 +214,7 @@ User's requirements: ${prompt}
 Include multiple screens/sections, realistic data, working UI interactions, and a professional visual design.`;
 
   try {
+    const models = await modelsForAgents(["code-generator", "orchestrator"], CODE_MODELS);
     const { data, model } = await callOpenRouter(
       {
         messages: [
@@ -178,7 +224,7 @@ Include multiple screens/sections, realistic data, working UI interactions, and 
         temperature: 0.7,
         max_tokens: 8000,
       },
-      CODE_MODELS,
+      models,
       FETCH_TIMEOUT_MS,
       API_KEY,
     );
@@ -256,6 +302,7 @@ Apply this change: ${changeRequest}
 Output the complete updated HTML file with the change applied. Keep everything else exactly the same. Honor every prior decision recorded in PROJECT MEMORY above — do not undo or contradict completed work.`;
 
   try {
+    const models = await modelsForAgents(["code-generator", "code-repair"], CODE_MODELS);
     const { data, model } = await callOpenRouter(
       {
         messages: [
@@ -265,7 +312,7 @@ Output the complete updated HTML file with the change applied. Keep everything e
         temperature: 0.5,
         max_tokens: 16000,
       },
-      CODE_MODELS,
+      models,
       FETCH_TIMEOUT_MS,
       API_KEY,
     );
@@ -344,6 +391,7 @@ export async function generateChatResponse(
   }));
 
   try {
+    const chatModels = await modelsForAgents(["orchestrator"], CHAT_MODELS);
     const { data } = await callOpenRouter(
       {
         messages: [
@@ -384,7 +432,7 @@ Length: 4-8 sentences usually. Use line breaks and short bullets when listing op
         temperature: 0.7,
         max_tokens: 500,
       },
-      CHAT_MODELS,
+      chatModels,
       30_000, // 30-second timeout per model attempt
       API_KEY,
     );
@@ -484,6 +532,7 @@ CODE_WAS_CHANGED_THIS_TURN: ${codeWasChanged}
 Return the updated memory JSON.`;
 
   try {
+    const memModels = await modelsForAgents(["orchestrator"], CHAT_MODELS);
     const { data } = await callOpenRouter(
       {
         messages: [
@@ -494,7 +543,7 @@ Return the updated memory JSON.`;
         max_tokens: 800,
         response_format: { type: "json_object" },
       },
-      CHAT_MODELS,
+      memModels,
       25_000,
       API_KEY,
     );
