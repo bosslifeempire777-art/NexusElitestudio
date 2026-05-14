@@ -56,6 +56,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
+      // Refresh the JWT first so any admin grants (VIP, plan changes) take
+      // effect immediately without requiring the user to log out and back in.
+      const refreshRes = await apiFetch("/auth/refresh", { method: "POST" });
+      if (refreshRes.ok) {
+        const data = await refreshRes.json();
+        setToken(data.token);
+        setUser(data.user);
+        return;
+      }
+      // Fallback to /me if refresh fails for any reason
       const res = await apiFetch("/auth/me");
       if (res.ok) {
         setUser(await res.json());

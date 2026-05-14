@@ -220,4 +220,28 @@ router.get("/me", requireAuth, async (req, res) => {
   res.json(userResponse(user));
 });
 
+// Refresh JWT — re-reads isVip / plan / isAdmin from DB and issues a fresh token.
+// Called automatically on app load so admin grants (VIP, plan changes) take effect
+// without requiring the user to log out and back in.
+router.post("/refresh", requireAuth, async (req, res) => {
+  const user = await db.query.usersTable.findFirst({
+    where: eq(usersTable.id, req.auth!.userId),
+  });
+
+  if (!user) {
+    res.status(401).json({ error: "User not found" });
+    return;
+  }
+
+  const token = signToken({
+    userId: user.id,
+    username: user.username,
+    isAdmin: user.isAdmin,
+    isVip: user.isVip,
+    plan: user.plan,
+  });
+
+  res.json({ token, user: userResponse(user) });
+});
+
 export default router;
