@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { projectsTable, usersTable, charactersTable } from "@workspace/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
-import { generateProjectCode, generateChatResponse, generateUpdatedCode, updateProjectMemory, type ProjectMemory, type ChatTurn, type CharacterContext } from "../lib/openrouter.js";
+import { generateProjectCode, generateChatResponse, generateUpdatedCode, generateServerJs, updateProjectMemory, type ProjectMemory, type ChatTurn, type CharacterContext } from "../lib/openrouter.js";
 import { recordUsage, consumeOverageCreditIfNeeded, canPerformBuild } from "../lib/usage.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
@@ -354,8 +354,16 @@ router.get("/:id/preview", async (req, res) => {
         .replace(/&/g, "\\u0026")
         .replace(/\u2028/g, "\\u2028")
         .replace(/\u2029/g, "\\u2029");
+      // Build the platform backend URL for this project (NEXUS_API).
+      // Prefer x-forwarded headers (set by Render / Cloudflare in production).
+      const fwdProto = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
+      const fwdHost  = (req.get("x-forwarded-host") || req.get("host") || "") as string;
+      const nexusApiUrl = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+
       const injection =
         `<script>window.USER_SECRETS = ${safeJson};` +
+        `window.NEXUS_API = "${nexusApiUrl}";` +
+        `window.NEXUS_PROJECT_ID = "${project.id}";` +
         `window.NEXUS_REQUIRE_KEY = function(name){` +
         `if(window.USER_SECRETS && window.USER_SECRETS[name]) return window.USER_SECRETS[name];` +
         `var d=document.createElement('div');` +
@@ -464,18 +472,53 @@ router.get("/:id/download", requireAuth, async (req, res) => {
 
   const zip = new AdmZip();
 
-  zip.addFile("index.html", Buffer.from(project.generatedCode, "utf-8"));
+  // Full-stack ZIP: frontend HTML + Node.js backend server + package.json
+  const serverJs = generateServerJs(project.name);
+  const pkgName  = project.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 50);
+  const pkgJson  = JSON.stringify({
+    name: pkgName,
+    version: "1.0.0",
+    main: "server.js",
+    scripts: { start: "node server.js" },
+    dependencies: { express: "^4.18.2", cors: "^2.8.5" },
+  }, null, 2);
+
+  zip.addFile("public/index.html", Buffer.from(project.generatedCode, "utf-8"));
+  zip.addFile("server.js",         Buffer.from(serverJs, "utf-8"));
+  zip.addFile("package.json",      Buffer.from(pkgJson, "utf-8"));
 
   const readme = [
     `# ${project.name}`,
     ``,
     `**Type:** ${project.type}`,
-    `**Framework:** ${project.framework || "HTML/CSS/JS"}`,
+    `**Framework:** Node.js + Express backend / HTML+CSS+JS frontend`,
     `**Built with:** NexusElite AI Studio`,
     ``,
-    `## How to Run`,
+    `## Run Locally (Full-Stack)`,
     ``,
-    `Open \`index.html\` in any modern browser — no build step required.`,
+    `\`\`\`bash`,
+    `npm install`,
+    `npm start`,
+    `\`\`\``,
+    ``,
+    `Then open **http://localhost:3000** — the backend serves the frontend and`,
+    `provides a real REST database at \`/api/appdata/:collection\` so data persists`,
+    `across sessions (in-memory; resets on process restart).`,
+    ``,
+    `## Deploy to Render / Railway / Fly.io`,
+    ``,
+    `1. Push this folder to a GitHub repository`,
+    `2. Create a new **Web Service** pointing to the repo`,
+    `3. Build command: \`npm install\``,
+    `4. Start command: \`npm start\``,
+    ``,
+    `The \`RENDER_EXTERNAL_URL\` env var is auto-set by Render and used to`,
+    `configure the backend URL the frontend talks to.`,
+    ``,
+    `## Open Without a Server (Static — Limited)`,
+    ``,
+    `Open \`public/index.html\` directly in a browser. Some features (data`,
+    `persistence, multi-user) require the backend to be running.`,
     ``,
     `## Description`,
     ``,
@@ -492,6 +535,110 @@ router.get("/:id/download", requireAuth, async (req, res) => {
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Content-Length", buffer.length);
   res.send(buffer);
+});
+
+// ── NEXUS App Database — public REST API for generated apps ──────────────────
+// No auth required: project_id scopes the data; these are app-level records,
+// not user secrets. The platform stores them in real PostgreSQL (project_app_data).
+// Generated apps call these from window.NEXUS_API in the preview iframe, and
+// the deployed server.js provides the same contract locally on Render.
+
+function appdataCors(res: { setHeader: (k: string, v: string) => void }): void {
+  res.setHeader("Access-Control-Allow-Origin",  "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+router.options("/:id/appdata/:collection",        (_req, res) => { appdataCors(res); res.sendStatus(200); });
+router.options("/:id/appdata/:collection/:docId", (_req, res) => { appdataCors(res); res.sendStatus(200); });
+
+router.get("/:id/appdata/:collection", async (req, res) => {
+  const projectId  = String(req.params.id);
+  const collection = String(req.params.collection);
+  (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    const result = await db.execute(sql`
+      SELECT doc_id AS id, data, created_at, updated_at
+      FROM project_app_data
+      WHERE project_id = ${projectId} AND collection = ${collection}
+      ORDER BY created_at DESC LIMIT 1000
+    `);
+    const rows: any[] = Array.isArray(result) ? result : ((result as any).rows ?? []);
+    res.json(rows.map((r: any) => ({
+      id: r.id ?? r.doc_id,
+      ...(r.data && typeof r.data === "object" ? r.data : {}),
+      _created: r.created_at,
+      _updated: r.updated_at,
+    })));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Database error" });
+  }
+});
+
+router.post("/:id/appdata/:collection", async (req, res) => {
+  const projectId  = String(req.params.id);
+  const collection = String(req.params.collection);
+  const docId      = nanoid();
+  const rowId      = nanoid();
+  const data       = req.body && typeof req.body === "object" ? req.body : {};
+  (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    await db.execute(sql`
+      INSERT INTO project_app_data (id, project_id, collection, doc_id, data)
+      VALUES (${rowId}, ${projectId}, ${collection}, ${docId}, ${JSON.stringify(data)}::jsonb)
+    `);
+    res.status(201).json({ id: docId, ...data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Database error" });
+  }
+});
+
+router.put("/:id/appdata/:collection/:docId", async (req, res) => {
+  const projectId  = String(req.params.id);
+  const collection = String(req.params.collection);
+  const docId      = String(req.params.docId);
+  const data       = req.body && typeof req.body === "object" ? req.body : {};
+  (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    await db.execute(sql`
+      UPDATE project_app_data
+      SET data = ${JSON.stringify(data)}::jsonb, updated_at = NOW()
+      WHERE project_id = ${projectId} AND collection = ${collection} AND doc_id = ${docId}
+    `);
+    res.json({ id: docId, ...data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Database error" });
+  }
+});
+
+router.delete("/:id/appdata/:collection/:docId", async (req, res) => {
+  const projectId  = String(req.params.id);
+  const collection = String(req.params.collection);
+  const docId      = String(req.params.docId);
+  (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    await db.execute(sql`
+      DELETE FROM project_app_data
+      WHERE project_id = ${projectId} AND collection = ${collection} AND doc_id = ${docId}
+    `);
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Database error" });
+  }
+});
+
+// Serve the generated Node.js server.js — downloaded by Render containers at boot
+router.get("/:id/server", async (req, res) => {
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, String(req.params.id)),
+  });
+  if (!project) {
+    res.status(404).type("application/javascript").send("// Project not found");
+    return;
+  }
+  res.setHeader("Content-Type", "application/javascript");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(generateServerJs(project.name));
 });
 
 // Rebuild project

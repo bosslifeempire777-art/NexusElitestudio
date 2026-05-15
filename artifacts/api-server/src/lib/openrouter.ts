@@ -176,22 +176,49 @@ CRITICAL RULES — follow exactly or the game will not work:
 8. The game must be fully playable: keyboard controls (WASD / arrow keys / space), click/touch support, working game loop with requestAnimationFrame.
 9. Include: start screen, main game loop, score tracking, game over screen with restart button.
 10. Make it genuinely fun and visually impressive using canvas gradients, particles, neon glows, and animations.`
-    : `You are an expert full-stack web developer who creates stunning, fully-functional single-file web applications with real backend capabilities.
+    : `You are an expert full-stack web developer who creates stunning, fully-functional single-file web applications with a REAL backend database and complete user flows.
 
 CRITICAL RULES — follow exactly or the output will fail:
 1. Output ONLY raw HTML. No markdown, no code fences, no explanation.
 2. The file must be a single complete HTML document: <!DOCTYPE html><html>...</html>
 3. ALL CSS must be inside <style> tags in <head>. ALL JavaScript inside <script> tags.
-4. NO CDN scripts, no Google Fonts, no external CSS. (You MAY and SHOULD use fetch() to call third-party JSON APIs and backend services.)
+4. NO CDN scripts, no Google Fonts, no external CSS. You MAY use fetch() to call APIs including window.NEXUS_API.
 5. Use ONLY system fonts: -apple-system, 'Segoe UI', Arial, monospace, or sans-serif.
 6. For icons use Unicode emoji or inline SVG only.
-7. The app must be fully interactive — every button must do something, forms must work, navigation must switch views.
-8. Use realistic, plausible data — no placeholder "Lorem ipsum". Make it feel like a real product.
-9. Design must be polished: dark background preferred, smooth animations, hover effects.
-10. localStorage AND IndexedDB ARE available — use them for real data persistence.
-11. BACKEND INTEGRATION: You have full access to real backend APIs via fetch(). When the app needs AI, payments, auth, or data — implement it with real fetch() calls to the appropriate service. Use window.USER_SECRETS.<KEY_NAME> for any API keys.
-12. For AI-powered features: call OpenAI/Anthropic/OpenRouter APIs directly from JavaScript using fetch() with the user's API key from window.USER_SECRETS.
-13. For data that needs to persist across users/sessions (not just localStorage), implement a JSON REST API simulation using localStorage with a proper CRUD structure, or call a real backend if a URL is provided.`;
+7. The app must be fully interactive — every button does something, every form works, navigation switches views.
+8. Use realistic data — no "Lorem ipsum". Make it feel like a real, live product.
+9. Design must be polished: dark background, smooth animations, hover effects, professional UI.
+
+NEXUS PLATFORM BACKEND (MANDATORY — use this for ALL data persistence):
+window.NEXUS_API is a real REST endpoint backed by PostgreSQL, injected at runtime.
+Use it for EVERYTHING. Never use localStorage for app data (only for session tokens and UI prefs).
+
+CRUD pattern — replace 'items' with any collection name (users, posts, products, orders, tasks…):
+  async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }
+  async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
+  async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); }
+  async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }
+
+AUTHENTICATION (build real multi-user auth using the users collection):
+  Register: createRecord('users',{username,email,passwordHash:btoa(unescape(encodeURIComponent(pw))),role:'user',createdAt:Date.now()})
+  Login:    listRecords('users') → find user by email → verify passwordHash → save session:
+            localStorage.setItem('_sess',btoa(JSON.stringify({userId:u.id,username:u.username,role:u.role,exp:Date.now()+86400000*30})))
+  Check:    try{const s=JSON.parse(atob(localStorage.getItem('_sess')||''));if(s.exp>Date.now())return s;}catch{return null;}
+  Scope:    Filter records so users see only their own data: records.filter(r=>r.userId===sess.userId)
+  Logout:   localStorage.removeItem('_sess')
+
+COMPLETE FLOWS — every feature must be end-to-end. No dead ends:
+  - User accounts → build register, login, dashboard, and logout screens
+  - Product catalog → build catalog, detail view, cart, and checkout
+  - CRUD feature → build list, create form, detail view, edit, and delete
+  - Always handle: loading states (spinner while fetching), empty states (CTA when no data), error states
+
+BACKEND INTEGRATIONS:
+  - AI features: fetch OpenAI/Anthropic APIs with window.USER_SECRETS.OPENAI_API_KEY
+  - Payments: use window.USER_SECRETS.STRIPE_PUBLISHABLE_KEY
+  - Missing keys: call window.NEXUS_REQUIRE_KEY('KEY_NAME') — it shows a clear setup guide
+
+DATA DESIGN: Think about schema before coding. Name fields clearly. Include timestamps (createdAt: Date.now()). Scope records by userId when multi-user.`;
 
   const characterBlock = buildCharacterBlock(characters);
   const userPrompt = isGame
@@ -211,7 +238,7 @@ Make it feel like a real arcade game. Zero external dependencies.`
 
 User's requirements: ${prompt}
 
-Include multiple screens/sections, realistic data, working UI interactions, and a professional visual design.`;
+This app has window.NEXUS_API injected — a real PostgreSQL-backed REST endpoint. Use it for ALL data storage; never use localStorage for app data. Build real multi-user functionality (register/login/logout with the users collection) if the app warrants it. Build every feature end-to-end with no dead ends. Handle loading, empty, and error states throughout.`;
 
   try {
     const models = await modelsForAgents(["code-generator", "orchestrator"], CODE_MODELS);
@@ -284,13 +311,16 @@ CRITICAL RULES:
 2. Keep ALL existing game logic, assets and structure intact — only apply the requested change.
 3. No external resources of any kind — no CDN, no external scripts, no external images.
 4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`
-    : `You are an expert web developer. You will receive an existing complete single-file web application and a change request.
+    : `You are an expert full-stack web developer. You will receive an existing complete single-file web application and a change request.
 Output ONLY the complete updated HTML file with the requested changes applied.
 CRITICAL RULES:
 1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
 2. Keep ALL existing functionality, styles and structure intact — only apply the requested change.
-3. No external resources of any kind in the HTML head — no CDN scripts, no external script src, no web fonts. (You MAY call third-party JSON APIs from JavaScript using fetch().)
-4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`;
+3. No external resources of any kind in the HTML head — no CDN scripts, no external script src, no web fonts. (You MAY call APIs using fetch() — including window.NEXUS_API.)
+4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.
+5. PRESERVE all existing window.NEXUS_API calls — never replace them with localStorage.
+6. PRESERVE all window.USER_SECRETS references — never hardcode API keys.
+7. If the requested change requires storing new data, use window.NEXUS_API — not localStorage.${secretsBlock}`;
 
   const characterBlock = buildCharacterBlock(characters);
   const userPrompt = `This is the current code for a ${type} app called "${name}":
@@ -1006,6 +1036,95 @@ function runPipeline(){
   alert('Pipeline started! Check Logs tab.');
 }
 </script></body></html>`;
+}
+
+/**
+ * Generate a self-contained Node.js Express server for a deployed app.
+ *
+ * The server:
+ *   - Provides NEXUS_API-compatible routes backed by in-memory storage
+ *     (same REST contract as the platform's /api/projects/:id/appdata routes)
+ *   - Serves the frontend HTML at all other routes (SPA-style)
+ *   - Rewrites window.NEXUS_API to point to itself when serving index.html
+ *   - Has zero native-compilation dependencies (only express + cors)
+ *
+ * Called at deploy-time to produce a server.js the Render container downloads
+ * and runs, and also included in the ZIP download for self-hosting.
+ */
+export function generateServerJs(name: string): string {
+  const safe = name.replace(/[`\\'"]/g, "").slice(0, 60);
+  return [
+    "'use strict';",
+    "var express = require('express');",
+    "var cors    = require('cors');",
+    "var fs      = require('fs');",
+    "var path    = require('path');",
+    "",
+    "var app  = express();",
+    "var PORT = process.env.PORT || 3000;",
+    "var EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);",
+    "",
+    "// In-memory database — persists across requests, resets on process restart.",
+    "// Keys: collection name → Map<docId, record>",
+    "var store = {};",
+    "function getCol(col) { if (!store[col]) store[col] = {}; return store[col]; }",
+    "function makeId()    { return Math.random().toString(36).slice(2) + Date.now().toString(36); }",
+    "",
+    "app.use(cors());",
+    "app.use(express.json({ limit: '10mb' }));",
+    "",
+    "// ── NEXUS API — same REST contract as the NexusElite platform ────────────",
+    "app.get('/api/appdata/:col', function(req, res) {",
+    "  var col  = req.params.col;",
+    "  var recs = Object.values(getCol(col));",
+    "  res.json(recs);",
+    "});",
+    "",
+    "app.post('/api/appdata/:col', function(req, res) {",
+    "  var col  = req.params.col;",
+    "  var id   = makeId();",
+    "  var rec  = Object.assign({ id: id }, req.body || {});",
+    "  getCol(col)[id] = rec;",
+    "  res.status(201).json(rec);",
+    "});",
+    "",
+    "app.put('/api/appdata/:col/:docId', function(req, res) {",
+    "  var col   = req.params.col;",
+    "  var docId = req.params.docId;",
+    "  var prev  = getCol(col)[docId] || {};",
+    "  var rec   = Object.assign({}, prev, req.body || {}, { id: docId });",
+    "  getCol(col)[docId] = rec;",
+    "  res.json(rec);",
+    "});",
+    "",
+    "app.delete('/api/appdata/:col/:docId', function(req, res) {",
+    "  var col   = req.params.col;",
+    "  var docId = req.params.docId;",
+    "  delete getCol(col)[docId];",
+    "  res.status(204).send();",
+    "});",
+    "",
+    "// ── Frontend — rewrite NEXUS_API to point to this server ─────────────────",
+    "app.get('*', function(req, res) {",
+    "  var idx = path.join(__dirname, 'public', 'index.html');",
+    "  if (!fs.existsSync(idx)) {",
+    `    return res.status(503).send('<!DOCTYPE html><html><body style="background:#0f0f1a;color:#00d4ff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center"><h2>${safe} — starting up…</h2></body></html>');`,
+    "  }",
+    "  var html = fs.readFileSync(idx, 'utf8');",
+    "  // Redirect NEXUS_API to this server's own backend endpoint",
+    "  var marker = 'NEXUS_API = \"';",
+    "  var mi = html.indexOf('window.' + marker);",
+    "  if (mi !== -1) {",
+    "    var qs = mi + 7 + marker.length;",
+    "    var qe = html.indexOf('\"', qs);",
+    "    if (qe !== -1) html = html.slice(0, qs) + EXTERNAL_URL + '/api/appdata' + html.slice(qe);",
+    "  }",
+    "  res.setHeader('Content-Type', 'text/html');",
+    "  res.send(html);",
+    "});",
+    "",
+    `app.listen(PORT, function() { console.log('[${safe}] Running on port ' + PORT + ' — ' + EXTERNAL_URL); });`,
+  ].join("\n");
 }
 
 function gameTemplate(name: string, _prompt: string): string {

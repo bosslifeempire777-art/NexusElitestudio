@@ -372,6 +372,31 @@ export async function ensureMainSchema(): Promise<void> {
     await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS generated_code TEXT`);
     await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS memory         JSONB NOT NULL DEFAULT '{}'`);
 
+    // ----------------------------------------------------------------
+    // project_app_data — platform-hosted backend database for generated apps.
+    // Generated apps call GET/POST/PUT/DELETE /api/projects/:id/appdata/:collection
+    // and this table stores the results in real PostgreSQL.
+    // ----------------------------------------------------------------
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS project_app_data (
+        id         TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        collection TEXT NOT NULL,
+        doc_id     TEXT NOT NULL,
+        data       JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS project_app_data_uq
+        ON project_app_data (project_id, collection, doc_id)
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS project_app_data_collection_idx
+        ON project_app_data (project_id, collection)
+    `);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);

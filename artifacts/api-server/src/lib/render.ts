@@ -62,10 +62,17 @@ async function resolveOwnerId(): Promise<string | null> {
 export interface CreateRenderServiceInput {
   name: string;
   /**
-   * Public HTTPS URL the dedicated service will fetch the project HTML
-   * from once at container start. Stored as the SOURCE_URL env var.
+   * Public HTTPS URL from which the container downloads the frontend HTML
+   * (stored as FRONTEND_URL). Typically the platform's /:id/preview endpoint.
    */
   proxyTarget: string;
+  /**
+   * Public HTTPS URL from which the container downloads the Node.js server code
+   * (stored as SERVER_JS_URL). Typically the platform's /:id/server endpoint.
+   * When provided the service runs as a full Node.js app; omit to fall back to
+   * the legacy static-busybox deployment.
+   */
+  serverTarget?: string;
   /** Region slug, e.g. "oregon", "frankfurt". Defaults to "oregon". */
   region?: string;
   /** Render plan slug. Defaults to "starter" (cheapest paid web service tier). */
@@ -104,18 +111,41 @@ export async function createRenderService(
     // entirely by the dedicated Render service — no traffic flows back
     // through our main API server, which is the whole point of decoupling.
     const image = process.env["RENDER_DEPLOY_IMAGE"] || "alpine:3.19";
-    const dockerCommand =
-      `sh -c 'set -e; mkdir -p /www; ` +
-      `wget -qO /www/index.html "$SOURCE_URL" || ` +
-      `(echo "<h1>Source unavailable</h1>" > /www/index.html); ` +
-      `exec busybox httpd -f -p "$PORT" -h /www'`;
+
+    // Full-stack Node.js deployment (default when serverTarget is provided):
+    // 1. Install Node.js on Alpine
+    // 2. Download the generated server.js from the platform
+    // 3. Download the frontend HTML into public/
+    // 4. Install express + cors (pure-JS, no native compilation)
+    // 5. Run node server.js — serves the API and frontend from one process
+    //
+    // Falls back to legacy static busybox serve when serverTarget is absent.
+    const dockerCommand = input.serverTarget
+      ? `sh -c 'set -e; ` +
+        `apk add --no-cache nodejs npm; ` +
+        `mkdir -p /app/public; ` +
+        `wget -qO /app/server.js "$SERVER_JS_URL" || echo "console.error(\\\"server.js unavailable\\\");" > /app/server.js; ` +
+        `wget -qO /app/public/index.html "$FRONTEND_URL" || echo "<!DOCTYPE html><html><body><h1>Loading...</h1></body></html>" > /app/public/index.html; ` +
+        `cd /app && npm init -y && npm install --save-exact express@4.18.2 cors@2.8.5; ` +
+        `exec node server.js'`
+      : `sh -c 'set -e; mkdir -p /www; ` +
+        `wget -qO /www/index.html "$FRONTEND_URL" || ` +
+        `(echo "<h1>Source unavailable</h1>" > /www/index.html); ` +
+        `exec busybox httpd -f -p "$PORT" -h /www'`;
+
+    const envVars: Array<{ key: string; value: string }> = [
+      { key: "FRONTEND_URL", value: input.proxyTarget },
+    ];
+    if (input.serverTarget) {
+      envVars.push({ key: "SERVER_JS_URL", value: input.serverTarget });
+    }
 
     const body = {
       type: "web_service",
       name: input.name,
       ownerId,
       image: { ownerId, imagePath: image },
-      envVars: [{ key: "SOURCE_URL", value: input.proxyTarget }],
+      envVars,
       serviceDetails: {
         env: "image",
         region,

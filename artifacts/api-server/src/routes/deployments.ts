@@ -331,10 +331,12 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
     return;
   }
 
-  const proxyTarget = `${getPublicBaseUrl()}/api/projects/${dep.projectId}/preview`;
+  const proxyTarget  = `${getPublicBaseUrl()}/api/projects/${dep.projectId}/preview`;
+  const serverTarget = `${getPublicBaseUrl()}/api/projects/${dep.projectId}/server`;
   const result = await createRenderService({
     name: `nexus-${dep.slug}`.slice(0, 60),
     proxyTarget,
+    serverTarget,
   });
   if (!result.ok || !result.serviceId) {
     res.status(502).json({ error: "render_failed", message: result.error || "Failed to create Render service" });
