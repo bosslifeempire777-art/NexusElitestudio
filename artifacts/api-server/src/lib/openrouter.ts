@@ -1,7 +1,9 @@
-import { chatViaSdk } from "./openrouterSdk.js";
+import axios from "axios";
 import { db } from "@workspace/db";
 import { agentModelAssignmentsTable } from "@workspace/db/schema";
 import pLimit from "p-limit";
+
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // ─── HYDRA-PRIME v4 Config ─────────────────────────────────────────────────
 const MAX_PARALLEL  = 20;   // simultaneous LLM calls (reduced from 200 for API rate limits)
@@ -89,6 +91,90 @@ const MODEL_TIERS: Record<string, string[]> = {
 const circuit: Record<string, number> = {};   // model → cooldown_until (ms epoch)
 const limiter = pLimit(MAX_PARALLEL);
 
+// ─── Per-run shared blackboard (mirrors SharedMemory from HYDRA-PRIME memory.ts) ───
+/**
+ * Created fresh for every hydraSwarm() call — never shared between requests.
+ * Provides the same blackboard contract as the original CLI: blueprint, tdd,
+ * files (written by workers), decisions, errors, and call/token metrics.
+ */
+export class SharedMemory {
+  blueprint:  Record<string, any>    = {};
+  tdd:        Record<string, any>    = {};
+  files:      Record<string, string> = {};
+  decisions:  string[]               = [];
+  errors:     string[]               = [];
+  metrics = { calls: 0, tokens_in: 0, tokens_out: 0, cost_est: 0.0 };
+
+  private _chain: Promise<void> = Promise.resolve();
+
+  private lock<T>(fn: () => T | Promise<T>): Promise<T> {
+    const run = this._chain.then(fn) as Promise<T>;
+    this._chain = (run as Promise<any>).then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async writeFile(path: string, content: string): Promise<void> {
+    await this.lock(() => { this.files[path] = content; });
+  }
+
+  async addDecision(d: string): Promise<void> {
+    await this.lock(() => { this.decisions.push(d); });
+  }
+
+  /** Returns a compact context string workers append to their prompts. */
+  contextSnippet(maxChars = 8_000): string {
+    const keys      = Object.keys(this.files).slice(-30);
+    const decisions = this.decisions.slice(-10).join("\n");
+    const snippet   =
+      `DECISIONS:\n${decisions}\n\nEXISTING FILES (${Object.keys(this.files).length}): ${keys.join(", ")}`;
+    return snippet.length > maxChars ? snippet.slice(0, maxChars) : snippet;
+  }
+}
+
+// ─── AgentResult (mirrors src/agent.ts from HYDRA-PRIME) ──────────────────
+export interface AgentResult {
+  name:   string;
+  output: string;
+  files:  Record<string, string>;
+  meta:   Record<string, any>;
+}
+
+// ─── Agent class (mirrors src/agent.ts from HYDRA-PRIME) ───────────────────
+/**
+ * Wraps callLLM with a consistent persona, tier, and file-extraction contract.
+ * Agents optionally carry agentIds for Command Center model overrides.
+ */
+export class Agent {
+  constructor(
+    public name:        string,
+    public role:        string,
+    public tier:        string  = "coding",
+    public temperature: number  = 0.3,
+    public maxTokens:   number  = 8_000,
+    public agentIds:    string[] = [],
+  ) {}
+
+  async run(task: string, context: string = "", mem?: SharedMemory): Promise<AgentResult> {
+    const sys =
+      `You are ${this.name}, a ${this.role}. ` +
+      "Respond in production-quality, fully implemented code with NO placeholders, " +
+      "NO 'TODO', NO 'as needed' comments. Every function fully written. " +
+      "When emitting files, format as:\n" +
+      "===FILE: relative/path.ext===\n```lang\n<code>\n```\n";
+    const prompt = `PROJECT CONTEXT:\n${context}\n\nTASK:\n${task}`;
+    const out = await callLLM(prompt, {
+      system:      sys,
+      tier:        this.tier as keyof typeof MODEL_TIERS,
+      maxTokens:   this.maxTokens,
+      temperature: this.temperature,
+      agentName:   this.name,
+      agentIds:    this.agentIds,
+      mem,
+    });
+    return { name: this.name, output: out, files: extractCodeFiles(out), meta: {} };
+  }
+}
+
 // ─── Command Center model-assignment cache ─────────────────────────────────
 let _agentCache: { ts: number; map: Record<string, string> } | null = null;
 const AGENT_CACHE_MS = 30_000;
@@ -110,34 +196,37 @@ function timeoutForModel(model: string): number {
   return 60_000;
 }
 
-// ─── callLLM — HYDRA-PRIME core routing via SDK (with circuit breaker + pLimit)
+// ─── callLLM — HYDRA-PRIME core routing via axios (circuit breaker + pLimit + MEM metrics)
 export interface CallOpts {
-  system?:    string;
-  tier?:      keyof typeof MODEL_TIERS;
-  maxTokens?: number;
+  system?:      string;
+  tier?:        keyof typeof MODEL_TIERS;
+  maxTokens?:   number;
   temperature?: number;
-  jsonMode?:  boolean;
-  agentName?: string;
-  agentIds?:  string[];   // Command Center override keys
+  jsonMode?:    boolean;
+  agentName?:   string;
+  agentIds?:    string[];   // Command Center override keys
   /** Pass a full message array instead of constructing system+user from opts */
-  messages?:  Array<{ role: string; content: string }>;
+  messages?:    Array<{ role: string; content: string }>;
+  /** Per-run SharedMemory blackboard — tracks call/token metrics on the run */
+  mem?:         SharedMemory;
 }
 
 async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
   const {
-    system    = "You are an elite production-grade engineer.",
-    tier      = "coding",
-    maxTokens = 8_000,
+    system      = "You are an elite production-grade engineer.",
+    tier        = "coding",
+    maxTokens   = 8_000,
     temperature = 0.3,
-    jsonMode  = false,
-    agentName = "anon",
-    agentIds  = [],
+    jsonMode    = false,
+    agentName   = "anon",
+    agentIds    = [],
     messages,
+    mem,
   } = opts;
 
   const baseChain = MODEL_TIERS[tier] ?? MODEL_TIERS.coding;
 
-  // Prepend any Command Center overrides
+  // Prepend any Command Center model overrides
   let chain = baseChain;
   if (agentIds.length > 0) {
     const assignments = await getAgentAssignments();
@@ -170,20 +259,49 @@ async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
       if (jsonMode) body.response_format = { type: "json_object" };
 
       try {
-        const data = await chatViaSdk(body, { timeoutMs: timeoutForModel(model) });
-        const content: string = data?.choices?.[0]?.message?.content ?? "";
+        // Direct axios call — mirrors HYDRA-PRIME llm.ts exactly.
+        // validateStatus:()=>true means axios never throws on HTTP errors;
+        // we inspect res.status ourselves and set the circuit breaker accordingly.
+        const res = await axios.post(OPENROUTER_URL, body, {
+          headers: {
+            Authorization:  `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer":  "https://nexuselitestudio.com",
+            "X-Title":       "HYDRA-PRIME-SWARM-v4",
+          },
+          timeout:        timeoutForModel(model),
+          validateStatus: () => true,
+        });
+
+        if (res.status === 429 || res.status >= 500) {
+          circuit[model] = Date.now() + 30_000;
+          lastErr = `${model}: HTTP ${res.status}`;
+          console.warn(`  ⚠ [${agentName}] ${model} (${res.status}) → next fallback`);
+          continue;
+        }
+        if (res.status >= 400) {
+          circuit[model] = Date.now() + 15_000;
+          lastErr = `${model}: HTTP ${res.status} ${JSON.stringify(res.data).slice(0, 200)}`;
+          console.warn(`  ⚠ [${agentName}] ${model} (${res.status}) → next fallback`);
+          continue;
+        }
+
+        const content: string = res.data?.choices?.[0]?.message?.content ?? "";
+
+        // Track metrics on the per-run blackboard (mirrors MEM.metrics in HYDRA-PRIME llm.ts)
+        if (mem) {
+          mem.metrics.calls     += 1;
+          const usage            = res.data?.usage ?? {};
+          mem.metrics.tokens_in  += usage.prompt_tokens     ?? 0;
+          mem.metrics.tokens_out += usage.completion_tokens ?? 0;
+        }
+
         console.log(`  ✓ [${agentName}] ${model} (${content.length} chars)`);
         return content;
       } catch (err: any) {
-        const status: number | undefined =
-          err?.statusCode ?? err?.status ?? err?.response?.status;
-        const isTimeout = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
-        const retryable = isTimeout || status === 429 || (status !== undefined && status >= 500);
-
-        circuit[model] = Date.now() + (status === 429 ? 30_000 : 15_000);
-        lastErr = `${model}: ${status ?? "timeout"} — ${err?.message ?? ""}`;
-        console.warn(`  ⚠ [${agentName}] ${model} (${status ?? "timeout"}) → next fallback`);
-        if (!retryable && status !== undefined) continue;  // non-retryable: still try next
+        circuit[model] = Date.now() + 15_000;
+        lastErr = `${model}: ${err?.message ?? err}`;
+        console.warn(`  ⚠ [${agentName}] ${model} (error) → next fallback`);
         continue;
       }
     }
@@ -220,9 +338,11 @@ function extractCodeFiles(text: string): Record<string, string> {
 
 async function gatherSettled<T>(promises: Promise<T>[]): Promise<T[]> {
   const results = await Promise.allSettled(promises);
-  return results
-    .filter((r): r is PromiseFulfilledResult<T> => r.status === "fulfilled")
-    .map(r => r.value);
+  const out: T[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") out.push(r.value);
+  }
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -230,7 +350,7 @@ async function gatherSettled<T>(promises: Promise<T>[]): Promise<T[]> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Layer 1: SOVEREIGN ────────────────────────────────────────────────────
-async function sovereign(userPrompt: string): Promise<Record<string, any>> {
+async function sovereign(userPrompt: string, mem: SharedMemory): Promise<Record<string, any>> {
   const raw = await callLLM(userPrompt, {
     system:
       "You are SOVEREIGN, the CEO architect. Read the user's request and " +
@@ -243,9 +363,12 @@ async function sovereign(userPrompt: string): Promise<Record<string, any>> {
     temperature: 0.4,
     jsonMode: true,
     agentName: "SOVEREIGN",
-    agentIds: ["orchestrator"],
+    agentIds: ["swarm-sovereign", "orchestrator"],
+    mem,
   });
   const bp = extractJSON(raw);
+  mem.blueprint = bp;
+  await mem.addDecision(`Project type: ${bp.project_type}, stack: ${JSON.stringify(bp.stack)}`);
   console.log(`\n👑 SOVEREIGN: ${bp.project_name} (${bp.project_type})`);
   return bp;
 }
@@ -259,25 +382,30 @@ const ARCHITECTS: [string, string][] = [
   ["DevOpsArchitect",   "devops architect designing system integration and deployment strategy"],
 ];
 
-async function architectCouncil(blueprint: Record<string, any>): Promise<Record<string, any>> {
+async function architectCouncil(blueprint: Record<string, any>, mem: SharedMemory): Promise<Record<string, any>> {
   console.log("\n🏛  ARCHITECT COUNCIL convening...");
   const ctx = JSON.stringify(blueprint, null, 2);
 
+  // Uses Agent class exactly as in HYDRA-PRIME src/layers/architects.ts
   const results = await gatherSettled(
-    ARCHITECTS.map(([name, role]) =>
-      callLLM(
-        `Produce your section of the Technical Design Document for this blueprint.\n` +
-        `Be exhaustive. Focus on your domain.\n` +
-        `Output JSON with key '${name}_design' containing your complete design.\n\nBLUEPRINT:\n${ctx}`,
-        { system: `You are ${name}, a ${role}.`, tier: "reasoning", maxTokens: 3_000, temperature: 0.3, agentName: name },
-      ).then(raw => extractJSON(raw))
-    )
+    ARCHITECTS.map(([name, role]) => {
+      const a = new Agent(name, role, "reasoning", 0.3, 6_000, ["swarm-architect"]);
+      return a.run(
+        `Produce your section of the Technical Design Document for this blueprint. ` +
+        `Be exhaustive. Focus on your domain. ` +
+        `Output JSON with key '${name}_design' containing your complete design.`,
+        ctx,
+        mem,
+      ).then(res => extractJSON(res.output));
+    })
   );
 
   const tdd: Record<string, any> = {};
   for (const r of results) {
     if (r && typeof r === "object" && !Array.isArray(r)) Object.assign(tdd, r);
   }
+  mem.tdd = tdd;
+  await mem.addDecision("TDD finalized by architect council");
   console.log(`  ✓ TDD assembled from ${results.length} architects`);
   return tdd;
 }
@@ -320,7 +448,7 @@ interface WorkerTask {
   depends_on?: string[];
 }
 
-async function departmentHeadDecompose(dept: string, ctx: string): Promise<WorkerTask[]> {
+async function departmentHeadDecompose(dept: string, ctx: string, mem: SharedMemory): Promise<WorkerTask[]> {
   const role = DEPARTMENTS[dept];
   const raw = await callLLM(ctx, {
     system:
@@ -333,62 +461,110 @@ async function departmentHeadDecompose(dept: string, ctx: string): Promise<Worke
     temperature: 0.3,
     jsonMode: true,
     agentName: `${dept}-Head`,
+    agentIds: ["swarm-dept-head"],
+    mem,
   });
   const data = extractJSON(raw);
   return Array.isArray(data?.tasks) ? (data.tasks as WorkerTask[]) : [];
 }
 
 // ── Layer 4: FRACTAL WORKER SWARM ─────────────────────────────────────────
+/**
+ * Mirrors HYDRA-PRIME src/layers/workers.ts exactly:
+ * - Uses Agent class with the swarm-worker agentId for Command Center overrides
+ * - Appends mem.contextSnippet() to the task context (blackboard awareness)
+ * - Writes all emitted files to the per-run SharedMemory
+ * - Returns AgentResult (not raw file map) so hydraSwarm can access .files & .output
+ * - Oversized tasks recursively spawn a sub-swarm (spawnSubswarm)
+ */
 async function workerExecute(
   task: WorkerTask,
   dept: string,
   ctx: string,
-  depth: number = 0,
-): Promise<Record<string, string>> {
+  depth: number,
+  mem: SharedMemory,
+): Promise<AgentResult> {
   const name = `${dept}-W-${task.id || "x"}`;
+  const role = `${dept} implementation engineer`;
   const desc = task.description || "";
 
-  // Fractal: split oversized tasks
+  // FRACTAL: spawn sub-swarm for oversized tasks (mirrors workers.ts)
   if (depth < MAX_RECURSION && desc.length > 1200 && desc.toLowerCase().includes("split")) {
-    const raw = await callLLM(JSON.stringify(task), {
-      system:
-        "Split this task into 3-5 smaller atomic subtasks. " +
-        'JSON: {"subtasks":[{"id":"...","title":"...","file_hint":"...","description":"..."}]}',
-      tier: "fast",
-      maxTokens: 2_000,
-      temperature: 0.2,
-      jsonMode: true,
-      agentName: `${dept}-Splitter-d${depth}`,
-    });
-    const parsed = extractJSON(raw);
-    const subs: WorkerTask[] = Array.isArray(parsed?.subtasks) ? parsed.subtasks : [];
-    if (subs.length > 0) {
-      const subResults = await gatherSettled(subs.map(st => workerExecute(st, dept, ctx, depth + 1)));
-      return Object.assign({}, ...subResults);
-    }
+    return spawnSubswarm(task, dept, ctx, depth + 1, mem);
   }
 
-  const out = await callLLM(
-    `PROJECT CONTEXT:\n${ctx}\n\nTASK:\nID: ${task.id}\nTitle: ${task.title}\n` +
-    `Target file: ${task.file_hint}\nDescription: ${desc}\n\nImplement fully. Emit ===FILE: path=== blocks.`,
-    {
-      system:
-        `You are ${name}, a ${dept} implementation engineer. ` +
-        "Write production-quality, fully implemented code with NO placeholders, NO 'TODO'. " +
-        "When emitting files, format as:\n===FILE: relative/path.ext===\n```lang\n<code>\n```\n",
-      tier: "coding",
-      maxTokens: 8_000,
-      temperature: 0.2,
-      agentName: name,
-    },
-  );
-  return extractCodeFiles(out);
+  const a = new Agent(name, role, "coding", 0.2, 8_000, ["swarm-worker"]);
+  const fullTask =
+    `Task ID: ${task.id}\n` +
+    `Title: ${task.title}\n` +
+    `Target file: ${task.file_hint}\n` +
+    `Description: ${desc}\n\n` +
+    "Implement fully. Emit one or more ===FILE: path=== blocks.";
+
+  // Append SharedMemory context snippet so each worker sees sibling decisions & files
+  const result = await a.run(fullTask, ctx + "\n" + mem.contextSnippet(), mem);
+
+  // Write all emitted files to the per-run blackboard
+  for (const [path, content] of Object.entries(result.files)) {
+    await mem.writeFile(path, content);
+  }
+  return result;
+}
+
+/** Sub-swarm spawner — mirrors spawnSubswarm in HYDRA-PRIME workers.ts */
+async function spawnSubswarm(
+  task: WorkerTask,
+  dept: string,
+  ctx: string,
+  depth: number,
+  mem: SharedMemory,
+): Promise<AgentResult> {
+  const splitterName = `${dept}-Splitter-d${depth}`;
+  const raw = await callLLM(JSON.stringify(task), {
+    system:
+      "Split this task into 3-6 smaller atomic subtasks. " +
+      'JSON: {"subtasks":[{"id":"...","title":"...","file_hint":"...","description":"..."}]}',
+    tier: "fast",
+    maxTokens: 2_000,
+    temperature: 0.2,
+    jsonMode: true,
+    agentName: splitterName,
+    mem,
+  });
+
+  const parsed = extractJSON(raw);
+  const subs: WorkerTask[] = Array.isArray(parsed?.subtasks) ? parsed.subtasks : [];
+
+  if (subs.length === 0) {
+    const a = new Agent(`${dept}-W-fb`, `${dept} engineer`, "coding", 0.2, 8_000, ["swarm-worker"]);
+    return a.run(JSON.stringify(task), ctx, mem);
+  }
+
+  const subResults = await gatherSettled(subs.map(st => workerExecute(st, dept, ctx, depth, mem)));
+
+  const mergedFiles: Record<string, string> = {};
+  const mergedOut: string[] = [];
+  for (const r of subResults) {
+    Object.assign(mergedFiles, r.files);
+    mergedOut.push(r.output);
+  }
+  return {
+    name: `${dept}-subswarm-d${depth}`,
+    output: mergedOut.join("\n"),
+    files: mergedFiles,
+    meta: { depth, subtaskCount: subs.length },
+  };
 }
 
 // ── Layer 5: CRITIC RING ──────────────────────────────────────────────────
 interface CriticVerdict { pass: boolean; issues: string[]; }
 
-async function criticRing(fileMap: Record<string, string>, ctx: string): Promise<CriticVerdict> {
+/**
+ * Mirrors HYDRA-PRIME src/layers/critics.ts exactly:
+ * Uses Agent class for each critic (BugHunter, SecurityAuditor, UXCritic) with
+ * individual agentIds so each can be assigned a different model in Command Center.
+ */
+async function criticRing(fileMap: Record<string, string>, ctx: string, mem: SharedMemory): Promise<CriticVerdict> {
   if (Object.keys(fileMap).length === 0) return { pass: true, issues: [] };
 
   const snippet = Object.entries(fileMap)
@@ -396,27 +572,29 @@ async function criticRing(fileMap: Record<string, string>, ctx: string): Promise
     .map(([p, c]) => `===FILE: ${p}===\n${c.slice(0, 2_000)}`)
     .join("\n\n");
 
-  const CRITICS: [string, string][] = [
-    ["BugHunter",       "adversarial bug-hunter who finds logic errors, race conditions, null derefs"],
-    ["SecurityAuditor", "security auditor finding injection, auth bypass, secret leaks, OWASP issues"],
-    ["UXCritic",        "UX critic finding poor flows, missing states, and accessibility issues"],
+  const CRITICS: [string, string, string][] = [
+    ["BugHunter",       "adversarial bug-hunter who finds logic errors, race conditions, null derefs", "swarm-bug-hunter"],
+    ["SecurityAuditor", "security auditor finding injection, auth bypass, secret leaks, OWASP issues",  "swarm-security-auditor"],
+    ["UXCritic",        "UX critic finding poor flows, missing states, and accessibility issues",        "swarm-ux-critic"],
   ];
 
   const results = await gatherSettled(
-    CRITICS.map(([name, role]) =>
-      callLLM(
+    CRITICS.map(([name, role, agentId]) => {
+      const a = new Agent(name, role, "critic", 0.2, 2_500, [agentId]);
+      return a.run(
         `Review these artifacts. Reply with JSON {"pass":bool,"issues":["..."]}. ` +
-        `Only fail (pass=false) for CRITICAL issues.\n\n${snippet}`,
-        { system: `You are ${name}, a ${role}.`, tier: "critic", maxTokens: 2_000, temperature: 0.2, agentName: name },
-      )
-    )
+        `Only fail (pass=false) if there are CRITICAL issues.\n\n${snippet}`,
+        ctx,
+        mem,
+      );
+    })
   );
 
   const allIssues: string[] = [];
   let pass = true;
   for (const r of results) {
     try {
-      const m = r.match(/\{[\s\S]*\}/);
+      const m = r.output.match(/\{[\s\S]*\}/);
       if (m) {
         const parsed = JSON.parse(m[0]);
         if (parsed.pass === false) pass = false;
@@ -429,18 +607,28 @@ async function criticRing(fileMap: Record<string, string>, ctx: string): Promise
 }
 
 // ── Layer 6: SYNTHESIZER → single HTML ───────────────────────────────────
+/**
+ * Mirrors HYDRA-PRIME src/layers/synthesizer.ts exactly:
+ * Uses Agent class with agentIds ["swarm-synthesizer","code-generator"] so the
+ * synthesizer model is independently assignable in Command Center.
+ * Reads merged files from the per-run SharedMemory blackboard rather than
+ * relying solely on the collectedFiles parameter.
+ */
 async function synthesizerToHTML(
-  collectedFiles: Record<string, string>[],
+  workerResults: AgentResult[],
   blueprint: Record<string, any>,
   originalPrompt: string,
   projectName: string,
+  mem: SharedMemory,
 ): Promise<string> {
   console.log("\n🧬 SYNTHESIZER → single HTML...");
 
-  // Merge all files (last writer wins on conflict)
-  const merged: Record<string, string> = {};
-  for (const fm of collectedFiles) {
-    for (const [path, content] of Object.entries(fm)) merged[path] = content;
+  // Merge files: prefer the SharedMemory blackboard (canonical), then worker outputs
+  const merged: Record<string, string> = { ...mem.files };
+  for (const r of workerResults) {
+    for (const [path, content] of Object.entries(r.files)) {
+      if (!merged[path]) merged[path] = content;
+    }
   }
   if (Object.keys(merged).length === 0) return "";
 
@@ -475,28 +663,34 @@ AUTH (build real multi-user auth if the project needs it):
 DESIGN: dark cyberpunk aesthetic (#0f0f1a background, #00d4ff accent), smooth animations, polished UI.
 Every button does something. Every form works. Handle loading, empty, and error states.`;
 
-  const userMsg =
+  const userTask =
     `PROJECT: "${projectName}"\nREQUIREMENT: ${originalPrompt}\n` +
     `BLUEPRINT: ${JSON.stringify(blueprint).slice(0, 800)}\n\n` +
     `GENERATED AGENT FILES:\n${fileBlock}\n\n` +
     `Synthesize ALL of the above into one complete, production-quality, fully-functional self-contained HTML file. ` +
     `Implement EVERY feature from EVERY agent file. Use window.NEXUS_API for all data storage.`;
 
+  const a = new Agent(
+    "SYNTHESIZER",
+    "final synthesis stage of HYDRA-PRIME SWARM v4",
+    "longctx",
+    0.3,
+    16_000,
+    ["swarm-synthesizer", "code-generator"],
+  );
+
   try {
-    const result = await callLLM(userMsg, {
-      system: sys,
-      tier: "longctx",
-      maxTokens: 16_000,
-      temperature: 0.3,
-      agentName: "SYNTHESIZER",
-      agentIds: ["code-generator"],
-    });
-    const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    const agentResult = await a.run(userTask, sys, mem);
+    const raw = agentResult.output;
+    const stripped = raw.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+      await mem.writeFile("index.html", stripped);
+      await mem.addDecision("SYNTHESIZER produced final index.html");
       console.log(`  ✓ SYNTHESIZER: ${stripped.length} chars`);
       return stripped;
     }
   } catch (e) {
+    mem.errors.push(`SYNTHESIZER: ${(e as Error).message}`);
     console.warn("  ✗ SYNTHESIZER failed:", (e as Error).message);
   }
   return "";
@@ -504,21 +698,22 @@ Every button does something. Every form works. Handle loading, empty, and error 
 
 // ── Layer 7: VALIDATOR & PACKAGER ────────────────────────────────────────
 /**
- * Final quality gate — mirrors the original HYDRA-PRIME Layer 7.
- * In the standalone CLI it writes files to disk and generates README/Dockerfile.
- * On this platform we adapt it: a creative-tier model reviews the synthesized
- * HTML against the blueprint, fixes any missing features or broken flows, and
- * returns the polished final HTML. Falls back to the synthesizer output on failure.
+ * Mirrors HYDRA-PRIME src/layers/packager.ts exactly:
+ * Uses Agent class with agentId "swarm-packager" for Command Center override.
+ * Reviews synthesized HTML against blueprint, fixes missing features or broken
+ * flows, and writes the final polished HTML back to SharedMemory.
+ * Falls back to the synthesizer output on failure.
  */
 async function validateAndPackage(
   html: string,
   blueprint: Record<string, any>,
   fileKeys: string[],
+  mem: SharedMemory,
 ): Promise<string> {
   console.log("\n📦 VALIDATOR & PACKAGER running...");
 
-  const sys =
-    "You are PACKAGER, the final quality gate of HYDRA-PRIME SWARM v4. " +
+  const role =
+    "final quality gate of HYDRA-PRIME SWARM v4. " +
     "You receive a complete single-file HTML web application generated by the swarm. " +
     "Your job:\n" +
     "1. Cross-check every key_feature from the blueprint — add any that are missing.\n" +
@@ -527,78 +722,91 @@ async function validateAndPackage(
     "4. Polish the UI: loading spinners, error messages, empty-state CTAs.\n" +
     "5. Return ONLY the complete, fixed HTML — no fences, no explanation.";
 
-  const prompt =
+  const task =
     `BLUEPRINT:\n${JSON.stringify({ project_name: blueprint.project_name, project_type: blueprint.project_type, key_features: blueprint.key_features, stack: blueprint.stack }, null, 2)}\n\n` +
     `FILES GENERATED BY SWARM (${fileKeys.length} total): ${fileKeys.slice(0, 20).join(", ")}\n\n` +
     `HTML APP TO VALIDATE:\n${html.slice(0, 28_000)}\n\n` +
     "Review against the blueprint. Fix all issues. Return the complete polished HTML.";
 
+  const a = new Agent("PACKAGER", role, "creative", 0.2, 16_000, ["swarm-packager"]);
+
   try {
-    const result = await callLLM(prompt, {
-      system: sys,
-      tier: "creative",
-      maxTokens: 16_000,
-      temperature: 0.2,
-      agentName: "PACKAGER",
-    });
-    const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    const agentResult = await a.run(task, "", mem);
+    const stripped = agentResult.output
+      .replace(/^```(?:html)?\n?/i, "")
+      .replace(/\n?```$/i, "")
+      .trim();
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+      await mem.writeFile("index.html", stripped);
+      await mem.addDecision("PACKAGER validated and polished index.html");
       console.log(`  ✓ PACKAGER validated: ${stripped.length} chars`);
       return stripped;
     }
     console.warn("  ⚠ PACKAGER returned non-HTML — keeping synthesizer output");
   } catch (e) {
+    mem.errors.push(`PACKAGER: ${(e as Error).message}`);
     console.warn("  ⚠ PACKAGER failed — keeping synthesizer output:", (e as Error).message);
   }
   return html;
 }
 
 // ── Full 7-layer HYDRA-PRIME pipeline ─────────────────────────────────────
+/**
+ * Creates a fresh SharedMemory (MEM) blackboard at the top and threads it as
+ * the final argument through every layer — exactly as the original HYDRA-PRIME
+ * CLI does in src/swarm.ts. MEM is NEVER a module-level singleton.
+ *
+ * Worker results are now AgentResult[] (not Record<string,string>[]) so the
+ * synthesizer can read both .files and .output. The canonical file list is
+ * mem.files (written by workers + synthesizer + packager).
+ */
 async function hydraSwarm(userPrompt: string, projectName: string): Promise<string> {
-  const t0 = Date.now();
+  const t0  = Date.now();
+  const mem = new SharedMemory();   // ← per-run blackboard
   console.log("\n🐉 HYDRA-PRIME SWARM v4 — booting...");
 
   // LAYER 1 — SOVEREIGN
-  const blueprint = await sovereign(userPrompt);
+  const blueprint = await sovereign(userPrompt, mem);
 
   // LAYER 2 — ARCHITECT COUNCIL (5 parallel)
-  const tdd = await architectCouncil(blueprint);
+  const tdd = await architectCouncil(blueprint, mem);
 
-  // LAYER 3 — DEPARTMENT HEADS (parallel)
+  // LAYER 3 — DEPARTMENT HEADS (parallel decomposition)
   const ctx = JSON.stringify({ blueprint, tdd }, null, 2).slice(0, 12_000);
   const activeDepts = selectDepartments(blueprint);
   console.log(`\n🏢 Departments: ${activeDepts.join(", ")}`);
 
   const deptTaskLists = await gatherSettled(
-    activeDepts.map(async d => ({ dept: d, tasks: await departmentHeadDecompose(d, ctx) }))
+    activeDepts.map(async d => ({ dept: d, tasks: await departmentHeadDecompose(d, ctx, mem) }))
   );
 
   // LAYER 4 — FRACTAL WORKER SWARM (all tasks in parallel, capped by pLimit)
   console.log("\n⚙️  WORKER SWARM executing...");
-  const workerPromises: Promise<Record<string, string>>[] = [];
+  const workerPromises: Promise<AgentResult>[] = [];
   for (const { dept, tasks } of deptTaskLists) {
     if (!DEPARTMENTS[dept]) continue;
-    for (const t of tasks) workerPromises.push(workerExecute(t, dept, ctx, 0));
+    for (const t of tasks) workerPromises.push(workerExecute(t, dept, ctx, 0, mem));
   }
-  const workerResults = await gatherSettled(workerPromises);
-  console.log(`  ✓ ${workerResults.length} worker results`);
+  const workerResults: AgentResult[] = await gatherSettled(workerPromises);
+  console.log(`  ✓ ${workerResults.length} worker results | ${Object.keys(mem.files).length} files in MEM`);
 
-  // LAYER 5 — CRITIC RING (3 parallel critics)
+  // LAYER 5 — CRITIC RING (3 parallel critics, each with individual agentId)
   console.log("\n🔎 CRITIC RING reviewing...");
-  const allFiles: Record<string, string> = {};
-  for (const r of workerResults) Object.assign(allFiles, r);
-  await criticRing(allFiles, ctx);
+  await criticRing(mem.files, ctx, mem);
 
   // LAYER 6 — SYNTHESIZER → single HTML
-  const html = await synthesizerToHTML(workerResults, blueprint, userPrompt, projectName);
+  const html = await synthesizerToHTML(workerResults, blueprint, userPrompt, projectName, mem);
 
   // LAYER 7 — VALIDATOR & PACKAGER
   const validated = html
-    ? await validateAndPackage(html, blueprint, Object.keys(allFiles))
+    ? await validateAndPackage(html, blueprint, Object.keys(mem.files), mem)
     : html;
 
   const elapsed = ((Date.now() - t0) / 1_000).toFixed(1);
-  console.log(`\n🎉 HYDRA-PRIME complete in ${elapsed}s | ${Object.keys(allFiles).length} agent files`);
+  console.log(
+    `\n🎉 HYDRA-PRIME complete in ${elapsed}s | ${Object.keys(mem.files).length} agent files` +
+    ` | ${mem.metrics.calls} LLM calls | ~${mem.metrics.tokens_in + mem.metrics.tokens_out} tokens`
+  );
   return validated;
 }
 
