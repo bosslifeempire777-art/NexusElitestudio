@@ -1,0 +1,880 @@
+Project Structure
+
+hydra-swarm/
+├── package.json
+├── tsconfig.json
+├── .env.example
+├── .replit
+└── src/
+    ├── index.ts
+    ├── config.ts
+    ├── memory.ts
+    ├── llm.ts
+    ├── utils.ts
+    ├── agent.ts
+    ├── layers/
+    │   ├── sovereign.ts
+    │   ├── architects.ts
+    │   ├── departments.ts
+    │   ├── workers.ts
+    │   ├── critics.ts
+    │   ├── synthesizer.ts
+    │   └── validator.ts
+    └── swarm.ts
+package.json
+
+{
+  "name": "hydra-prime-swarm",
+  "version": "4.0.0",
+  "description": "HYDRA-PRIME SWARM v4 — Ultimate production build swarm for OpenRouter",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "p-limit": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}
+tsconfig.json
+
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "allowImportingTsExtensions": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*"]
+}
+.env.example
+
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+.replit
+
+run = "npm install && npm start"
+entrypoint = "src/index.ts"
+
+[nix]
+channel = "stable-23_11"
+
+[env]
+NODE_ENV = "production"
+src/config.ts
+
+import * as dotenv from "dotenv";
+dotenv.config();
+
+export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "YOUR_KEY_HERE";
+export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+export const OUTPUT_DIR = "./build_output";
+export const MAX_PARALLEL = 200;       // hard cap on simultaneous agents
+export const MAX_RECURSION = 4;        // fractal sub-swarm depth
+export const HTTP_TIMEOUT_MS = 600_000;
+
+// ----- Model tiers (cheap -> premium). Order = fallback order. -----
+// Uses the EXACT model codes you provided.
+export const MODEL_TIERS: Record<string, string[]> = {
+  reasoning: [
+    "z-ai/glm-5.1",
+    "deepseek/deepseek-v4",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7",
+    "google/gemini-3.5-pro",
+  ],
+  coding: [
+    "qwen/qwen3.6-coder",
+    "deepseek/deepseek-chat-v4",
+    "z-ai/glm-5.1",
+    "moonshotai/kimi-k2.6",
+    "x-ai/grok-build-0.1",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7",
+  ],
+  fast: [
+    "inclusionai/ling-2.6-1t",
+    "minimax/minimax-m2.7",
+    "z-ai/glm-5.1",
+    "deepseek/deepseek-v4",
+    "anthropic/claude-haiku-4.5",
+  ],
+  longctx: [
+    "google/gemini-3.5-pro",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-sonnet-4.6",
+  ],
+  critic: [
+    "deepseek/deepseek-chat-v4",
+    "z-ai/glm-5.1",
+    "qwen/qwen3.6-coder",
+    "anthropic/claude-sonnet-4.6",
+  ],
+  creative: [
+    "z-ai/glm-5.1",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-opus-4.7",
+  ],
+};
+src/memory.ts
+
+/**
+ * Project-wide blackboard: blueprint, TDD, files, decisions.
+ * Mutex via simple async queue to serialize writes.
+ */
+export class SharedMemory {
+  blueprint: Record<string, any> = {};
+  tdd: Record<string, any> = {};
+  files: Record<string, string> = {};
+  decisions: string[] = [];
+  errors: string[] = [];
+  metrics = { calls: 0, tokens_in: 0, tokens_out: 0, cost_est: 0.0 };
+
+  private _chain: Promise<void> = Promise.resolve();
+
+  private lock<T>(fn: () => T | Promise<T>): Promise<T> {
+    const run = this._chain.then(fn);
+    this._chain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async writeFile(path: string, content: string): Promise<void> {
+    await this.lock(() => {
+      this.files[path] = content;
+    });
+  }
+
+  async addDecision(d: string): Promise<void> {
+    await this.lock(() => {
+      this.decisions.push(d);
+    });
+  }
+
+  contextSnippet(maxChars = 8000): string {
+    const keys = Object.keys(this.files).slice(-30);
+    const decisions = this.decisions.slice(-10).join("\n");
+    const snippet = `DECISIONS:\n${decisions}\n\nEXISTING FILES (${
+      Object.keys(this.files).length
+    }): ${keys.join(", ")}`;
+    return snippet.length > maxChars ? snippet.slice(0, maxChars) : snippet;
+  }
+}
+
+export const MEM = new SharedMemory();
+src/llm.ts
+
+import axios, { AxiosError } from "axios";
+import pLimit from "p-limit";
+import {
+  OPENROUTER_API_KEY,
+  OPENROUTER_URL,
+  MODEL_TIERS,
+  MAX_PARALLEL,
+  HTTP_TIMEOUT_MS,
+} from "./config.js";
+import { MEM } from "./memory.js";
+
+const circuit: Record<string, number> = {};      // model -> cooldown_until (ms epoch)
+const limit = pLimit(MAX_PARALLEL);
+
+export interface CallOpts {
+  system?: string;
+  tier?: string;
+  maxTokens?: number;
+  temperature?: number;
+  jsonMode?: boolean;
+  agentName?: string;
+}
+
+/** Try each model in the tier list until one succeeds. */
+export async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
+  const {
+    system = "You are an elite production-grade engineer.",
+    tier = "coding",
+    maxTokens = 8000,
+    temperature = 0.3,
+    jsonMode = false,
+    agentName = "anon",
+  } = opts;
+
+  const chain = MODEL_TIERS[tier];
+  if (!chain) throw new Error(`Unknown tier: ${tier}`);
+
+  return limit(async () => {
+    let lastErr: string | null = null;
+
+    for (const model of chain) {
+      // circuit breaker
+      if ((circuit[model] || 0) > Date.now()) continue;
+
+      try {
+        const body: Record<string, any> = {
+          model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: prompt },
+          ],
+          max_tokens: maxTokens,
+          temperature,
+        };
+        if (jsonMode) body.response_format = { type: "json_object" };
+
+        const res = await axios.post(OPENROUTER_URL, body, {
+          headers: {
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://hydra-swarm.local",
+            "X-Title": "HYDRA-PRIME-SWARM",
+          },
+          timeout: HTTP_TIMEOUT_MS,
+          validateStatus: () => true,
+        });
+
+        if (res.status === 429 || res.status >= 500) {
+          circuit[model] = Date.now() + 30_000;
+          lastErr = `${model}: HTTP ${res.status}`;
+          continue;
+        }
+        if (res.status >= 400) {
+          lastErr = `${model}: HTTP ${res.status} ${JSON.stringify(res.data).slice(0, 200)}`;
+          circuit[model] = Date.now() + 15_000;
+          continue;
+        }
+
+        const data = res.data;
+        const content: string = data?.choices?.[0]?.message?.content ?? "";
+
+        MEM.metrics.calls += 1;
+        const usage = data?.usage || {};
+        MEM.metrics.tokens_in += usage.prompt_tokens || 0;
+        MEM.metrics.tokens_out += usage.completion_tokens || 0;
+
+        console.log(`  ✓ [${agentName}] ${model} (${content.length} chars)`);
+        return content;
+      } catch (e) {
+        const err = e as AxiosError;
+        lastErr = `${model}: ${err.message}`;
+        circuit[model] = Date.now() + 15_000;
+        continue;
+      }
+    }
+
+    throw new Error(`All models failed for tier '${tier}': ${lastErr}`);
+  });
+}
+src/utils.ts
+
+/** Robust JSON extractor — handles ```json blocks, raw, and trailing junk. */
+export function extractJSON(text: string): any {
+  let t = text.trim();
+  const fenceMatch = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) t = fenceMatch[1].trim();
+
+  const firstBrace = t.indexOf("{");
+  const firstBracket = t.indexOf("[");
+  const candidates = [firstBrace, firstBracket].filter((i) => i >= 0);
+  const start = candidates.length ? Math.min(...candidates) : 0;
+  t = t.slice(start);
+
+  // try parse, peeling chars off until valid
+  for (let end = t.length; end > 0; end--) {
+    try {
+      return JSON.parse(t.slice(0, end));
+    } catch {
+      continue;
+    }
+  }
+  return {};
+}
+
+/** Parse ===FILE: path===\n```lang\n...code...\n``` blocks. */
+export function extractCodeFiles(text: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const pattern = /===\s*FILE:\s*(.+?)\s*===\s*```[\w+\-]*\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text)) !== null) {
+    const path = m[1].trim().replace(/^\/+/, "");
+    files[path] = m[2].replace(/\s+$/, "") + "\n";
+  }
+  return files;
+}
+
+export async function gatherSettled<T>(
+  promises: Promise<T>[]
+): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  return results
+    .filter((r): r is PromiseFulfilledResult<T> => r.status === "fulfilled")
+    .map((r) => r.value);
+}
+src/agent.ts
+
+import { callLLM } from "./llm.js";
+import { extractCodeFiles } from "./utils.js";
+
+export interface AgentResult {
+  name: string;
+  output: string;
+  files: Record<string, string>;
+  meta: Record<string, any>;
+}
+
+export class Agent {
+  constructor(
+    public name: string,
+    public role: string,
+    public tier: string = "coding",
+    public temperature: number = 0.3,
+    public maxTokens: number = 8000
+  ) {}
+
+  async run(task: string, context: string = ""): Promise<AgentResult> {
+    const sys =
+      `You are ${this.name}, a ${this.role}. ` +
+      "Respond in production-quality, fully implemented code with NO placeholders, " +
+      "NO 'TODO', NO 'as needed' comments. Every function fully written. " +
+      "When emitting files, format as:\n" +
+      "===FILE: relative/path.ext===\n```lang\n<code>\n```\n";
+    const prompt = `PROJECT CONTEXT:\n${context}\n\nTASK:\n${task}`;
+    const out = await callLLM(prompt, {
+      system: sys,
+      tier: this.tier,
+      maxTokens: this.maxTokens,
+      temperature: this.temperature,
+      agentName: this.name,
+    });
+    return {
+      name: this.name,
+      output: out,
+      files: extractCodeFiles(out),
+      meta: {},
+    };
+  }
+}
+src/layers/sovereign.ts
+
+import { callLLM } from "../llm.js";
+import { extractJSON } from "../utils.js";
+import { MEM } from "../memory.js";
+
+export async function sovereign(userPrompt: string): Promise<Record<string, any>> {
+  const sys =
+    "You are SOVEREIGN, the CEO architect. Read the user's request and " +
+    "output a JSON master blueprint with keys: project_name, project_type " +
+    "(mobile_app|saas|website|business_software|video_game|hybrid), " +
+    "platforms[], stack{}, key_features[], target_users, monetization, " +
+    "complexity (1-10), estimated_files (int), risks[].";
+  const raw = await callLLM(userPrompt, {
+    system: sys,
+    tier: "reasoning",
+    maxTokens: 4000,
+    temperature: 0.4,
+    jsonMode: true,
+    agentName: "SOVEREIGN",
+  });
+  const bp = extractJSON(raw);
+  MEM.blueprint = bp;
+  await MEM.addDecision(
+    `Project type: ${bp.project_type}, stack: ${JSON.stringify(bp.stack)}`
+  );
+  console.log(`\n👑 SOVEREIGN blueprint: ${bp.project_name} (${bp.project_type})`);
+  return bp;
+}
+src/layers/architects.ts
+
+import { Agent } from "../agent.js";
+import { MEM } from "../memory.js";
+import { extractJSON, gatherSettled } from "../utils.js";
+
+const ARCHITECTS: [string, string][] = [
+  ["SystemArchitect",   "system architect designing modules, services, and data flow"],
+  ["UXArchitect",       "UX/UI architect designing screens, flows, components, design system"],
+  ["DataArchitect",     "data architect designing schemas, indexes, migrations, and APIs"],
+  ["SecurityArchitect", "security architect designing auth, RBAC, secrets, threat model"],
+  ["DevOpsArchitect",   "devops architect designing CI/CD, infra, deploy, monitoring"],
+];
+
+export async function architectCouncil(
+  blueprint: Record<string, any>
+): Promise<Record<string, any>> {
+  console.log("\n🏛  ARCHITECT COUNCIL convening...");
+  const ctx = JSON.stringify(blueprint, null, 2);
+
+  const tasks = ARCHITECTS.map(([name, role]) => {
+    const a = new Agent(name, role, "reasoning", 0.3, 6000);
+    return a.run(
+      `Produce your section of the Technical Design Document for this blueprint. ` +
+      `Be exhaustive. Output JSON with key '${name}_design'.`,
+      ctx
+    );
+  });
+
+  const results = await gatherSettled(tasks);
+
+  const tdd: Record<string, any> = {};
+  for (const r of results) {
+    const merged = extractJSON(r.output);
+    if (merged && typeof merged === "object" && !Array.isArray(merged)) {
+      Object.assign(tdd, merged);
+    }
+  }
+  MEM.tdd = tdd;
+  await MEM.addDecision("TDD finalized by architect council");
+  return tdd;
+}
+src/layers/departments.ts
+
+import { callLLM } from "../llm.js";
+import { extractJSON } from "../utils.js";
+
+export const DEPARTMENTS: Record<string, string> = {
+  Frontend:       "frontend lead (React/Next.js/Vue/Svelte web UIs)",
+  Backend:        "backend lead (Node/Python/Go APIs, microservices)",
+  Database:       "database lead (Postgres, schemas, queries, ORM)",
+  MobileIOS:      "iOS lead (Swift/SwiftUI or React Native)",
+  MobileAndroid:  "Android lead (Kotlin/Jetpack or React Native)",
+  GameEngine:     "game dev lead (Unity C#, Godot, Phaser, Three.js)",
+  AIML:           "AI/ML lead (LLM integration, embeddings, RAG)",
+  Auth:           "authentication lead (OAuth, JWT, sessions, RBAC)",
+  Payments:       "payments lead (Stripe, IAP, subscriptions)",
+  DevOps:         "devops lead (Docker, CI, deploy scripts, EAS)",
+  QA:             "QA lead (unit, integration, e2e tests)",
+  Docs:           "documentation lead (README, API docs, user guides)",
+};
+
+export interface WorkerTask {
+  id: string;
+  title: string;
+  file_hint: string;
+  description: string;
+  depends_on?: string[];
+}
+
+export function selectDepartments(blueprint: Record<string, any>): string[] {
+  const pt = (blueprint.project_type || "").toLowerCase();
+  let base = ["Backend", "Database", "Auth", "DevOps", "QA", "Docs"];
+  if (pt.includes("mobile"))   base = base.concat(["MobileIOS", "MobileAndroid", "Frontend"]);
+  if (pt.includes("saas"))     base = base.concat(["Frontend", "Payments", "AIML"]);
+  if (pt.includes("website"))  base = base.concat(["Frontend"]);
+  if (pt.includes("business")) base = base.concat(["Frontend", "Auth", "Payments"]);
+  if (pt.includes("game"))     base = ["GameEngine", "Backend", "DevOps", "QA", "Docs"];
+  if (pt.includes("hybrid"))   base = base.concat(Object.keys(DEPARTMENTS));
+  return Array.from(new Set(base));
+}
+
+export async function departmentHeadDecompose(
+  dept: string,
+  ctx: string
+): Promise<WorkerTask[]> {
+  const role = DEPARTMENTS[dept];
+  const sys =
+    `You are the ${dept} Department Head (${role}). ` +
+    "Decompose your domain into 5-15 ATOMIC implementation tasks. " +
+    "Each task = one file or one tightly-scoped unit. " +
+    'Output JSON: {"tasks": [{"id":"...","title":"...",' +
+    '"file_hint":"path","description":"...","depends_on":[]}]}';
+  const raw = await callLLM(ctx, {
+    system: sys,
+    tier: "reasoning",
+    maxTokens: 4000,
+    temperature: 0.3,
+    jsonMode: true,
+    agentName: `${dept}-Head`,
+  });
+  const data = extractJSON(raw);
+  return data && typeof data === "object" && Array.isArray(data.tasks)
+    ? (data.tasks as WorkerTask[])
+    : [];
+}
+src/layers/workers.ts
+
+import { Agent, AgentResult } from "../agent.js";
+import { callLLM } from "../llm.js";
+import { extractJSON, gatherSettled } from "../utils.js";
+import { MEM } from "../memory.js";
+import { MAX_RECURSION } from "../config.js";
+import { WorkerTask } from "./departments.js";
+
+export async function workerExecute(
+  task: WorkerTask,
+  dept: string,
+  ctx: string,
+  depth: number = 0
+): Promise<AgentResult> {
+  const name = `${dept}-W-${task.id || "x"}`;
+  const role = `${dept} implementation engineer`;
+  const tier = "coding";
+
+  // FRACTAL: if task is huge, spawn sub-swarm
+  const desc = task.description || "";
+  if (depth < MAX_RECURSION && desc.length > 1200 && desc.toLowerCase().includes("split")) {
+    return spawnSubswarm(task, dept, ctx, depth + 1);
+  }
+
+  const a = new Agent(name, role, tier, 0.2, 8000);
+  const fullTask =
+    `Task ID: ${task.id}\n` +
+    `Title: ${task.title}\n` +
+    `Target file: ${task.file_hint}\n` +
+    `Description: ${desc}\n\n` +
+    "Implement fully. Emit one or more ===FILE: path=== blocks.";
+  return a.run(fullTask, ctx + "\n" + MEM.contextSnippet());
+}
+
+export async function spawnSubswarm(
+  task: WorkerTask,
+  dept: string,
+  ctx: string,
+  depth: number
+): Promise<AgentResult> {
+  const splitterName = `${dept}-Splitter-d${depth}`;
+  const sysPrompt =
+    "Split this task into 3-6 smaller atomic subtasks. JSON: " +
+    '{"subtasks":[{"id":"...","title":"...",' +
+    '"file_hint":"...","description":"..."}]}';
+  const raw = await callLLM(JSON.stringify(task), {
+    system: sysPrompt,
+    tier: "fast",
+    maxTokens: 2000,
+    temperature: 0.2,
+    jsonMode: true,
+    agentName: splitterName,
+  });
+
+  const parsed = extractJSON(raw);
+  const subs: WorkerTask[] =
+    parsed && typeof parsed === "object" && Array.isArray(parsed.subtasks)
+      ? parsed.subtasks
+      : [];
+
+  if (subs.length === 0) {
+    const a = new Agent(`${dept}-W-fb`, `${dept} engineer`, "coding", 0.2, 8000);
+    return a.run(JSON.stringify(task), ctx);
+  }
+
+  const subResults = await gatherSettled(
+    subs.map((st) => workerExecute(st, dept, ctx, depth))
+  );
+
+  const mergedFiles: Record<string, string> = {};
+  const mergedOut: string[] = [];
+  for (const r of subResults) {
+    Object.assign(mergedFiles, r.files);
+    mergedOut.push(r.output);
+  }
+
+  return {
+    name: `${dept}-subswarm-d${depth}`,
+    output: mergedOut.join("\n"),
+    files: mergedFiles,
+    meta: { depth, subtaskCount: subs.length },
+  };
+}
+src/layers/critics.ts
+
+import { Agent, AgentResult } from "../agent.js";
+import { gatherSettled } from "../utils.js";
+
+const CRITICS: [string, string][] = [
+  ["BugHunter",       "adversarial bug-hunter who finds logic errors, race conditions, null derefs"],
+  ["SecurityAuditor", "security auditor finding injection, auth bypass, secret leaks, OWASP issues"],
+  ["UXCritic",        "UX critic finding poor flows, missing states, accessibility issues"],
+];
+
+export interface CriticVerdict {
+  pass: boolean;
+  issues: string[];
+}
+
+/** Run 3 critics in parallel. Returns aggregated verdict. */
+export async function criticRing(
+  fileMap: Record<string, string>,
+  ctx: string
+): Promise<CriticVerdict> {
+  if (Object.keys(fileMap).length === 0) return { pass: true, issues: [] };
+
+  const snippet = Object.entries(fileMap)
+    .slice(0, 8)
+    .map(([p, c]) => `===FILE: ${p}===\n${c.slice(0, 2000)}`)
+    .join("\n\n");
+
+  const tasks = CRITICS.map(([name, role]) => {
+    const a = new Agent(name, role, "critic", 0.2, 2500);
+    return a.run(
+      `Review these artifacts. Reply with JSON {"pass":bool,"issues":["..."]}. ` +
+      `Only fail (pass=false) if there are CRITICAL issues.\n\n${snippet}`,
+      ctx
+    );
+  });
+
+  const results = await gatherSettled(tasks);
+  const allIssues: string[] = [];
+  let pass = true;
+  for (const r of results) {
+    try {
+      const m = r.output.match(/\{[\s\S]*\}/);
+      if (m) {
+        const parsed = JSON.parse(m[0]);
+        if (parsed.pass === false) pass = false;
+        if (Array.isArray(parsed.issues)) allIssues.push(...parsed.issues);
+      }
+    } catch {
+      // critic output unparseable, treat as pass
+    }
+  }
+  return { pass, issues: allIssues };
+}
+src/layers/synthesizer.ts
+
+import { callLLM } from "../llm.js";
+import { MEM } from "../memory.js";
+
+/**
+ * High-context model merges all artifacts into a coherent file tree,
+ * resolves conflicts (same path produced twice), and writes to shared memory.
+ */
+export async function synthesize(
+  collectedFiles: Record<string, string>[]
+): Promise<Record<string, string>> {
+  console.log("\n🧬 SYNTHESIZER merging artifacts...");
+
+  // Deterministic merge: later wins, but on conflict ask longctx model.
+  const merged: Record<string, string> = {};
+  const conflicts: Record<string, string[]> = {};
+
+  for (const fileMap of collectedFiles) {
+    for (const [path, content] of Object.entries(fileMap)) {
+      if (merged[path] && merged[path] !== content) {
+        if (!conflicts[path]) conflicts[path] = [merged[path]];
+        conflicts[path].push(content);
+      } else {
+        merged[path] = content;
+      }
+    }
+  }
+
+  // Resolve conflicts with a long-context model
+  for (const [path, variants] of Object.entries(conflicts)) {
+    const sys =
+      "You are SYNTHESIZER. Merge multiple variants of the same file into ONE " +
+      "production-quality final version. Output ONLY the file contents, no fences.";
+    const prompt =
+      `File: ${path}\n\nVARIANTS:\n` +
+      variants.map((v, i) => `--- variant ${i + 1} ---\n${v}`).join("\n\n");
+    try {
+      const resolved = await callLLM(prompt, {
+        system: sys,
+        tier: "longctx",
+        maxTokens: 8000,
+        temperature: 0.2,
+        agentName: `Synth-${path}`,
+      });
+      merged[path] = resolved.replace(/^```[\w+\-]*\n?/, "").replace(/```\s*$/, "");
+    } catch {
+      // keep last variant on failure
+    }
+  }
+
+  for (const [path, content] of Object.entries(merged)) {
+    await MEM.writeFile(path, content);
+  }
+
+  console.log(`  ✓ Synthesized ${Object.keys(merged).length} files`);
+  return merged;
+}
+src/layers/validator.ts
+
+import * as fs from "fs/promises";
+import * as path from "path";
+import { OUTPUT_DIR } from "../config.js";
+import { MEM } from "../memory.js";
+import { callLLM } from "../llm.js";
+
+/** Static analysis + package boilerplate + write to disk. */
+export async function validateAndPackage(
+  blueprint: Record<string, any>
+): Promise<void> {
+  console.log("\n📦 VALIDATOR & PACKAGER running...");
+
+  // Ensure output dir
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
+
+  // Generate README + .env.example + Dockerfile via creative tier
+  const sys =
+    "You are PACKAGER. Generate README.md, .env.example, and Dockerfile " +
+    "for this project. Use ===FILE: path=== blocks.";
+  const ctx = JSON.stringify(
+    {
+      blueprint,
+      files: Object.keys(MEM.files),
+    },
+    null,
+    2
+  );
+  try {
+    const out = await callLLM(ctx, {
+      system: sys,
+      tier: "creative",
+      maxTokens: 4000,
+      temperature: 0.3,
+      agentName: "PACKAGER",
+    });
+    const re = /===\s*FILE:\s*(.+?)\s*===\s*```[\w+\-]*\n([\s\S]*?)```/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(out)) !== null) {
+      const p = m[1].trim().replace(/^\/+/, "");
+      if (!MEM.files[p]) MEM.files[p] = m[2].replace(/\s+$/, "") + "\n";
+    }
+  } catch (e) {
+    console.warn("  ⚠ Packager failed:", (e as Error).message);
+  }
+
+  // Write all files to disk
+  let written = 0;
+  for (const [rel, content] of Object.entries(MEM.files)) {
+    const full = path.join(OUTPUT_DIR, rel);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, content, "utf8");
+    written++;
+  }
+
+  // Write build report
+  const report = {
+    blueprint,
+    metrics: MEM.metrics,
+    fileCount: written,
+    decisions: MEM.decisions,
+    errors: MEM.errors,
+    timestamp: new Date().toISOString(),
+  };
+  await fs.writeFile(
+    path.join(OUTPUT_DIR, "_hydra_build_report.json"),
+    JSON.stringify(report, null, 2),
+    "utf8"
+  );
+
+  console.log(`  ✓ Wrote ${written} files to ${OUTPUT_DIR}`);
+}
+src/swarm.ts
+
+import { sovereign } from "./layers/sovereign.js";
+import { architectCouncil } from "./layers/architects.js";
+import {
+  DEPARTMENTS,
+  selectDepartments,
+  departmentHeadDecompose,
+} from "./layers/departments.js";
+import { workerExecute } from "./layers/workers.js";
+import { criticRing } from "./layers/critics.js";
+import { synthesize } from "./layers/synthesizer.js";
+import { validateAndPackage } from "./layers/validator.js";
+import { MEM } from "./memory.js";
+import { gatherSettled } from "./utils.js";
+import { AgentResult } from "./agent.js";
+
+/** End-to-end build pipeline. */
+export async function buildProject(userPrompt: string): Promise<void> {
+  const t0 = Date.now();
+  console.log("🐉 HYDRA-PRIME SWARM v4 — booting...");
+
+  // LAYER 1 — SOVEREIGN
+  const blueprint = await sovereign(userPrompt);
+
+  // LAYER 2 — ARCHITECT COUNCIL
+  const tdd = await architectCouncil(blueprint);
+
+  // LAYER 3 — DEPARTMENT HEADS
+  const ctx = JSON.stringify({ blueprint, tdd }, null, 2);
+  const activeDepts = selectDepartments(blueprint);
+  console.log(`\n🏢 Activating departments: ${activeDepts.join(", ")}`);
+
+  const deptTaskLists = await gatherSettled(
+    activeDepts.map(async (d) => ({
+      dept: d,
+      tasks: await departmentHeadDecompose(d, ctx),
+    }))
+  );
+
+  // LAYER 4 — FRACTAL WORKER SWARM
+  console.log("\n⚙️  WORKER SWARM executing...");
+  const allWorkerPromises: Promise<AgentResult>[] = [];
+  for (const { dept, tasks } of deptTaskLists) {
+    if (!DEPARTMENTS[dept]) continue;
+    for (const t of tasks) {
+      allWorkerPromises.push(workerExecute(t, dept, ctx, 0));
+    }
+  }
+  const workerResults = await gatherSettled(allWorkerPromises);
+  console.log(`  ✓ ${workerResults.length} worker results returned`);
+
+  // LAYER 5 — CRITIC RING
+  console.log("\n🔎 CRITIC RING reviewing...");
+  const allFiles: Record<string, string> = {};
+  for (const r of workerResults) Object.assign(allFiles, r.files);
+
+  const verdict = await criticRing(allFiles, ctx);
+  console.log(
+    `  Verdict: ${verdict.pass ? "PASS" : "FAIL"} (${verdict.issues.length} issues)`
+  );
+  if (!verdict.pass && verdict.issues.length > 0) {
+    MEM.errors.push(...verdict.issues);
+  }
+
+  // LAYER 6 — SYNTHESIZER
+  const fileMaps = workerResults.map((r) => r.files);
+  await synthesize(fileMaps);
+
+  // LAYER 7 — VALIDATOR & PACKAGER
+  await validateAndPackage(blueprint);
+
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log("\n🎉 HYDRA-PRIME build complete.");
+  console.log(`   ⏱  ${elapsed}s`);
+  console.log(`   📞 ${MEM.metrics.calls} LLM calls`);
+  console.log(
+    `   🔢 ${MEM.metrics.tokens_in} tokens in / ${MEM.metrics.tokens_out} tokens out`
+  );
+  console.log(`   📁 ${Object.keys(MEM.files).length} files generated`);
+}
+src/index.ts
+
+import { buildProject } from "./swarm.js";
+
+const userPrompt = process.argv.slice(2).join(" ").trim() ||
+  "Build a cross-platform mobile habit-tracking app with social challenges, " +
+  "Stripe-backed premium tier, offline sync, and an admin web dashboard.";
+
+buildProject(userPrompt).catch((err) => {
+  console.error("\n💥 HYDRA-PRIME crashed:", err);
+  process.exit(1);
+});
+That's the complete drop-in. Hand the whole tree to Replit and it will run end-to-end with just OPENROUTER_API_KEY set in Secrets.
+
+
+
+
+
+
+
+
+
+

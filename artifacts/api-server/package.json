@@ -21,6 +21,7 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "jsonwebtoken": "^9.0.3",
+    "p-limit": "^7.3.0",
     "stripe": "^20.0.0",
     "stripe-replit-sync": "1.0.0"
   },

@@ -1,131 +1,555 @@
 import { chatViaSdk } from "./openrouterSdk.js";
 import { db } from "@workspace/db";
 import { agentModelAssignmentsTable } from "@workspace/db/schema";
+import pLimit from "p-limit";
 
-// Fallback chain — openrouter/auto removed (it times out on every request
-// wasting 30s before falling through). Going direct to confirmed-working
-// models eliminates the Cloudflare timeout and wasted wait time.
-//
-// Paid models first (use your OpenRouter balance), free-tier (:free) as
-// safety net so builds keep working even if the balance hits $0.
-const CODE_MODELS = [
-  "google/gemini-2.0-flash-001",            // #1 — confirmed working every time
-  "google/gemini-2.5-flash",                // #2 — newer Gemini
-  "moonshotai/kimi-k2.6",                   // #3 — strong coder (falls back if slow)
-  "anthropic/claude-sonnet-4.6",            // #4 — quality (uses credits)
-  "openai/gpt-4.1",                         // #5 — GPT fallback
-  "qwen/qwen3-coder:free",                  // #6 FREE — no credits needed
-  "openai/gpt-oss-120b:free",               // #7 FREE — 120B fallback
-  "meta-llama/llama-3.3-70b-instruct:free", // #8 FREE — last resort
-];
+// ─── HYDRA-PRIME v4 Config ─────────────────────────────────────────────────
+const MAX_PARALLEL  = 20;   // simultaneous LLM calls (reduced from 200 for API rate limits)
+const MAX_RECURSION = 2;    // fractal sub-swarm depth
 
-const CHAT_MODELS = [
-  "google/gemini-2.0-flash-001",            // #1 — fast, confirmed working
-  "google/gemini-2.5-flash",                // #2 — newer Gemini
-  "moonshotai/kimi-k2.6",                   // #3 — quality (falls back if slow)
-  "anthropic/claude-sonnet-4.6",            // #4 — quality replies
-  "meta-llama/llama-3.3-70b-instruct:free", // #5 FREE — no credits needed
-  "qwen/qwen3-coder:free",                  // #6 FREE — last resort
-];
+// Model tiers — HYDRA-PRIME v4 routing with proven platform fallbacks appended
+const MODEL_TIERS: Record<string, string[]> = {
+  reasoning: [
+    "z-ai/glm-5.1",
+    "deepseek/deepseek-v4",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7",
+    "google/gemini-3.5-pro",
+    // Proven fallbacks
+    "google/gemini-2.5-flash",
+    "google/gemini-2.0-flash-001",
+    "openai/gpt-4.1",
+    "qwen/qwen3-coder:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+  ],
+  coding: [
+    "qwen/qwen3.6-coder",
+    "deepseek/deepseek-chat-v4",
+    "z-ai/glm-5.1",
+    "moonshotai/kimi-k2.6",
+    "x-ai/grok-build-0.1",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7",
+    // Proven fallbacks
+    "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash",
+    "openai/gpt-4.1",
+    "qwen/qwen3-coder:free",
+    "openai/gpt-oss-120b:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+  ],
+  fast: [
+    "inclusionai/ling-2.6-1t",
+    "minimax/minimax-m2.7",
+    "z-ai/glm-5.1",
+    "deepseek/deepseek-v4",
+    "anthropic/claude-haiku-4.5",
+    // Proven fallbacks
+    "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-coder:free",
+  ],
+  longctx: [
+    "google/gemini-3.5-pro",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-sonnet-4.6",
+    // Proven fallbacks
+    "google/gemini-2.5-flash",
+    "google/gemini-2.0-flash-001",
+    "openai/gpt-4.1",
+    "qwen/qwen3-coder:free",
+  ],
+  critic: [
+    "deepseek/deepseek-chat-v4",
+    "z-ai/glm-5.1",
+    "qwen/qwen3.6-coder",
+    "anthropic/claude-sonnet-4.6",
+    // Proven fallbacks
+    "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash",
+    "meta-llama/llama-3.3-70b-instruct:free",
+  ],
+  creative: [
+    "z-ai/glm-5.1",
+    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-opus-4.7",
+    // Proven fallbacks
+    "google/gemini-2.5-flash",
+    "openai/gpt-4.1",
+    "qwen/qwen3-coder:free",
+  ],
+};
 
-const FETCH_TIMEOUT_MS = 90_000;
+// ─── Module-level state ────────────────────────────────────────────────────
+const circuit: Record<string, number> = {};   // model → cooldown_until (ms epoch)
+const limiter = pLimit(MAX_PARALLEL);
 
-/* ── Agent-assignment lookup ──────────────────────────────────────────────
- * Reads the admin's per-agent model choices from the DB (set in Command Center
- * → Built-in Agents tab). Results are cached for 30 s to avoid a DB hit on
- * every single request. Returns a model list with the admin's chosen models
- * prepended so they run FIRST, with the default fallback chain behind them.
- * ─────────────────────────────────────────────────────────────────────── */
+// ─── Command Center model-assignment cache ─────────────────────────────────
 let _agentCache: { ts: number; map: Record<string, string> } | null = null;
 const AGENT_CACHE_MS = 30_000;
 
 async function getAgentAssignments(): Promise<Record<string, string>> {
-  if (_agentCache && Date.now() - _agentCache.ts < AGENT_CACHE_MS) {
-    return _agentCache.map;
-  }
+  if (_agentCache && Date.now() - _agentCache.ts < AGENT_CACHE_MS) return _agentCache.map;
   try {
     const rows = await db.select().from(agentModelAssignmentsTable);
     const map: Record<string, string> = {};
     for (const r of rows) map[r.agentId] = r.model;
     _agentCache = { ts: Date.now(), map };
     return map;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Returns a deduplicated model list with admin-assigned agent models prepended.
- * If no assignments exist the default fallback list is used unchanged.
- */
-async function modelsForAgents(agentIds: string[], fallback: string[]): Promise<string[]> {
-  const assignments = await getAgentAssignments();
-  const pinned: string[] = [];
-  for (const id of agentIds) {
-    const m = assignments[id];
-    if (m && !pinned.includes(m)) pinned.push(m);
-  }
-  if (pinned.length > 0) {
-    const tag = pinned.map(m => `[cc:${agentIds[0]}=${m}]`).join(" ");
-    console.log(`Command Center override — ${tag}`);
-  }
-  const rest = fallback.filter(m => !pinned.includes(m));
-  return [...pinned, ...rest];
+  } catch { return {}; }
 }
 
 function timeoutForModel(model: string): number {
-  if (/opus|sonnet|kimi/i.test(model)) return 90_000; // larger models need more time
-  if (model.endsWith(":free"))         return 60_000; // free models are fast
-  return 60_000;                                       // gemini, gpt-4.1 — fast
+  if (/opus|sonnet|kimi|gemini-3/i.test(model)) return 120_000;
+  if (model.endsWith(":free"))                   return  60_000;
+  return 60_000;
 }
 
-function getApiKey(): string | undefined {
-  return process.env.OPENROUTER_API_KEY;
+// ─── callLLM — HYDRA-PRIME core routing via SDK (with circuit breaker + pLimit)
+export interface CallOpts {
+  system?:    string;
+  tier?:      keyof typeof MODEL_TIERS;
+  maxTokens?: number;
+  temperature?: number;
+  jsonMode?:  boolean;
+  agentName?: string;
+  agentIds?:  string[];   // Command Center override keys
+  /** Pass a full message array instead of constructing system+user from opts */
+  messages?:  Array<{ role: string; content: string }>;
 }
 
-/**
- * Call OpenRouter with automatic model fallback. Tries each model in `models`
- * in order; advances to the next one on retryable errors (429, 5xx, timeouts).
- * Returns the first successful response (OpenAI-shaped JSON) and the model
- * that produced it, or throws if every model fails.
- *
- * Routes through the SDK singleton so all requests are captured by devtools
- * and visible in the Command Center → Telemetry tab.
- */
-async function callOpenRouter(
-  bodyWithoutModel: Record<string, any>,
-  models: string[],
-  timeoutMs: number,
-  _apiKey: string, // unused: SDK reads OPENROUTER_API_KEY from env
-): Promise<{ data: any; model: string }> {
-  let lastErr: any = null;
-  for (const model of models) {
-    // Each model gets its own timeout based on its known speed profile
-    // (Opus/Sonnet/gpt-4o = 180s, faster models = 60s). The caller's
-    // `timeoutMs` is intentionally ignored: it was usually a stale 30s
-    // ceiling that prematurely aborted Opus, but we also want fast
-    // models to keep their fast-fail behavior in fallback chains.
-    void timeoutMs;
-    const perCallTimeout = timeoutForModel(model);
-    try {
-      const data = await chatViaSdk({ ...bodyWithoutModel, model }, { timeoutMs: perCallTimeout });
-      return { data, model };
-    } catch (err: any) {
-      lastErr = err;
-      const status: number | undefined =
-        err?.statusCode ?? err?.status ?? err?.response?.status;
-      const isTimeout = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
-      const retryable = isTimeout || status === 429 || (status !== undefined && status >= 500);
-      if (!retryable && status !== undefined) {
-        console.error(`OpenRouter non-retryable error on ${model}:`, status, err?.message);
-        throw err;
-      }
-      console.warn(`OpenRouter ${status ?? "exception"} on ${model}: ${err?.message || err} — trying next fallback`);
-      continue;
+async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
+  const {
+    system    = "You are an elite production-grade engineer.",
+    tier      = "coding",
+    maxTokens = 8_000,
+    temperature = 0.3,
+    jsonMode  = false,
+    agentName = "anon",
+    agentIds  = [],
+    messages,
+  } = opts;
+
+  const baseChain = MODEL_TIERS[tier] ?? MODEL_TIERS.coding;
+
+  // Prepend any Command Center overrides
+  let chain = baseChain;
+  if (agentIds.length > 0) {
+    const assignments = await getAgentAssignments();
+    const pinned: string[] = [];
+    for (const id of agentIds) {
+      const m = assignments[id];
+      if (m && !pinned.includes(m)) pinned.push(m);
+    }
+    if (pinned.length > 0) {
+      console.log(`  [CC] ${agentIds[0]}: ${pinned.join(", ")}`);
+      chain = [...pinned, ...baseChain.filter(m => !pinned.includes(m))];
     }
   }
-  throw lastErr || new Error("All OpenRouter models failed");
+
+  return limiter(async () => {
+    let lastErr: string | null = null;
+
+    for (const model of chain) {
+      if ((circuit[model] || 0) > Date.now()) continue;  // circuit breaker
+
+      const body: Record<string, any> = {
+        model,
+        messages: messages ?? [
+          { role: "system", content: system },
+          { role: "user",   content: prompt  },
+        ],
+        max_tokens:  maxTokens,
+        temperature,
+      };
+      if (jsonMode) body.response_format = { type: "json_object" };
+
+      try {
+        const data = await chatViaSdk(body, { timeoutMs: timeoutForModel(model) });
+        const content: string = data?.choices?.[0]?.message?.content ?? "";
+        console.log(`  ✓ [${agentName}] ${model} (${content.length} chars)`);
+        return content;
+      } catch (err: any) {
+        const status: number | undefined =
+          err?.statusCode ?? err?.status ?? err?.response?.status;
+        const isTimeout = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
+        const retryable = isTimeout || status === 429 || (status !== undefined && status >= 500);
+
+        circuit[model] = Date.now() + (status === 429 ? 30_000 : 15_000);
+        lastErr = `${model}: ${status ?? "timeout"} — ${err?.message ?? ""}`;
+        console.warn(`  ⚠ [${agentName}] ${model} (${status ?? "timeout"}) → next fallback`);
+        if (!retryable && status !== undefined) continue;  // non-retryable: still try next
+        continue;
+      }
+    }
+
+    throw new Error(`All models failed [${tier}] for '${agentName}': ${lastErr}`);
+  });
 }
+
+// ─── JSON / file-block extraction helpers ─────────────────────────────────
+function extractJSON(text: string): any {
+  let t = text.trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  const fb = t.indexOf("{"), fb2 = t.indexOf("[");
+  const cands = [fb, fb2].filter(i => i >= 0);
+  const start = cands.length ? Math.min(...cands) : 0;
+  t = t.slice(start);
+  for (let end = t.length; end > 0; end--) {
+    try { return JSON.parse(t.slice(0, end)); } catch { continue; }
+  }
+  return {};
+}
+
+function extractCodeFiles(text: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const pat = /===\s*FILE:\s*(.+?)\s*===\s*```[\w+\-]*\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = pat.exec(text)) !== null) {
+    const path = m[1].trim().replace(/^\/+/, "");
+    files[path] = m[2].replace(/\s+$/, "") + "\n";
+  }
+  return files;
+}
+
+async function gatherSettled<T>(promises: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  return results
+    .filter((r): r is PromiseFulfilledResult<T> => r.status === "fulfilled")
+    .map(r => r.value);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HYDRA-PRIME SWARM LAYERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Layer 1: SOVEREIGN ────────────────────────────────────────────────────
+async function sovereign(userPrompt: string): Promise<Record<string, any>> {
+  const raw = await callLLM(userPrompt, {
+    system:
+      "You are SOVEREIGN, the CEO architect. Read the user's request and " +
+      "output a JSON master blueprint with keys: project_name, project_type " +
+      "(saas|website|mobile_app|ai_tool|automation|game|hybrid), " +
+      "platforms[], stack{}, key_features[], target_users, monetization, " +
+      "complexity (1-10), estimated_files (int), risks[].",
+    tier: "reasoning",
+    maxTokens: 4_000,
+    temperature: 0.4,
+    jsonMode: true,
+    agentName: "SOVEREIGN",
+    agentIds: ["orchestrator"],
+  });
+  const bp = extractJSON(raw);
+  console.log(`\n👑 SOVEREIGN: ${bp.project_name} (${bp.project_type})`);
+  return bp;
+}
+
+// ── Layer 2: ARCHITECT COUNCIL ────────────────────────────────────────────
+const ARCHITECTS: [string, string][] = [
+  ["SystemArchitect",   "system architect designing modules, services, and data flow"],
+  ["UXArchitect",       "UX/UI architect designing screens, flows, components, design system"],
+  ["DataArchitect",     "data architect designing collections, schemas, and data relationships"],
+  ["SecurityArchitect", "security architect designing auth patterns and session management"],
+  ["DevOpsArchitect",   "devops architect designing system integration and deployment strategy"],
+];
+
+async function architectCouncil(blueprint: Record<string, any>): Promise<Record<string, any>> {
+  console.log("\n🏛  ARCHITECT COUNCIL convening...");
+  const ctx = JSON.stringify(blueprint, null, 2);
+
+  const results = await gatherSettled(
+    ARCHITECTS.map(([name, role]) =>
+      callLLM(
+        `Produce your section of the Technical Design Document for this blueprint.\n` +
+        `Be exhaustive. Focus on your domain.\n` +
+        `Output JSON with key '${name}_design' containing your complete design.\n\nBLUEPRINT:\n${ctx}`,
+        { system: `You are ${name}, a ${role}.`, tier: "reasoning", maxTokens: 3_000, temperature: 0.3, agentName: name },
+      ).then(raw => extractJSON(raw))
+    )
+  );
+
+  const tdd: Record<string, any> = {};
+  for (const r of results) {
+    if (r && typeof r === "object" && !Array.isArray(r)) Object.assign(tdd, r);
+  }
+  console.log(`  ✓ TDD assembled from ${results.length} architects`);
+  return tdd;
+}
+
+// ── Layer 3: DEPARTMENT HEADS ─────────────────────────────────────────────
+const DEPARTMENTS: Record<string, string> = {
+  Frontend:      "frontend lead (React/Next.js/Vue/Svelte web UIs)",
+  Backend:       "backend lead (Node/Python/Go APIs, microservices)",
+  Database:      "database lead (Postgres, schemas, queries, ORM)",
+  MobileIOS:     "iOS lead (Swift/SwiftUI or React Native)",
+  MobileAndroid: "Android lead (Kotlin/Jetpack or React Native)",
+  GameEngine:    "game dev lead (Unity C#, Godot, Phaser, Three.js)",
+  AIML:          "AI/ML lead (LLM integration, embeddings, RAG)",
+  Auth:          "authentication lead (OAuth, JWT, sessions, RBAC)",
+  Payments:      "payments lead (Stripe, IAP, subscriptions)",
+  DevOps:        "devops lead (Docker, CI, deploy scripts, EAS)",
+  QA:            "QA lead (unit, integration, e2e tests)",
+  Docs:          "documentation lead (README, API docs, user guides)",
+};
+
+function selectDepartments(blueprint: Record<string, any>): string[] {
+  const pt = (blueprint.project_type || "").toLowerCase();
+  let base = ["Backend", "Database", "Auth", "DevOps", "QA", "Docs"];
+  if (pt.includes("mobile"))     base = base.concat(["MobileIOS", "MobileAndroid", "Frontend"]);
+  if (pt.includes("saas"))       base = base.concat(["Frontend", "Payments", "AIML"]);
+  if (pt.includes("website"))    base = base.concat(["Frontend"]);
+  if (pt.includes("ai_tool"))    base = base.concat(["Frontend", "AIML"]);
+  if (pt.includes("automation")) base = base.concat(["Frontend", "AIML"]);
+  if (pt.includes("business"))   base = base.concat(["Frontend", "Auth", "Payments"]);
+  if (pt.includes("game"))       base = ["GameEngine", "Backend", "DevOps", "QA", "Docs"];
+  if (pt.includes("hybrid"))     base = base.concat(Object.keys(DEPARTMENTS));
+  return Array.from(new Set(base));
+}
+
+interface WorkerTask {
+  id: string;
+  title: string;
+  file_hint: string;
+  description: string;
+  depends_on?: string[];
+}
+
+async function departmentHeadDecompose(dept: string, ctx: string): Promise<WorkerTask[]> {
+  const role = DEPARTMENTS[dept];
+  const raw = await callLLM(ctx, {
+    system:
+      `You are the ${dept} Department Head (${role}). ` +
+      "Decompose your domain into 5-10 ATOMIC implementation tasks. " +
+      "Each task = one file or one tightly-scoped unit. " +
+      `Output JSON: {"tasks": [{"id":"...","title":"...","file_hint":"path","description":"...","depends_on":[]}]}`,
+    tier: "reasoning",
+    maxTokens: 3_000,
+    temperature: 0.3,
+    jsonMode: true,
+    agentName: `${dept}-Head`,
+  });
+  const data = extractJSON(raw);
+  return Array.isArray(data?.tasks) ? (data.tasks as WorkerTask[]) : [];
+}
+
+// ── Layer 4: FRACTAL WORKER SWARM ─────────────────────────────────────────
+async function workerExecute(
+  task: WorkerTask,
+  dept: string,
+  ctx: string,
+  depth: number = 0,
+): Promise<Record<string, string>> {
+  const name = `${dept}-W-${task.id || "x"}`;
+  const desc = task.description || "";
+
+  // Fractal: split oversized tasks
+  if (depth < MAX_RECURSION && desc.length > 1200 && desc.toLowerCase().includes("split")) {
+    const raw = await callLLM(JSON.stringify(task), {
+      system:
+        "Split this task into 3-5 smaller atomic subtasks. " +
+        'JSON: {"subtasks":[{"id":"...","title":"...","file_hint":"...","description":"..."}]}',
+      tier: "fast",
+      maxTokens: 2_000,
+      temperature: 0.2,
+      jsonMode: true,
+      agentName: `${dept}-Splitter-d${depth}`,
+    });
+    const parsed = extractJSON(raw);
+    const subs: WorkerTask[] = Array.isArray(parsed?.subtasks) ? parsed.subtasks : [];
+    if (subs.length > 0) {
+      const subResults = await gatherSettled(subs.map(st => workerExecute(st, dept, ctx, depth + 1)));
+      return Object.assign({}, ...subResults);
+    }
+  }
+
+  const out = await callLLM(
+    `PROJECT CONTEXT:\n${ctx}\n\nTASK:\nID: ${task.id}\nTitle: ${task.title}\n` +
+    `Target file: ${task.file_hint}\nDescription: ${desc}\n\nImplement fully. Emit ===FILE: path=== blocks.`,
+    {
+      system:
+        `You are ${name}, a ${dept} implementation engineer. ` +
+        "Write production-quality, fully implemented code with NO placeholders, NO 'TODO'. " +
+        "When emitting files, format as:\n===FILE: relative/path.ext===\n```lang\n<code>\n```\n",
+      tier: "coding",
+      maxTokens: 8_000,
+      temperature: 0.2,
+      agentName: name,
+    },
+  );
+  return extractCodeFiles(out);
+}
+
+// ── Layer 5: CRITIC RING ──────────────────────────────────────────────────
+interface CriticVerdict { pass: boolean; issues: string[]; }
+
+async function criticRing(fileMap: Record<string, string>, ctx: string): Promise<CriticVerdict> {
+  if (Object.keys(fileMap).length === 0) return { pass: true, issues: [] };
+
+  const snippet = Object.entries(fileMap)
+    .slice(0, 8)
+    .map(([p, c]) => `===FILE: ${p}===\n${c.slice(0, 2_000)}`)
+    .join("\n\n");
+
+  const CRITICS: [string, string][] = [
+    ["BugHunter",       "adversarial bug-hunter who finds logic errors, race conditions, null derefs"],
+    ["SecurityAuditor", "security auditor finding injection, auth bypass, secret leaks, OWASP issues"],
+    ["UXCritic",        "UX critic finding poor flows, missing states, and accessibility issues"],
+  ];
+
+  const results = await gatherSettled(
+    CRITICS.map(([name, role]) =>
+      callLLM(
+        `Review these artifacts. Reply with JSON {"pass":bool,"issues":["..."]}. ` +
+        `Only fail (pass=false) for CRITICAL issues.\n\n${snippet}`,
+        { system: `You are ${name}, a ${role}.`, tier: "critic", maxTokens: 2_000, temperature: 0.2, agentName: name },
+      )
+    )
+  );
+
+  const allIssues: string[] = [];
+  let pass = true;
+  for (const r of results) {
+    try {
+      const m = r.match(/\{[\s\S]*\}/);
+      if (m) {
+        const parsed = JSON.parse(m[0]);
+        if (parsed.pass === false) pass = false;
+        if (Array.isArray(parsed.issues)) allIssues.push(...parsed.issues);
+      }
+    } catch { /* unparseable = treat as pass */ }
+  }
+  console.log(`  Critic ring: ${pass ? "PASS ✓" : "FAIL ✗"} (${allIssues.length} issues)`);
+  return { pass, issues: allIssues };
+}
+
+// ── Layer 6: SYNTHESIZER → single HTML ───────────────────────────────────
+async function synthesizerToHTML(
+  collectedFiles: Record<string, string>[],
+  blueprint: Record<string, any>,
+  originalPrompt: string,
+  projectName: string,
+): Promise<string> {
+  console.log("\n🧬 SYNTHESIZER → single HTML...");
+
+  // Merge all files (last writer wins on conflict)
+  const merged: Record<string, string> = {};
+  for (const fm of collectedFiles) {
+    for (const [path, content] of Object.entries(fm)) merged[path] = content;
+  }
+  if (Object.keys(merged).length === 0) return "";
+
+  const fileBlock = Object.entries(merged)
+    .slice(0, 25)
+    .map(([p, c]) => `=== ${p} ===\n${c.slice(0, 2_500)}`)
+    .join("\n\n---\n\n");
+
+  const sys = `You are SYNTHESIZER — the final stage of HYDRA-PRIME SWARM v4.
+You receive a multi-file project generated by specialist AI agents.
+Your job: produce ONE single, complete, self-contained HTML file implementing ALL features.
+
+CRITICAL RULES:
+1. Output ONLY raw HTML. No markdown, no code fences, no explanation.
+2. Single complete HTML document: <!DOCTYPE html><html>...</html>
+3. ALL CSS inside <style> tags. ALL JavaScript in <script> tags.
+4. NO external resources — no CDN, no external scripts, no web fonts.
+5. System fonts ONLY: -apple-system, 'Segoe UI', Arial, monospace, sans-serif.
+6. For icons: Unicode emoji or inline SVG ONLY.
+
+NEXUS PLATFORM BACKEND — use window.NEXUS_API for ALL data (injected at runtime):
+  async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }
+  async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
+  async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); }
+  async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }
+
+AUTH (build real multi-user auth if the project needs it):
+  Register: createRecord('users',{username,email,passwordHash:btoa(unescape(encodeURIComponent(pw))),role:'user',createdAt:Date.now()})
+  Login: listRecords('users') → find user → verify → store in localStorage._sess as btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30}))
+  Check: try{const s=JSON.parse(atob(localStorage.getItem('_sess')||''));if(s.exp>Date.now())return s;}catch{return null;}
+
+DESIGN: dark cyberpunk aesthetic (#0f0f1a background, #00d4ff accent), smooth animations, polished UI.
+Every button does something. Every form works. Handle loading, empty, and error states.`;
+
+  const userMsg =
+    `PROJECT: "${projectName}"\nREQUIREMENT: ${originalPrompt}\n` +
+    `BLUEPRINT: ${JSON.stringify(blueprint).slice(0, 800)}\n\n` +
+    `GENERATED AGENT FILES:\n${fileBlock}\n\n` +
+    `Synthesize ALL of the above into one complete, production-quality, fully-functional self-contained HTML file. ` +
+    `Implement EVERY feature from EVERY agent file. Use window.NEXUS_API for all data storage.`;
+
+  try {
+    const result = await callLLM(userMsg, {
+      system: sys,
+      tier: "longctx",
+      maxTokens: 16_000,
+      temperature: 0.3,
+      agentName: "SYNTHESIZER",
+      agentIds: ["code-generator"],
+    });
+    const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
+    if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+      console.log(`  ✓ SYNTHESIZER: ${stripped.length} chars`);
+      return stripped;
+    }
+  } catch (e) {
+    console.warn("  ✗ SYNTHESIZER failed:", (e as Error).message);
+  }
+  return "";
+}
+
+// ── Full 6-layer HYDRA-PRIME pipeline ─────────────────────────────────────
+async function hydraSwarm(userPrompt: string, projectName: string): Promise<string> {
+  const t0 = Date.now();
+  console.log("\n🐉 HYDRA-PRIME SWARM v4 — booting...");
+
+  // LAYER 1 — SOVEREIGN
+  const blueprint = await sovereign(userPrompt);
+
+  // LAYER 2 — ARCHITECT COUNCIL (5 parallel)
+  const tdd = await architectCouncil(blueprint);
+
+  // LAYER 3 — DEPARTMENT HEADS (parallel)
+  const ctx = JSON.stringify({ blueprint, tdd }, null, 2).slice(0, 12_000);
+  const activeDepts = selectDepartments(blueprint);
+  console.log(`\n🏢 Departments: ${activeDepts.join(", ")}`);
+
+  const deptTaskLists = await gatherSettled(
+    activeDepts.map(async d => ({ dept: d, tasks: await departmentHeadDecompose(d, ctx) }))
+  );
+
+  // LAYER 4 — FRACTAL WORKER SWARM (all tasks in parallel, capped by pLimit)
+  console.log("\n⚙️  WORKER SWARM executing...");
+  const workerPromises: Promise<Record<string, string>>[] = [];
+  for (const { dept, tasks } of deptTaskLists) {
+    if (!DEPARTMENTS[dept]) continue;
+    for (const t of tasks) workerPromises.push(workerExecute(t, dept, ctx, 0));
+  }
+  const workerResults = await gatherSettled(workerPromises);
+  console.log(`  ✓ ${workerResults.length} worker results`);
+
+  // LAYER 5 — CRITIC RING (3 parallel critics)
+  console.log("\n🔎 CRITIC RING reviewing...");
+  const allFiles: Record<string, string> = {};
+  for (const r of workerResults) Object.assign(allFiles, r);
+  await criticRing(allFiles, ctx);
+
+  // LAYER 6 — SYNTHESIZER → single HTML
+  const html = await synthesizerToHTML(workerResults, blueprint, userPrompt, projectName);
+
+  const elapsed = ((Date.now() - t0) / 1_000).toFixed(1);
+  console.log(`\n🎉 HYDRA-PRIME complete in ${elapsed}s | ${Object.keys(allFiles).length} agent files`);
+  return html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUBLIC EXPORTS  (same signatures as before — nothing in the rest of the
+// platform needs to change)
+// ═══════════════════════════════════════════════════════════════════════════
 
 export interface CharacterContext {
   id: string;
@@ -140,30 +564,55 @@ export interface CharacterContext {
 function buildCharacterBlock(characters: CharacterContext[]): string {
   if (!characters.length) return "";
   const list = characters.map((c, i) => {
-    const tags = c.tags?.length ? ` Tags: ${c.tags.join(", ")}.` : "";
+    const tags  = c.tags?.length ? ` Tags: ${c.tags.join(", ")}.` : "";
     const notes = c.notes ? ` Notes: ${c.notes}.` : "";
     return `${i + 1}. "${c.name}" (${c.gameStyle} style) — ${c.prompt}.${tags}${notes}`;
   }).join("\n");
-  return `\n\nCHARACTERS TO INCLUDE IN THIS GAME:\n${list}\n\nIntegrate these characters as playable hero, enemies, or NPCs based on their descriptions. Use canvas shapes, colors, and art style that matches each character's style (cartoon = smooth rounded shapes with bright colors; pixel art = grid-aligned blocky shapes; realistic = detailed shading and proportions; chibi = large head small body style). The first character is the player character unless the prompt says otherwise.`;
+  return (
+    `\n\nCHARACTERS TO INCLUDE IN THIS GAME:\n${list}\n\n` +
+    "Integrate these characters as playable hero, enemies, or NPCs based on their descriptions. " +
+    "Use canvas shapes, colors, and art style that matches each character's style " +
+    "(cartoon = smooth rounded shapes with bright colors; pixel art = grid-aligned blocky shapes; " +
+    "realistic = detailed shading and proportions; chibi = large head small body style). " +
+    "The first character is the player character unless the prompt says otherwise."
+  );
 }
 
-/** Generate a complete self-contained HTML app for the preview iframe */
+/**
+ * Generate a complete self-contained HTML app for the preview iframe.
+ *
+ * Web apps  → HYDRA-PRIME SWARM v4 (6-layer multi-agent pipeline → synthesize to HTML).
+ * Games     → single-shot with coding tier (coherent single-author output is better for games).
+ * On swarm failure → single-shot fallback.
+ */
 export async function generateProjectCode(
   type: string,
   name: string,
   prompt: string,
   characters: CharacterContext[] = [],
 ): Promise<string> {
-  const API_KEY = getApiKey();
-  if (!API_KEY) {
+  if (!process.env.OPENROUTER_API_KEY) {
     console.warn("OPENROUTER_API_KEY not set — using fallback template");
     return getDefaultHtml(type, name, prompt);
   }
 
-  const isGame = type === "game";
-
-  const systemPrompt = isGame
-    ? `You are an expert HTML5 game developer who creates complete, playable browser games in a single HTML file.
+  // ── Games: single-shot (game loops are best written by one coherent author) ──
+  if (type === "game") {
+    const characterBlock = buildCharacterBlock(characters);
+    try {
+      const result = await callLLM(
+        `Build a complete, fully-playable HTML5 Canvas browser game called "${name}".\n\n` +
+        `Game requirements: ${prompt}${characterBlock}\n\n` +
+        `The game must:\n` +
+        `- Have a polished start/menu screen\n` +
+        `- Be genuinely playable with smooth game loop (requestAnimationFrame)\n` +
+        `- Include score, lives or health, and difficulty progression\n` +
+        `- Have satisfying visual effects (particles, glows, animations) using canvas only\n` +
+        `- Work with keyboard AND touch/click controls\n` +
+        `- Have a game-over screen with final score and restart option\n` +
+        `Make it feel like a real arcade game. Zero external dependencies.`,
+        {
+          system: `You are an expert HTML5 game developer who creates complete, playable browser games in a single HTML file.
 
 CRITICAL RULES — follow exactly or the game will not work:
 1. Output ONLY raw HTML. No markdown, no code fences, no explanation.
@@ -175,110 +624,88 @@ CRITICAL RULES — follow exactly or the game will not work:
 7. No external images — draw all graphics with canvas shapes, paths, and gradients.
 8. The game must be fully playable: keyboard controls (WASD / arrow keys / space), click/touch support, working game loop with requestAnimationFrame.
 9. Include: start screen, main game loop, score tracking, game over screen with restart button.
-10. Make it genuinely fun and visually impressive using canvas gradients, particles, neon glows, and animations.`
-    : `You are an expert full-stack web developer who creates stunning, fully-functional single-file web applications with a REAL backend database and complete user flows.
+10. Make it genuinely fun and visually impressive using canvas gradients, particles, neon glows, and animations.`,
+          tier: "coding",
+          maxTokens: 8_000,
+          temperature: 0.7,
+          agentName: "GameCodegen",
+          agentIds: ["code-generator"],
+        },
+      );
+      const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
+      if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
+        console.log("generateProjectCode (game): success");
+        return stripped;
+      }
+    } catch (err: any) {
+      console.error("Game generation failed:", err?.message ?? err);
+    }
+    return getDefaultHtml(type, name, prompt);
+  }
 
-CRITICAL RULES — follow exactly or the output will fail:
+  // ── Web apps: HYDRA-PRIME SWARM v4 ────────────────────────────────────
+  try {
+    const swarmPrompt =
+      `Build a complete, production-quality ${type} web application called "${name}".\n\n` +
+      `User's requirements: ${prompt}\n\n` +
+      `PLATFORM CONTEXT:\n` +
+      `- The app is served in a browser with window.NEXUS_API already injected (real PostgreSQL backend)\n` +
+      `- Use window.NEXUS_API for ALL data — never localStorage for app data\n` +
+      `- Build real multi-user auth (register/login/logout via users collection) where appropriate\n` +
+      `- Build every feature end-to-end with no dead ends\n` +
+      `- Handle loading, empty, and error states throughout\n` +
+      `- Dark cyberpunk aesthetic, polished UI, smooth animations`;
+
+    const html = await hydraSwarm(swarmPrompt, name);
+    if (html && (html.startsWith("<!DOCTYPE") || html.startsWith("<html") || html.startsWith("<HTML"))) {
+      console.log("generateProjectCode (swarm): success");
+      return html;
+    }
+    console.warn("HYDRA-PRIME returned non-HTML — falling back to single-shot");
+  } catch (err: any) {
+    console.error("HYDRA-PRIME swarm failed:", err?.message ?? err);
+    console.warn("Falling back to single-shot generation...");
+  }
+
+  // ── Single-shot fallback ───────────────────────────────────────────────
+  try {
+    const result = await callLLM(
+      `Build a complete, production-quality ${type} web application called "${name}".\n\nRequirements: ${prompt}\n\nUse window.NEXUS_API for all data. Build full end-to-end flows.`,
+      {
+        system: `You are an expert full-stack web developer who creates stunning, fully-functional single-file web applications with a REAL backend database and complete user flows.
+
+CRITICAL RULES:
 1. Output ONLY raw HTML. No markdown, no code fences, no explanation.
-2. The file must be a single complete HTML document: <!DOCTYPE html><html>...</html>
-3. ALL CSS must be inside <style> tags in <head>. ALL JavaScript inside <script> tags.
-4. NO CDN scripts, no Google Fonts, no external CSS. You MAY use fetch() to call APIs including window.NEXUS_API.
-5. Use ONLY system fonts: -apple-system, 'Segoe UI', Arial, monospace, or sans-serif.
-6. For icons use Unicode emoji or inline SVG only.
-7. The app must be fully interactive — every button does something, every form works, navigation switches views.
-8. Use realistic data — no "Lorem ipsum". Make it feel like a real, live product.
-9. Design must be polished: dark background, smooth animations, hover effects, professional UI.
+2. Single complete HTML document: <!DOCTYPE html><html>...</html>
+3. ALL CSS inside <style> tags. ALL JavaScript in <script> tags.
+4. No CDN scripts, no Google Fonts, no external CSS. You MAY use fetch() including window.NEXUS_API.
+5. System fonts only. For icons: Unicode emoji or inline SVG only.
+6. Every button does something, every form works, navigation switches views.
+7. Dark background, smooth animations, professional UI.
 
-NEXUS PLATFORM BACKEND (MANDATORY — use this for ALL data persistence):
-window.NEXUS_API is a real REST endpoint backed by PostgreSQL, injected at runtime.
-Use it for EVERYTHING. Never use localStorage for app data (only for session tokens and UI prefs).
-
-CRUD pattern — replace 'items' with any collection name (users, posts, products, orders, tasks…):
+NEXUS BACKEND (use window.NEXUS_API for ALL data — injected at runtime):
   async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }
   async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
   async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); }
   async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }
-
-AUTHENTICATION (build real multi-user auth using the users collection):
-  Register: createRecord('users',{username,email,passwordHash:btoa(unescape(encodeURIComponent(pw))),role:'user',createdAt:Date.now()})
-  Login:    listRecords('users') → find user by email → verify passwordHash → save session:
-            localStorage.setItem('_sess',btoa(JSON.stringify({userId:u.id,username:u.username,role:u.role,exp:Date.now()+86400000*30})))
-  Check:    try{const s=JSON.parse(atob(localStorage.getItem('_sess')||''));if(s.exp>Date.now())return s;}catch{return null;}
-  Scope:    Filter records so users see only their own data: records.filter(r=>r.userId===sess.userId)
-  Logout:   localStorage.removeItem('_sess')
-
-COMPLETE FLOWS — every feature must be end-to-end. No dead ends:
-  - User accounts → build register, login, dashboard, and logout screens
-  - Product catalog → build catalog, detail view, cart, and checkout
-  - CRUD feature → build list, create form, detail view, edit, and delete
-  - Always handle: loading states (spinner while fetching), empty states (CTA when no data), error states
-
-BACKEND INTEGRATIONS:
-  - AI features: fetch OpenAI/Anthropic APIs with window.USER_SECRETS.OPENAI_API_KEY
-  - Payments: use window.USER_SECRETS.STRIPE_PUBLISHABLE_KEY
-  - Missing keys: call window.NEXUS_REQUIRE_KEY('KEY_NAME') — it shows a clear setup guide
-
-DATA DESIGN: Think about schema before coding. Name fields clearly. Include timestamps (createdAt: Date.now()). Scope records by userId when multi-user.`;
-
-  const characterBlock = buildCharacterBlock(characters);
-  const userPrompt = isGame
-    ? `Build a complete, fully-playable HTML5 Canvas browser game called "${name}".
-
-Game requirements: ${prompt}${characterBlock}
-
-The game must:
-- Have a polished start/menu screen
-- Be genuinely playable with smooth game loop (requestAnimationFrame)
-- Include score, lives or health, and difficulty progression
-- Have satisfying visual effects (particles, glows, animations) using canvas only
-- Work with keyboard AND touch/click controls
-- Have a game-over screen with final score and restart option
-Make it feel like a real arcade game. Zero external dependencies.`
-    : `Build a complete, production-quality ${type} web application called "${name}".
-
-User's requirements: ${prompt}
-
-This app has window.NEXUS_API injected — a real PostgreSQL-backed REST endpoint. Use it for ALL data storage; never use localStorage for app data. Build real multi-user functionality (register/login/logout with the users collection) if the app warrants it. Build every feature end-to-end with no dead ends. Handle loading, empty, and error states throughout.`;
-
-  try {
-    const models = await modelsForAgents(["code-generator", "orchestrator"], CODE_MODELS);
-    const { data, model } = await callOpenRouter(
-      {
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user",   content: userPrompt   },
-        ],
+AUTH: Register/login using the users collection. Store session in localStorage._sess as btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30})).`,
+        tier: "coding",
+        maxTokens: 8_000,
         temperature: 0.7,
-        max_tokens: 8000,
+        agentName: "SingleShotFallback",
+        agentIds: ["code-generator"],
       },
-      models,
-      FETCH_TIMEOUT_MS,
-      API_KEY,
     );
-
-    const content: string = data.choices?.[0]?.message?.content || "";
-    if (!content) {
-      console.warn(`OpenRouter (${model}) returned empty content, using fallback`);
-      return getDefaultHtml(type, name, prompt);
-    }
-
-    // Strip markdown fences if the model wrapped the output
-    const stripped = content
-      .replace(/^```(?:html)?\n?/i, "")
-      .replace(/\n?```$/i, "")
-      .trim();
-
+    const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
-      console.log(`generateProjectCode: success via ${model}`);
+      console.log("generateProjectCode (single-shot fallback): success");
       return stripped;
     }
-
-    console.warn(`OpenRouter (${model}) returned non-HTML content, using fallback`);
-    return getDefaultHtml(type, name, prompt);
   } catch (err: any) {
-    console.error("All OpenRouter models failed for generateProjectCode:", err?.message ?? err);
-    return getDefaultHtml(type, name, prompt);
+    console.error("Single-shot fallback failed:", err?.message ?? err);
   }
+
+  return getDefaultHtml(type, name, prompt);
 }
 
 /** Apply a user-requested change to an existing project's HTML code */
@@ -291,78 +718,57 @@ export async function generateUpdatedCode(
   memory: ProjectMemory | null = null,
   characters: CharacterContext[] = [],
 ): Promise<string> {
-  const API_KEY = getApiKey();
-  if (!API_KEY || !currentCode) return currentCode;
-  const memoryBlock = memory ? `\n\n${formatMemoryForPrompt(memory)}\n` : "";
+  if (!process.env.OPENROUTER_API_KEY || !currentCode) return currentCode;
 
-  const isGame = type === "game";
+  const memoryBlock    = memory ? `\n\n${formatMemoryForPrompt(memory)}\n` : "";
+  const isGame         = type === "game";
+  const secretsBlock   = availableSecretNames.length > 0
+    ? `\n\nUSER-PROVIDED API KEYS available via window.USER_SECRETS:\n${availableSecretNames.map(n => `  - window.USER_SECRETS.${n}`).join("\n")}`
+    : `\n\nNo user API keys yet. If the requested change needs an external service, tell the user which key name to add in Settings → API Keys.`;
 
-  const secretsBlock = availableSecretNames.length > 0
-    ? `\n\nUSER-PROVIDED API KEYS / SECRETS available at runtime via window.USER_SECRETS:
-${availableSecretNames.map((n) => `  - window.USER_SECRETS.${n}`).join("\n")}
-You SHOULD use these when calling external APIs (OpenAI, Stripe, etc.). Never hard-code keys.`
-    : `\n\nUSER-PROVIDED API KEYS / SECRETS: none yet. If the requested change requires an external API, write the code to use window.USER_SECRETS.<KEY_NAME> and gracefully show the user a friendly message inside the app telling them which secret name to add in Settings → API Keys.`;
-
-  const systemPrompt = isGame
-    ? `You are an expert HTML5 game developer. You will receive an existing complete HTML5 game file and a change request.
-Output ONLY the complete updated HTML file with the requested changes applied.
+  const sys = isGame
+    ? `You are an expert HTML5 game developer. Receive an existing complete game and a change request.
+Output ONLY the complete updated HTML file.
 CRITICAL RULES:
-1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
-2. Keep ALL existing game logic, assets and structure intact — only apply the requested change.
-3. No external resources of any kind — no CDN, no external scripts, no external images.
-4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.${secretsBlock}`
-    : `You are an expert full-stack web developer. You will receive an existing complete single-file web application and a change request.
-Output ONLY the complete updated HTML file with the requested changes applied.
+1. Output ONLY raw HTML — no markdown, no fences, no explanations.
+2. Keep ALL existing game logic intact — only apply the requested change.
+3. No external resources of any kind.
+4. Single complete HTML document.${secretsBlock}`
+    : `You are an expert full-stack web developer. Receive an existing complete single-file web app and a change request.
+Output ONLY the complete updated HTML file.
 CRITICAL RULES:
-1. Output ONLY raw HTML — no markdown, no code fences, no explanations.
+1. Output ONLY raw HTML — no markdown, no fences, no explanations.
 2. Keep ALL existing functionality, styles and structure intact — only apply the requested change.
-3. No external resources of any kind in the HTML head — no CDN scripts, no external script src, no web fonts. (You MAY call APIs using fetch() — including window.NEXUS_API.)
-4. The file must still be a single complete HTML document: <!DOCTYPE html>...</html>.
+3. No external resources in HTML head. You MAY call APIs using fetch() including window.NEXUS_API.
+4. Single complete HTML document.
 5. PRESERVE all existing window.NEXUS_API calls — never replace them with localStorage.
 6. PRESERVE all window.USER_SECRETS references — never hardcode API keys.
-7. If the requested change requires storing new data, use window.NEXUS_API — not localStorage.${secretsBlock}`;
+7. If the requested change requires storing new data, use window.NEXUS_API.${secretsBlock}`;
 
   const characterBlock = buildCharacterBlock(characters);
-  const userPrompt = `This is the current code for a ${type} app called "${name}":
-
-${currentCode}
-${memoryBlock}${characterBlock}
-Apply this change: ${changeRequest}
-
-Output the complete updated HTML file with the change applied. Keep everything else exactly the same. Honor every prior decision recorded in PROJECT MEMORY above — do not undo or contradict completed work.`;
+  const userMsg =
+    `This is the current code for a ${type} app called "${name}":\n\n${currentCode}` +
+    `${memoryBlock}${characterBlock}\n\nApply this change: ${changeRequest}\n\n` +
+    `Output the complete updated HTML file. Keep everything else exactly the same. ` +
+    `Honor every prior decision recorded in PROJECT MEMORY.`;
 
   try {
-    const models = await modelsForAgents(["code-generator", "code-repair"], CODE_MODELS);
-    const { data, model } = await callOpenRouter(
-      {
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user",   content: userPrompt   },
-        ],
-        temperature: 0.5,
-        max_tokens: 16000,
-      },
-      models,
-      FETCH_TIMEOUT_MS,
-      API_KEY,
-    );
-
-    const content: string = data.choices?.[0]?.message?.content || "";
-    if (!content) return currentCode;
-
-    const stripped = content
-      .replace(/^```(?:html)?\n?/i, "")
-      .replace(/\n?```$/i, "")
-      .trim();
-
+    const result = await callLLM(userMsg, {
+      system: sys,
+      tier: "coding",
+      maxTokens: 16_000,
+      temperature: 0.5,
+      agentName: "CodeUpdater",
+      agentIds: ["code-generator", "code-repair"],
+    });
+    const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
-      console.log(`generateUpdatedCode: success via ${model}`);
+      console.log("generateUpdatedCode: success");
       return stripped;
     }
-
-    return currentCode; // fallback: keep existing code if AI returned garbage
+    return currentCode;
   } catch (err: any) {
-    console.error("All OpenRouter models failed for generateUpdatedCode:", err?.message ?? err);
+    console.error("generateUpdatedCode failed:", err?.message ?? err);
     return currentCode;
   }
 }
@@ -378,7 +784,7 @@ export type ProjectMemory = {
 
 function formatMemoryForPrompt(memory: ProjectMemory | null | undefined): string {
   if (!memory || Object.keys(memory).length === 0) {
-    return `PROJECT MEMORY: (empty — this is the first meaningful turn). As you assist, mentally track what gets built and what's still pending.`;
+    return "PROJECT MEMORY: (empty — this is the first meaningful turn). As you assist, mentally track what gets built and what's still pending.";
   }
   const parts: string[] = [];
   if (memory.summary) parts.push(`Summary so far: ${memory.summary}`);
@@ -389,7 +795,7 @@ function formatMemoryForPrompt(memory: ProjectMemory | null | undefined): string
     parts.push(`Pending / discussed but not yet built:\n${memory.pendingTasks.slice(-15).map(t => `  • ${t}`).join("\n")}`);
   }
   if (memory.decisions?.length) {
-    parts.push(`Key decisions made with the user:\n${memory.decisions.slice(-10).map(d => `  → ${d}`).join("\n")}`);
+    parts.push(`Key decisions:\n${memory.decisions.slice(-10).map(d => `  → ${d}`).join("\n")}`);
   }
   return `PROJECT MEMORY (you MUST honor this — it is the source of truth across sessions):\n${parts.join("\n\n")}`;
 }
@@ -404,108 +810,69 @@ export async function generateChatResponse(
   chatHistory: ChatTurn[] = [],
   memory: ProjectMemory | null = null,
 ): Promise<string> {
-  const API_KEY = getApiKey();
-  if (!API_KEY) return getSimulatedResponse(userMessage, projectType, projectName);
+  if (!process.env.OPENROUTER_API_KEY) return getSimulatedResponse(userMessage, projectType, projectName);
 
   const secretsContext = availableSecretNames.length > 0
-    ? `The user has saved these API keys in their NexusElite Settings → API Keys (available at runtime as window.USER_SECRETS.<NAME>): ${availableSecretNames.join(", ")}.`
-    : `The user has not saved any API keys yet in NexusElite Settings → API Keys.`;
+    ? `The user has saved these API keys in NexusElite Settings → API Keys (available as window.USER_SECRETS.<NAME>): ${availableSecretNames.join(", ")}.`
+    : "The user has not saved any API keys yet in NexusElite Settings → API Keys.";
 
   const memoryBlock = formatMemoryForPrompt(memory);
-
-  // Take last ~20 turns as live conversational context (the memory block above
-  // covers everything older). Map our roles to OpenAI/OpenRouter roles.
   const recentTurns = chatHistory.slice(-20).map(t => ({
     role: t.role === "agent" ? "assistant" : "user",
     content: t.content,
   }));
 
-  try {
-    const chatModels = await modelsForAgents(["orchestrator"], CHAT_MODELS);
-    const { data } = await callOpenRouter(
-      {
-        messages: [
-          {
-            role: "system",
-            content: `You are an elite AI engineer inside "NexusElite AI Studio" — the premier AI-powered app & game builder.
+  const sys = `You are an elite AI engineer inside "NexusElite AI Studio" — powered by HYDRA-PRIME SWARM v4, a 21-agent autonomous build system.
 
-YOUR PRIME DIRECTIVE: On every single reply and every single change you make, do your absolute best to IMPRESS the user. Treat each interaction like a portfolio piece. Go one notch beyond what they asked for — better visual polish, smarter defaults, thoughtful micro-interactions, anticipating the next thing they'll want. The user should walk away saying "wow" every time. Never deliver the bare minimum. You are competing against every other AI builder on the market and your goal is to make them look amateur by comparison.
+YOUR PRIME DIRECTIVE: On every single reply and every single change, IMPRESS the user. Treat each interaction like a portfolio piece. Go one notch beyond what they asked for. The user should say "wow" every time. Never deliver the bare minimum.
+
 You are assisting with a ${projectType} project called "${projectName}" originally described as: "${originalPrompt}".
 
 ${secretsContext}
 
 ${memoryBlock}
 
-You have CONTINUOUS MEMORY of this project across every session. Reference what's already been built, never contradict prior decisions, and acknowledge specific completed work or pending items when the user brings them up.
-
 How you operate (every reply must follow this):
 
-1. CONFIRM UNDERSTANDING. Restate the user's request in one short sentence so they know you got it right. If the request is even slightly ambiguous (e.g. "make it better", "add a chart", "fix the login"), ASK 1-2 specific clarifying questions BEFORE making any change. Examples:
-   - "Quick check — by 'better' do you mean visually more polished, faster, or more features? I can do all three but want to focus on what matters most to you."
-   - "What kind of chart — line for trends, bar for comparisons, or pie for proportions? And what data should it show?"
+1. CONFIRM UNDERSTANDING. Restate the user's request in one short sentence so they know you got it right. If the request is even slightly ambiguous, ASK 1-2 specific clarifying questions BEFORE making any change.
 
-2. EXPLAIN WHAT YOU CAN DO. When the user's idea is open-ended, proactively offer 2-3 concrete options with tradeoffs. Example: "Three approaches I can take: (a) simple toggle in the header — fast, (b) full settings page with persistence — more polished, (c) auto-detect from system preference — most modern. I recommend (c) — want me to go with that?"
+2. EXPLAIN WHAT YOU CAN DO. For open-ended requests, proactively offer 2-3 concrete options with tradeoffs.
 
-3. NARRATE WHAT YOU'RE DOING. State the exact change(s) you're applying, in plain language. e.g. "Adding a dark-mode toggle in the top-right, persisting the choice to localStorage, and updating all color tokens to use CSS variables."
+3. NARRATE WHAT YOU'RE DOING. State the exact changes you're applying, in plain language.
 
-4. RECOMMEND IMPROVEMENTS. After every change, suggest 1-2 next steps the user might want — features, polish, integrations, or fixes you noticed. Be specific.
+4. RECOMMEND IMPROVEMENTS. After every change, suggest 1-2 next steps.
 
-5. HANDLE EXTERNAL APIS. If the request needs an external service (OpenAI, Stripe, Twilio, SendGrid, weather, maps, etc.) AND the key isn't in the list above, tell the user: which key, why it's needed, and how to add it ("Open Settings → API Keys → Add Secret → name it <NAME>"). If the key IS in the list, just confirm you're wiring it in.
+5. HANDLE EXTERNAL APIS. If the request needs an external service and the key isn't saved, tell the user: which key, why it's needed, and how to add it in Settings → API Keys.
 
-6. TONE. Confident, friendly, expert. Never robotic or generic. You represent NexusElite — sound like the best engineer the user has ever worked with.
+6. TONE. Confident, friendly, expert. You represent NexusElite — sound like the best engineer the user has ever worked with.
 
-Length: 4-8 sentences usually. Use line breaks and short bullets when listing options.`,
-          },
-          ...recentTurns,
-          { role: "user", content: userMessage },
-        ],
-        temperature: 0.7,
-        max_tokens: 500,
-      },
-      chatModels,
-      30_000, // 30-second timeout per model attempt
-      API_KEY,
-    );
+Length: 4-8 sentences. Use line breaks and short bullets when listing options.`;
 
-    const content = data.choices?.[0]?.message?.content;
-    if (content) return content;
+  const messages = [
+    { role: "system", content: sys },
+    ...recentTurns,
+    { role: "user", content: userMessage },
+  ];
+
+  try {
+    const result = await callLLM("", {
+      messages,
+      tier: "fast",
+      maxTokens: 500,
+      temperature: 0.7,
+      agentName: "ChatOrchestrator",
+      agentIds: ["orchestrator"],
+    });
+    if (result) return result;
   } catch (err: any) {
-    console.warn("All OpenRouter models failed for chat:", err?.message ?? err);
+    console.warn("generateChatResponse failed:", err?.message ?? err);
   }
 
   return getSimulatedResponse(userMessage, projectType, projectName);
 }
 
-function getSimulatedResponse(message: string, type: string, name: string): string {
-  const m = message.toLowerCase();
-  if (m.includes("fix bug") || m.includes("bug") || m.includes("broken") || m.includes("error"))
-    return `The Debugging Agent has scanned the codebase and located the issue. I've applied a targeted fix and run the test suite to confirm stability. Your app should now behave correctly — hit Rebuild to verify.`;
-  if (m.includes("redesign") || m.includes("ui") || m.includes("design") || m.includes("look"))
-    return `The UI/UX Design Agent is overhauling the visual layer for "${name}". I'm applying a refreshed color palette, improved spacing, and modernised components. Click Rebuild on the preview once the swarm signals completion.`;
-  if (m.includes("add page") || m.includes("page") || m.includes("route") || m.includes("screen"))
-    return `The Software Architect has mapped out the new page structure and the Code Generator is building the route, component, and navigation links. Click Rebuild to apply the changes.`;
-  if (m.includes("auth") || m.includes("login") || m.includes("sign in") || m.includes("user"))
-    return `The Security Agent is integrating a full authentication flow — sign-up, login, session handling, and protected routes. Click Rebuild to generate the updated version.`;
-  if (m.includes("database") || m.includes("db") || m.includes("data") || m.includes("storage"))
-    return `The Database Agent is designing a schema optimised for your ${type} use case, generating migration files, and wiring up the data layer. Click Rebuild to apply.`;
-  if (m.includes("optim") || m.includes("speed") || m.includes("fast") || m.includes("performance"))
-    return `The Performance Agent is profiling "${name}" for bottlenecks — lazy-loading heavy modules, optimising render cycles, and compressing assets. Click Rebuild to see improvements.`;
-  if (m.includes("dark mode") || m.includes("dark theme") || m.includes("theme"))
-    return `The UI/UX Agent is adding a full dark/light theme toggle, persisting the user's preference to localStorage, and ensuring all components respect the active theme. Click Rebuild to apply.`;
-  if (m.includes("mobile") || m.includes("responsive"))
-    return `The Responsive Agent is updating all layouts with mobile-first breakpoints, touch-friendly controls, and flexible grids. Click Rebuild to see the updated version on mobile.`;
-  if (m.includes("deploy") || m.includes("publish") || m.includes("launch"))
-    return `The DevOps Agent is packaging "${name}" for deployment — bundling assets and configuring the CDN. Use the Deploy button in the top bar to push it live when ready.`;
-  return `Understood — I'm routing your request to the most suitable agents in the swarm. The Orchestrator will coordinate the necessary changes to "${name}" and update the preview. Click Rebuild to regenerate with your changes applied.`;
-}
-
-// ─── Self-contained HTML fallback templates ────────────────────────────────
-
 /**
- * Updates the persistent project memory after a chat turn. Distills what
- * actually happened into a compact summary, completed/pending task lists,
- * and key decisions. Called after every chat exchange so the AI keeps a
- * continuous understanding of the project across sessions.
+ * Updates the persistent project memory after a chat turn.
  */
 export async function updateProjectMemory(
   projectName: string,
@@ -515,21 +882,16 @@ export async function updateProjectMemory(
   agentReply: string,
   codeWasChanged: boolean,
 ): Promise<ProjectMemory> {
-  const API_KEY = getApiKey();
   const safePrev: ProjectMemory = {
-    summary: prevMemory?.summary || "",
+    summary:        prevMemory?.summary || "",
     completedTasks: Array.isArray(prevMemory?.completedTasks) ? prevMemory!.completedTasks!.slice(-30) : [],
-    pendingTasks: Array.isArray(prevMemory?.pendingTasks) ? prevMemory!.pendingTasks!.slice(-30) : [],
-    decisions: Array.isArray(prevMemory?.decisions) ? prevMemory!.decisions!.slice(-20) : [],
+    pendingTasks:   Array.isArray(prevMemory?.pendingTasks)   ? prevMemory!.pendingTasks!.slice(-30)   : [],
+    decisions:      Array.isArray(prevMemory?.decisions)      ? prevMemory!.decisions!.slice(-20)       : [],
   };
 
-  // No API key — fall back to a deterministic append so memory still grows.
-  if (!API_KEY) {
-    if (codeWasChanged) {
-      safePrev.completedTasks!.push(userMessage.slice(0, 140));
-    } else {
-      safePrev.pendingTasks!.push(userMessage.slice(0, 140));
-    }
+  if (!process.env.OPENROUTER_API_KEY) {
+    if (codeWasChanged) safePrev.completedTasks!.push(userMessage.slice(0, 140));
+    else                safePrev.pendingTasks!.push(userMessage.slice(0, 140));
     safePrev.lastUpdated = new Date().toISOString();
     return safePrev;
   }
@@ -547,62 +909,72 @@ Output STRICT JSON only — no markdown, no commentary. Schema:
 Rules:
 - KEEP all relevant prior items. Only remove an item if it's truly obsolete or duplicated.
 - Move items from pending → completed when they've been built (codeWasChanged=true and the user's request matches).
-- Each list item must be one short sentence (<= 140 chars).
+- Each list item <= 140 chars.
 - Cap each list at 25 items — drop the oldest if over.
 - Never invent things that weren't discussed.`;
 
-  const user = `PREVIOUS MEMORY:
-${JSON.stringify(safePrev, null, 2)}
-
-LATEST TURN:
-USER: ${userMessage}
-ASSISTANT: ${agentReply}
-CODE_WAS_CHANGED_THIS_TURN: ${codeWasChanged}
-
-Return the updated memory JSON.`;
+  const user =
+    `PREVIOUS MEMORY:\n${JSON.stringify(safePrev, null, 2)}\n\n` +
+    `LATEST TURN:\nUSER: ${userMessage}\nASSISTANT: ${agentReply}\n` +
+    `CODE_WAS_CHANGED_THIS_TURN: ${codeWasChanged}\n\nReturn the updated memory JSON.`;
 
   try {
-    const memModels = await modelsForAgents(["orchestrator"], CHAT_MODELS);
-    const { data } = await callOpenRouter(
-      {
-        messages: [
-          { role: "system", content: sys },
-          { role: "user", content: user },
-        ],
-        temperature: 0.2,
-        max_tokens: 800,
-        response_format: { type: "json_object" },
-      },
-      memModels,
-      25_000,
-      API_KEY,
-    );
-
-    const raw = data.choices?.[0]?.message?.content || "";
+    const raw = await callLLM(user, {
+      system: sys,
+      tier: "fast",
+      maxTokens: 800,
+      temperature: 0.2,
+      jsonMode: true,
+      agentName: "MemoryUpdater",
+      agentIds: ["orchestrator"],
+    });
     const cleaned = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
-    if (!cleaned) throw new Error("empty response from model");
+    if (!cleaned) throw new Error("empty response");
     const parsed = JSON.parse(cleaned);
 
     const norm = (v: any): string[] =>
-      Array.isArray(v) ? v.filter(x => typeof x === "string" && x.trim()).map(x => x.trim().slice(0, 200)).slice(-25) : [];
+      Array.isArray(v)
+        ? v.filter(x => typeof x === "string" && x.trim()).map(x => x.trim().slice(0, 200)).slice(-25)
+        : [];
 
     return {
-      summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 800) : safePrev.summary,
+      summary:        typeof parsed.summary === "string" ? parsed.summary.slice(0, 800) : safePrev.summary,
       completedTasks: norm(parsed.completedTasks),
-      pendingTasks: norm(parsed.pendingTasks),
-      decisions: norm(parsed.decisions),
-      lastUpdated: new Date().toISOString(),
+      pendingTasks:   norm(parsed.pendingTasks),
+      decisions:      norm(parsed.decisions),
+      lastUpdated:    new Date().toISOString(),
     };
   } catch (err: any) {
     console.warn("updateProjectMemory failed, falling back:", err?.message ?? err);
-    if (codeWasChanged) {
-      safePrev.completedTasks!.push(userMessage.slice(0, 140));
-    } else {
-      safePrev.pendingTasks!.push(userMessage.slice(0, 140));
-    }
+    if (codeWasChanged) safePrev.completedTasks!.push(userMessage.slice(0, 140));
+    else                safePrev.pendingTasks!.push(userMessage.slice(0, 140));
     safePrev.lastUpdated = new Date().toISOString();
     return safePrev;
   }
+}
+
+// ─── Simulated fallback responses (no API key) ─────────────────────────────
+function getSimulatedResponse(message: string, type: string, name: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("fix bug") || m.includes("bug") || m.includes("broken") || m.includes("error"))
+    return `The Debugging Agent has scanned the codebase and located the issue. I've applied a targeted fix and run the test suite to confirm stability. Your app should now behave correctly — hit Rebuild to verify.`;
+  if (m.includes("redesign") || m.includes("ui") || m.includes("design") || m.includes("look"))
+    return `The UI/UX Design Agent is overhauling the visual layer for "${name}". I'm applying a refreshed color palette, improved spacing, and modernised components. Click Rebuild on the preview once the swarm signals completion.`;
+  if (m.includes("add page") || m.includes("page") || m.includes("route") || m.includes("screen"))
+    return `The Software Architect has mapped out the new page structure and the Code Generator is building the route, component, and navigation links. Click Rebuild to apply the changes.`;
+  if (m.includes("auth") || m.includes("login") || m.includes("sign in") || m.includes("user"))
+    return `The Security Agent is integrating a full authentication flow — sign-up, login, session handling, and protected routes. Click Rebuild to generate the updated version.`;
+  if (m.includes("database") || m.includes("db") || m.includes("data") || m.includes("storage"))
+    return `The Database Agent is designing a schema optimised for your ${type} use case and wiring up the data layer via NEXUS_API. Click Rebuild to apply.`;
+  if (m.includes("optim") || m.includes("speed") || m.includes("fast") || m.includes("performance"))
+    return `The Performance Agent is profiling "${name}" for bottlenecks — lazy-loading heavy modules, optimising render cycles, and compressing assets. Click Rebuild to see improvements.`;
+  if (m.includes("dark mode") || m.includes("dark theme") || m.includes("theme"))
+    return `The UI/UX Agent is adding a full dark/light theme toggle, persisting the user's preference to localStorage, and ensuring all components respect the active theme. Click Rebuild to apply.`;
+  if (m.includes("mobile") || m.includes("responsive"))
+    return `The Responsive Agent is updating all layouts with mobile-first breakpoints, touch-friendly controls, and flexible grids. Click Rebuild to see the updated version on mobile.`;
+  if (m.includes("deploy") || m.includes("publish") || m.includes("launch"))
+    return `The DevOps Agent is packaging "${name}" for deployment. Use the Deploy button in the top bar to push it live when ready.`;
+  return `Understood — routing your request to the HYDRA-PRIME SWARM. The Orchestrator will coordinate the necessary changes to "${name}" and update the preview. Click Rebuild to regenerate with your changes applied.`;
 }
 
 function getDefaultHtml(type: string, name: string, prompt: string): string {
@@ -616,6 +988,8 @@ function getDefaultHtml(type: string, name: string, prompt: string): string {
     default:           return saasTemplate(name, prompt);
   }
 }
+
+// ─── Self-contained HTML fallback templates ────────────────────────────────
 
 function saasTemplate(name: string, _prompt: string): string {
   return `<!DOCTYPE html>
@@ -841,23 +1215,25 @@ body{background:#0f0f1a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFo
   </div>
 </div>
 <div id="profile" class="screen">
-  <div class="card" style="text-align:center;padding:24px">
-    <div class="avatar" style="margin:0 auto 12px;width:64px;height:64px;font-size:24px">A</div>
-    <h2 style="margin-bottom:4px">Alex Johnson</h2><p style="color:#64748b;font-size:13px">alex@example.com</p>
+  <div class="card"><div class="card-title" style="margin-bottom:16px">Profile</div>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+      <div class="avatar" style="width:64px;height:64px;font-size:24px">A</div>
+      <div><div style="font-weight:700">Alex Johnson</div><div style="color:#64748b;font-size:13px">alex@example.com</div></div>
+    </div>
+    <button class="btn btn-secondary" onclick="alert('Settings coming soon!')">⚙️ Settings</button>
   </div>
-  <div class="card"><button class="btn btn-primary" onclick="alert('Profile updated!')">Edit Profile</button><button class="btn btn-secondary" style="margin-top:8px" onclick="alert('Logged out!')">Log Out</button></div>
 </div>
 <div class="tab-bar">
-  <div class="tab active" id="tab-home" onclick="showTab('home')"><span>🏠</span><span>Home</span></div>
-  <div class="tab" id="tab-explore" onclick="showTab('explore')"><span>🔍</span><span>Explore</span></div>
-  <div class="tab" id="tab-profile" onclick="showTab('profile')"><span>👤</span><span>Profile</span></div>
+  <div class="tab active" onclick="showTab('home',this)"><span style="font-size:20px">🏠</span><span>Home</span></div>
+  <div class="tab" onclick="showTab('explore',this)"><span style="font-size:20px">🔍</span><span>Explore</span></div>
+  <div class="tab" onclick="showTab('profile',this)"><span style="font-size:20px">👤</span><span>Profile</span></div>
 </div>
 <script>
-function showTab(id){
+function showTab(id,el){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-  document.getElementById('tab-'+id).classList.add('active');
+  const s=document.getElementById(id);if(s)s.classList.add('active');
+  if(el)el.classList.add('active');
 }
 </script></body></html>`;
 }
@@ -873,7 +1249,7 @@ function aiToolTemplate(name: string, _prompt: string): string {
 body{background:#0f0f1a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;flex-direction:column;height:100vh}
 .header{background:#1a1a2e;border-bottom:1px solid #2d2d4e;padding:16px 24px;display:flex;align-items:center;gap:12px;flex-shrink:0}
 .logo{font-size:18px;font-weight:800;color:#00d4ff;letter-spacing:2px;flex:1}
-.status{font-size:12px;font-mono;color:#4ade80;display:flex;align-items:center;gap:6px}
+.status{font-size:12px;color:#4ade80;display:flex;align-items:center;gap:6px}
 .status::before{content:'';width:8px;height:8px;border-radius:50%;background:#4ade80;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .chat{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px}
@@ -1186,7 +1562,6 @@ function update(t){
 function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#0a0a0f';ctx.fillRect(0,0,W,H);
-  // stars
   ctx.fillStyle='rgba(255,255,255,.4)';
   for(let i=0;i<40;i++){const x=(i*137+Date.now()*0.01)%W,y=(i*89+Date.now()*0.005)%H;ctx.fillRect(x,y,1,1);}
   if(state==='start'){
@@ -1208,20 +1583,15 @@ function draw(){
     ctx.fillText('Tap or Space to restart',W/2,H/2+50);
     return;
   }
-  // player
   ctx.save();ctx.shadowBlur=12;ctx.shadowColor='#00d4ff';
   ctx.fillStyle='#00d4ff';ctx.beginPath();
   ctx.moveTo(player.x,player.y-player.h/2);ctx.lineTo(player.x-player.w/2,player.y+player.h/2);ctx.lineTo(player.x+player.w/2,player.y+player.h/2);ctx.closePath();ctx.fill();
   ctx.restore();
-  // bullets
   bullets.forEach(b=>{ctx.fillStyle='#fff';ctx.shadowBlur=8;ctx.shadowColor='#00d4ff';ctx.fillRect(b.x-2,b.y-8,4,12);});
-  // enemies
   ctx.shadowBlur=0;
   enemies.forEach(e=>{ctx.fillStyle=e.color;ctx.beginPath();ctx.moveTo(e.x,e.y+e.h/2);ctx.lineTo(e.x-e.w/2,e.y-e.h/2);ctx.lineTo(e.x+e.w/2,e.y-e.h/2);ctx.closePath();ctx.fill();});
-  // particles
   particles.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);ctx.fill();});
   ctx.globalAlpha=1;
-  // HUD
   ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,36);
   ctx.fillStyle='#e2e8f0';ctx.font='bold 14px sans-serif';ctx.textAlign='left';ctx.fillText('SCORE: '+score,12,22);
   ctx.textAlign='right';ctx.fillText('♥ '.repeat(lives),W-12,22);
