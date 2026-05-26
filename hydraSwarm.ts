@@ -21,57 +21,55 @@ const MAX_RECURSION = 4;    // fractal sub-swarm depth
 // Uses your confirmed-working models first, then HYDRA's extras.
 export const MODEL_TIERS: Record<string, string[]> = {
   reasoning: [
-    "google/gemini-2.0-flash-001",
-    "deepseek/deepseek-chat-v3.1",
+    "z-ai/glm-5.1",
+    "deepseek/deepseek-v4",
     "moonshotai/kimi-k2.6",
-    "minimax/minimax-m2",
-    "z-ai/glm-4.6",
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-opus-4",
-    "google/gemini-2.5-pro",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7",
+    "google/gemini-3.5-pro",
+    "google/gemini-2.5-flash",
   ],
   coding: [
-    "google/gemini-2.0-flash-001",
-    "qwen/qwen3-coder",
-    "deepseek/deepseek-chat-v3.1",
-    "z-ai/glm-4.6",
+    "qwen/qwen3.6-coder",
+    "z-ai/glm-5.1",
+    "deepseek/deepseek-chat-v4",
     "moonshotai/kimi-k2.6",
-    "x-ai/grok-code-fast-1",
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-opus-4",
+    "x-ai/grok-build-0.1",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.7",
     "qwen/qwen3-coder:free",
     "openai/gpt-oss-120b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
   ],
   fast: [
-    "google/gemini-2.0-flash-001",
+    "z-ai/glm-5.1",
     "google/gemini-2.5-flash",
-    "z-ai/glm-4.6",
-    "deepseek/deepseek-chat-v3.1",
-    "anthropic/claude-haiku-4-5",
+    "deepseek/deepseek-v4",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-haiku-4.5",
     "meta-llama/llama-3.3-70b-instruct:free",
   ],
   longctx: [
-    "google/gemini-2.5-pro",
+    "google/gemini-3.5-pro",
     "moonshotai/kimi-k2.6",
-    "minimax/minimax-m2",
-    "anthropic/claude-sonnet-4-6",
-    "google/gemini-2.0-flash-001",
+    "minimax/minimax-m2.7",
+    "anthropic/claude-sonnet-4.6",
+    "google/gemini-2.5-flash",
   ],
   critic: [
-    "deepseek/deepseek-chat-v3.1",
-    "google/gemini-2.0-flash-001",
-    "z-ai/glm-4.6",
-    "qwen/qwen3-coder",
-    "anthropic/claude-sonnet-4-6",
+    "deepseek/deepseek-v4",
+    "z-ai/glm-5.1",
+    "qwen/qwen3.6-coder",
+    "anthropic/claude-sonnet-4.6",
     "qwen/qwen3-coder:free",
   ],
   creative: [
-    "z-ai/glm-4.6",
+    "z-ai/glm-5.1",
     "moonshotai/kimi-k2.6",
-    "minimax/minimax-m2",
-    "google/gemini-2.5-pro",
-    "anthropic/claude-opus-4",
+    "minimax/minimax-m2.7",
+    "google/gemini-3.5-pro",
+    "anthropic/claude-opus-4.7",
   ],
 };
 
@@ -138,8 +136,8 @@ export class SharedMemory {
 // ============================================================
 
 function timeoutForModel(model: string): number {
-  if (/opus|kimi|minimax|gemini-2\.5-pro/i.test(model)) return 120_000;
-  if (model.endsWith(":free"))                            return 60_000;
+  if (/opus|sonnet|kimi|minimax|gemini-3\.5|gemini-2\.5-pro/i.test(model)) return 120_000;
+  if (model.endsWith(":free"))                                               return  60_000;
   return 60_000;
 }
 

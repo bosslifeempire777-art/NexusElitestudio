@@ -40,151 +40,151 @@ const HYDRA_AGENTS: HydraAgent[] = [
     key: "sovereign", name: "SOVEREIGN", short: "SOV", icon: "👑",
     layer: 1, color: "violet",
     description: "CEO Brain — reads your prompt, classifies project type, generates master blueprint",
-    models: ["GLM-4.6", "DeepSeek-V3", "Claude Opus"],
+    models: ["GLM-5.1", "DeepSeek-V4", "Claude Opus 4.7"],
   },
   // ── Layer 2 ─────────────────────────────────────────────
   {
     key: "sysarch", name: "System Architect", short: "SYS", icon: "🏗️",
     layer: 2, color: "blue",
     description: "Designs modules, services, and data flow from the blueprint",
-    models: ["Kimi-K2", "Claude Sonnet"],
+    models: ["Kimi-K2.6", "Claude Sonnet 4.6"],
   },
   {
     key: "uxarch", name: "UX Architect", short: "UXA", icon: "🎨",
     layer: 2, color: "pink",
     description: "Designs screen flows, components, and the full design system",
-    models: ["GLM-4.6", "Claude Opus"],
+    models: ["GLM-5.1", "Claude Opus 4.7"],
   },
   {
     key: "dataarch", name: "Data Architect", short: "DAT", icon: "🗄️",
     layer: 2, color: "cyan",
     description: "Designs schemas, indexes, migrations, and data APIs",
-    models: ["DeepSeek-V3", "Gemini 2.5 Pro"],
+    models: ["DeepSeek-V4", "Gemini 3.5 Pro"],
   },
   {
     key: "secarch", name: "Security Architect", short: "SEC", icon: "🔐",
     layer: 2, color: "red",
     description: "Designs auth, RBAC, secrets management, and threat model",
-    models: ["Claude Sonnet", "Kimi-K2"],
+    models: ["Claude Sonnet 4.6", "Kimi-K2.6"],
   },
   {
     key: "opsarch", name: "DevOps Architect", short: "OPS", icon: "⚙️",
     layer: 2, color: "slate",
     description: "Designs CI/CD pipelines, infrastructure, and monitoring",
-    models: ["GLM-4.6", "DeepSeek-V3"],
+    models: ["GLM-5.1", "DeepSeek-V4"],
   },
   // ── Layer 3 ─────────────────────────────────────────────
   {
     key: "fe", name: "Frontend", short: "FE", icon: "💻",
     layer: 3, color: "emerald",
     description: "React / Next.js / Vue / Svelte — full UI implementation",
-    models: ["Qwen3-Coder", "DeepSeek-V3"],
+    models: ["Qwen3.6-Coder", "DeepSeek-V4"],
   },
   {
     key: "be", name: "Backend", short: "BE", icon: "🔧",
     layer: 3, color: "orange",
     description: "Node / Python / Go APIs and microservices",
-    models: ["Qwen3-Coder", "GLM-4.6"],
+    models: ["Qwen3.6-Coder", "GLM-5.1"],
   },
   {
     key: "db", name: "Database", short: "DB", icon: "🗃️",
     layer: 3, color: "yellow",
     description: "Postgres / MongoDB / Redis — schemas, queries, and ORM",
-    models: ["DeepSeek-V3", "Qwen3-Coder"],
+    models: ["DeepSeek-V4", "Qwen3.6-Coder"],
   },
   {
     key: "mob", name: "Mobile", short: "MOB", icon: "📱",
     layer: 3, color: "blue",
     description: "iOS (Swift) and Android (Kotlin) or React Native / Expo",
-    models: ["Kimi-K2", "Claude Sonnet"],
+    models: ["Kimi-K2.6", "Claude Sonnet 4.6"],
   },
   {
     key: "gme", name: "Game Engine", short: "GME", icon: "🎮",
     layer: 3, color: "purple",
     description: "Unity C# / Godot / Phaser / Three.js game implementation",
-    models: ["GLM-4.6", "Claude Opus"],
+    models: ["GLM-5.1", "Claude Opus 4.7"],
   },
   {
     key: "aiml", name: "AI / ML", short: "AIM", icon: "🤖",
     layer: 3, color: "violet",
     description: "LLM integration, embeddings, RAG pipelines",
-    models: ["Claude Sonnet", "Gemini 2.5 Pro"],
+    models: ["Claude Sonnet 4.6", "Gemini 3.5 Pro"],
   },
   {
     key: "authh", name: "Auth", short: "ATH", icon: "🔑",
     layer: 3, color: "amber",
     description: "OAuth 2, JWT, sessions, and RBAC implementation",
-    models: ["DeepSeek-V3", "GLM-4.6"],
+    models: ["DeepSeek-V4", "GLM-5.1"],
   },
   {
     key: "pay", name: "Payments", short: "PAY", icon: "💳",
     layer: 3, color: "emerald",
     description: "Stripe / IAP / subscription billing end-to-end",
-    models: ["Qwen3-Coder", "Claude Sonnet"],
+    models: ["Qwen3.6-Coder", "Claude Sonnet 4.6"],
   },
   {
     key: "dvo", name: "DevOps", short: "DVO", icon: "🚀",
     layer: 3, color: "slate",
     description: "Docker, GitHub Actions, Render deploy, EAS build configs",
-    models: ["GLM-4.6", "DeepSeek-V3"],
+    models: ["GLM-5.1", "DeepSeek-V4"],
   },
   {
     key: "qa", name: "QA", short: "QA", icon: "🧪",
     layer: 3, color: "teal",
     description: "Jest / Playwright / Cypress — unit, integration, e2e tests",
-    models: ["Qwen3-Coder", "GLM-4.6"],
+    models: ["Qwen3.6-Coder", "GLM-5.1"],
   },
   {
     key: "docs", name: "Docs", short: "DOC", icon: "📚",
     layer: 3, color: "sky",
     description: "README, OpenAPI docs, user guides, changelogs",
-    models: ["DeepSeek-V3", "Kimi-K2"],
+    models: ["DeepSeek-V4", "Kimi-K2.6"],
   },
   // ── Layer 4 ─────────────────────────────────────────────
   {
     key: "worker", name: "Worker Pods", short: "WRK", icon: "⚡",
     layer: 4, color: "yellow",
     description: "3–10 cheap fast workers per department executing atomic tasks in parallel",
-    models: ["GLM-4.6", "MiMo", "Ling-Mini"],
+    models: ["GLM-5.1", "MiniMax M2.7", "Qwen3.6-Coder"],
   },
   {
     key: "fractal", name: "Fractal Sub-swarm", short: "FRC", icon: "🔀",
     layer: 4, color: "cyan",
     description: "Recursively spawns micro-task sub-swarms up to depth 4 (Kimi-K2 style)",
-    models: ["GLM-4.6", "DeepSeek-V3"],
+    models: ["GLM-5.1", "DeepSeek-V4"],
   },
   // ── Layer 5 ─────────────────────────────────────────────
   {
     key: "bughunt", name: "Bug Hunter", short: "BUG", icon: "🐛",
     layer: 5, color: "red",
     description: "Adversarial review — hunts bugs, edge cases, and runtime errors",
-    models: ["DeepSeek-V3", "GLM-4.6"],
+    models: ["DeepSeek-V4", "GLM-5.1"],
   },
   {
     key: "secaudit", name: "Sec Auditor", short: "AUD", icon: "🛡️",
     layer: 5, color: "red",
     description: "Adversarial review — hunts injection, XSS, auth flaws, secret leaks",
-    models: ["Claude Sonnet", "DeepSeek-V3"],
+    models: ["Claude Sonnet 4.6", "DeepSeek-V4"],
   },
   {
     key: "uxcrit", name: "UX Critic", short: "UXC", icon: "👁️",
     layer: 5, color: "pink",
     description: "Adversarial review — hunts UX problems and accessibility issues",
-    models: ["GLM-4.6", "Claude Opus"],
+    models: ["GLM-5.1", "Claude Opus 4.7"],
   },
   // ── Layer 6 ─────────────────────────────────────────────
   {
     key: "synth", name: "Synthesizer", short: "SYN", icon: "🧬",
     layer: 6, color: "violet",
     description: "Merges all artifacts, resolves conflicts, produces the final file tree",
-    models: ["Gemini 2.5 Pro", "Kimi-K2"],
+    models: ["Gemini 3.5 Pro", "Kimi-K2.6"],
   },
   // ── Layer 7 ─────────────────────────────────────────────
   {
     key: "valid", name: "Validator", short: "VAL", icon: "✅",
     layer: 7, color: "emerald",
     description: "Static analysis, README, .env.example, Dockerfile, BUILD_REPORT.json",
-    models: ["GLM-4.6", "DeepSeek-V3"],
+    models: ["GLM-5.1", "DeepSeek-V4"],
   },
 ];
 
@@ -906,9 +906,9 @@ const LAYER_META = [
                               Cost Tier Routing
                             </div>
                             {[
-                              { tier: "T0", label: "GLM-4.6 · DeepSeek-V3 · Qwen3", pct: "80%", color: "text-emerald-400" },
-                              { tier: "T1", label: "Kimi-K2 · MiniMax-M2 · Grok",   pct: "15%", color: "text-yellow-400"  },
-                              { tier: "T2", label: "Claude Opus · Gemini 2.5 Pro",    pct: "5%",  color: "text-red-400"    },
+                              { tier: "T0", label: "GLM-5.1 · DeepSeek-V4 · Qwen3.6", pct: "80%", color: "text-emerald-400" },
+                              { tier: "T1", label: "Kimi-K2.6 · MiniMax M2.7 · Grok", pct: "15%", color: "text-yellow-400"  },
+                              { tier: "T2", label: "Claude Opus 4.7 · Gemini 3.5 Pro", pct: "5%",  color: "text-red-400"    },
                             ].map(({ tier, label, pct, color }) => (
                               <div key={tier} className="flex items-center gap-2">
                                 <span className={`text-[8px] font-mono font-bold ${color} w-5`}>{tier}</span>
