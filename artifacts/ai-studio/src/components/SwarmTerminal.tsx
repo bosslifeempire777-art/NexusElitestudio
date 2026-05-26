@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Bot, User, Send, Loader2, ChevronRight, ChevronDown, Folder, FolderOpen, Activity, Zap, Cpu } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Bot, Send, Loader2, ChevronRight, ChevronDown, Folder, FolderOpen, Activity, Zap, Cpu } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/cyber-ui";
 
@@ -17,87 +17,132 @@ export interface WorkBlock {
   userMessage: string;
   startedAt: number;
   completedAt: number | null;
-  steps: string[];          // simulated narration steps
-  buildLogs: string[];      // real SSE logs captured during this block
-  agents: string[];         // unique agents involved
-  reply: string | null;     // final agent reply
+  steps: string[];
+  buildLogs: string[];
+  agents: string[];
+  reply: string | null;
 }
 
 /* ────────────────────────────────────────────────
-   The 21 Swarm Agents (must match landing-page demo)
+   HYDRA-PRIME 7-Layer Swarm Agents (24 total)
+   Layers: 1=SOVEREIGN · 2=ARCHITECT COUNCIL ·
+           3=DEPARTMENT HEADS · 4=FRACTAL WORKERS ·
+           5=CRITIC RING · 6=SYNTHESIZER · 7=VALIDATOR
    ──────────────────────────────────────────────── */
-const SWARM_AGENTS: Array<{ key: string; name: string; short: string; color: string }> = [
-  { key: "orch",    name: "Orchestrator",      short: "ORC",  color: "primary" },
-  { key: "arch",    name: "Software Architect",short: "ARC",  color: "primary" },
-  { key: "code",    name: "Code Generator",    short: "GEN",  color: "primary" },
-  { key: "ui",      name: "UI/UX Designer",    short: "UIX",  color: "accent"  },
-  { key: "design",  name: "Design System",     short: "DSY",  color: "accent"  },
-  { key: "sec",     name: "Security Auditor",  short: "SEC",  color: "red"     },
-  { key: "db",      name: "Database Engineer", short: "DBE",  color: "cyan"    },
-  { key: "migrate", name: "Migration Agent",   short: "MIG",  color: "cyan"    },
-  { key: "test",    name: "Testing Agent",     short: "TST",  color: "green"   },
-  { key: "devops",  name: "DevOps Engineer",   short: "OPS",  color: "primary" },
-  { key: "debug",   name: "Debugging Agent",   short: "DBG",  color: "yellow"  },
-  { key: "analyze", name: "Code Analyzer",     short: "ANL",  color: "yellow"  },
-  { key: "perf",    name: "Performance",       short: "PRF",  color: "primary" },
-  { key: "asset",   name: "Asset Generator",   short: "AST",  color: "accent"  },
-  { key: "router",  name: "Router Agent",      short: "RTR",  color: "cyan"    },
-  { key: "mid",     name: "Middleware",        short: "MID",  color: "primary" },
-  { key: "ai",      name: "AI Integration",    short: "AIX",  color: "accent"  },
-  { key: "game",    name: "Game Designer",     short: "GMD",  color: "yellow"  },
-  { key: "canvas",  name: "Canvas Renderer",   short: "CVR",  color: "primary" },
-  { key: "level",   name: "Level Builder",     short: "LVL",  color: "yellow"  },
-  { key: "phys",    name: "Physics Engine",    short: "PHY",  color: "cyan"    },
+const SWARM_AGENTS: Array<{
+  key: string;
+  name: string;
+  short: string;
+  color: string;
+  layer: number;
+}> = [
+  // Layer 1 — SOVEREIGN
+  { key: "sovereign",   name: "SOVEREIGN",         short: "SOV", color: "accent",  layer: 1 },
+  // Layer 2 — Architect Council
+  { key: "sysarch",     name: "Sys Architect",      short: "SYS", color: "primary", layer: 2 },
+  { key: "uxarch",      name: "UX Architect",       short: "UXA", color: "accent",  layer: 2 },
+  { key: "dataarch",    name: "Data Architect",     short: "DAT", color: "cyan",    layer: 2 },
+  { key: "secarch",     name: "Security Architect", short: "SEC", color: "red",     layer: 2 },
+  { key: "opsarch",     name: "DevOps Architect",   short: "OPS", color: "primary", layer: 2 },
+  // Layer 3 — Department Heads
+  { key: "fe",          name: "Frontend Head",      short: "FE",  color: "green",   layer: 3 },
+  { key: "be",          name: "Backend Head",       short: "BE",  color: "primary", layer: 3 },
+  { key: "db",          name: "Database Head",      short: "DB",  color: "cyan",    layer: 3 },
+  { key: "mob",         name: "Mobile Head",        short: "MOB", color: "primary", layer: 3 },
+  { key: "gme",         name: "GameEngine Head",    short: "GME", color: "yellow",  layer: 3 },
+  { key: "aiml",        name: "AI/ML Head",         short: "AIM", color: "accent",  layer: 3 },
+  { key: "authh",       name: "Auth Head",          short: "ATH", color: "yellow",  layer: 3 },
+  { key: "pay",         name: "Payments Head",      short: "PAY", color: "green",   layer: 3 },
+  { key: "dvo",         name: "DevOps Head",        short: "DVO", color: "primary", layer: 3 },
+  { key: "qa",          name: "QA Head",            short: "QA",  color: "green",   layer: 3 },
+  { key: "docs",        name: "Docs Head",          short: "DOC", color: "cyan",    layer: 3 },
+  // Layer 4 — Fractal Workers
+  { key: "worker",      name: "Worker Pods",        short: "WRK", color: "yellow",  layer: 4 },
+  { key: "fractal",     name: "Fractal Sub-swarm",  short: "FRC", color: "cyan",    layer: 4 },
+  // Layer 5 — Critic Ring
+  { key: "bughunt",     name: "Bug Hunter",         short: "BUG", color: "red",     layer: 5 },
+  { key: "secaudit",    name: "Sec Auditor",        short: "AUD", color: "red",     layer: 5 },
+  { key: "uxcrit",      name: "UX Critic",          short: "UXC", color: "accent",  layer: 5 },
+  // Layer 6 — Synthesizer
+  { key: "synth",       name: "Synthesizer",        short: "SYN", color: "accent",  layer: 6 },
+  // Layer 7 — Validator
+  { key: "valid",       name: "Validator",          short: "VAL", color: "green",   layer: 7 },
 ];
 
-/** Map a free-text agent label (parsed from a build log) to a swarm-grid key. */
+/** Map a free-text agent label (from a build log) to a swarm-grid key. */
 export function matchAgent(text: string): string | null {
   const t = text.toLowerCase();
-  if (t.includes("orchestrat"))                          return "orch";
-  if (t.includes("architect"))                           return "arch";
-  if (t.includes("code generator") || t.includes("generator")) return "code";
-  if (t.includes("design system"))                       return "design";
-  if (t.includes("ui") || t.includes("ux"))              return "ui";
-  if (t.includes("security") || t.includes("auditor"))   return "sec";
-  if (t.includes("database") || t.includes("db engineer")) return "db";
-  if (t.includes("migration"))                           return "migrate";
-  if (t.includes("test"))                                return "test";
-  if (t.includes("devops") || t.includes("deploy"))      return "devops";
-  if (t.includes("debug"))                               return "debug";
-  if (t.includes("analyz") || t.includes("code analyzer")) return "analyze";
-  if (t.includes("performance") || t.includes("optim"))  return "perf";
-  if (t.includes("asset"))                               return "asset";
-  if (t.includes("router") || t.includes("routing"))     return "router";
-  if (t.includes("middleware"))                          return "mid";
-  if (t.includes("ai integration"))                      return "ai";
-  if (t.includes("game designer") || t.includes("game design")) return "game";
-  if (t.includes("canvas"))                              return "canvas";
-  if (t.includes("level"))                               return "level";
-  if (t.includes("physic"))                              return "phys";
+  // Layer 1
+  if (t.includes("sovereign"))                                    return "sovereign";
+  // Layer 2
+  if (t.includes("systemarchitect") || t.includes("sys arch"))   return "sysarch";
+  if (t.includes("uxarchitect")     || t.includes("ux arch"))    return "uxarch";
+  if (t.includes("dataarchitect")   || t.includes("data arch"))  return "dataarch";
+  if (t.includes("securityarchitect")|| t.includes("sec arch"))  return "secarch";
+  if (t.includes("devopsarchitect") || t.includes("ops arch"))   return "opsarch";
+  // Layer 3
+  if (t.includes("frontend head")   || t.includes("frontend-w")) return "fe";
+  if (t.includes("backend head")    || t.includes("backend-w"))  return "be";
+  if (t.includes("database head")   || t.includes("database-w")) return "db";
+  if (t.includes("mobileios")       || t.includes("mobileandroid") || t.includes("mobile head")) return "mob";
+  if (t.includes("gameengine"))                                   return "gme";
+  if (t.includes("aiml")            || t.includes("ai/ml"))      return "aiml";
+  if (t.includes("auth head")       || t.includes("auth-w"))     return "authh";
+  if (t.includes("payments head")   || t.includes("payments-w")) return "pay";
+  if (t.includes("devops head")     || t.includes("devops-w"))   return "dvo";
+  if (t.includes("qa head")         || t.includes("qa-w"))       return "qa";
+  if (t.includes("docs head")       || t.includes("docs-w"))     return "docs";
+  // Layer 4
+  if (t.includes("splitter")        || t.includes("fractal"))    return "fractal";
+  if (t.includes("-w-")             || t.includes("worker"))     return "worker";
+  // Layer 5
+  if (t.includes("bughunter")       || t.includes("bug hunt"))   return "bughunt";
+  if (t.includes("securityauditor") || t.includes("sec audit"))  return "secaudit";
+  if (t.includes("uxcritic")        || t.includes("ux critic"))  return "uxcrit";
+  // Layer 6
+  if (t.includes("synthesizer")     || t.includes("synth"))      return "synth";
+  // Layer 7
+  if (t.includes("validator")       || t.includes("packag"))     return "valid";
+  // Broad fallbacks
+  if (t.includes("orchestrat"))                                   return "sovereign";
+  if (t.includes("architect"))                                    return "sysarch";
+  if (t.includes("fixer"))                                        return "bughunt";
   return null;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Color classes per state (idle / active / done)
+   ──────────────────────────────────────────────────────────── */
 function colorClasses(color: string, state: "idle" | "active" | "done"): string {
   const map: Record<string, { bg: string; border: string; text: string; glow: string }> = {
-    primary: { bg: "bg-primary/15", border: "border-primary/40", text: "text-primary", glow: "shadow-[0_0_12px_rgba(0,212,255,0.55)]" },
-    accent:  { bg: "bg-accent/15",  border: "border-accent/40",  text: "text-accent",  glow: "shadow-[0_0_12px_rgba(168,85,247,0.55)]" },
-    red:     { bg: "bg-red-500/15", border: "border-red-500/40", text: "text-red-400", glow: "shadow-[0_0_12px_rgba(239,68,68,0.55)]"  },
-    cyan:    { bg: "bg-cyan-400/15",border: "border-cyan-400/40",text: "text-cyan-300",glow: "shadow-[0_0_12px_rgba(34,211,238,0.55)]" },
-    green:   { bg: "bg-green-400/15",border:"border-green-400/40",text:"text-green-300",glow:"shadow-[0_0_12px_rgba(74,222,128,0.55)]"  },
-    yellow:  { bg: "bg-yellow-400/15",border:"border-yellow-400/40",text:"text-yellow-300",glow:"shadow-[0_0_12px_rgba(250,204,21,0.55)]"},
+    primary: { bg: "bg-primary/15",  border: "border-primary/40",  text: "text-primary",   glow: "shadow-[0_0_12px_rgba(0,212,255,0.55)]"    },
+    accent:  { bg: "bg-accent/15",   border: "border-accent/40",   text: "text-accent",    glow: "shadow-[0_0_12px_rgba(168,85,247,0.55)]"   },
+    red:     { bg: "bg-red-500/15",  border: "border-red-500/40",  text: "text-red-400",   glow: "shadow-[0_0_12px_rgba(239,68,68,0.55)]"    },
+    cyan:    { bg: "bg-cyan-400/15", border: "border-cyan-400/40", text: "text-cyan-300",  glow: "shadow-[0_0_12px_rgba(34,211,238,0.55)]"   },
+    green:   { bg: "bg-green-400/15",border: "border-green-400/40",text: "text-green-300", glow: "shadow-[0_0_12px_rgba(74,222,128,0.55)]"   },
+    yellow:  { bg: "bg-yellow-400/15",border:"border-yellow-400/40",text:"text-yellow-300",glow: "shadow-[0_0_12px_rgba(250,204,21,0.55)]"   },
   };
-  const c = map[color] || map.primary;
+  const c = map[color] ?? map.primary;
   if (state === "active") return `${c.bg} ${c.border} ${c.text} ${c.glow} scale-105`;
-  if (state === "done")   return `bg-green-400/10 border-green-400/50 text-green-300 shadow-[0_0_8px_rgba(74,222,128,0.35)]`;
-  return `bg-background/40 border-border/30 text-muted-foreground/50`;
+  if (state === "done")   return "bg-green-400/10 border-green-400/50 text-green-300 shadow-[0_0_8px_rgba(74,222,128,0.35)]";
+  return "bg-background/40 border-border/30 text-muted-foreground/50";
 }
 
 /* ────────────────────────────────────────────────
-   Swarm Grid — live 21-agent activity visualization
-   Each cell shows one of three states:
-     · idle   — dim, waiting
-     · active — glowing + pulsing dot ("working on …")
-     · done   — green + ✓ checkmark ("complete")
+   Layer label config
+   ──────────────────────────────────────────────── */
+const LAYER_LABELS: Record<number, string> = {
+  1: "L1·CEO",
+  2: "L2·ARCH",
+  3: "L3·DEPT",
+  4: "L4·WORK",
+  5: "L5·CRIT",
+  6: "L6·SYNC",
+  7: "L7·VALID",
+};
+
+/* ────────────────────────────────────────────────
+   SwarmGrid — HYDRA-PRIME 7-layer live visualization
    ──────────────────────────────────────────────── */
 export function SwarmGrid({
   activeKeys,
@@ -107,18 +152,15 @@ export function SwarmGrid({
   currentAgentKey,
   compact = false,
 }: {
-  activeKeys: Set<string>;
-  completedKeys?: Set<string>;
-  isStreaming: boolean;
-  currentTask?: string | null;
-  /** The most-recently-activated agent key. If omitted, falls back to
-   *  the first key in `activeKeys`. */
+  activeKeys:      Set<string>;
+  completedKeys?:  Set<string>;
+  isStreaming:     boolean;
+  currentTask?:    string | null;
   currentAgentKey?: string | null;
-  compact?: boolean;
+  compact?:        boolean;
 }) {
   const done = completedKeys ?? new Set<string>();
-  // Prefer the explicit "latest event" agent when provided (fixes ticker showing
-  // the wrong agent when multiple are active). Fall back to any active agent.
+
   const activeAgent =
     (currentAgentKey && activeKeys.has(currentAgentKey)
       ? SWARM_AGENTS.find(a => a.key === currentAgentKey)
@@ -126,65 +168,80 @@ export function SwarmGrid({
     (activeKeys.size > 0
       ? SWARM_AGENTS.find(a => activeKeys.has(a.key))
       : null);
+
+  // Group agents by layer for grouped display
+  const layers = [1, 2, 3, 4, 5, 6, 7];
+
   return (
     <div className={`shrink-0 border-b border-primary/20 bg-gradient-to-b from-[#0a0a18] to-[#06060f] px-3 ${compact ? "py-2" : "py-2.5"}`}>
+      {/* Header row */}
       <div className="flex items-center justify-between mb-2 flex-wrap gap-1.5">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-5 h-5 rounded bg-primary/15 border border-primary/40 flex items-center justify-center shrink-0">
-            <Cpu className="w-3 h-3 text-primary" />
+          <div className="w-5 h-5 rounded bg-accent/15 border border-accent/40 flex items-center justify-center shrink-0">
+            <Cpu className="w-3 h-3 text-accent" />
           </div>
-          <span className="text-[10px] font-mono font-bold text-primary uppercase tracking-widest shrink-0">
-            21-Agent Swarm
+          <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest shrink-0">
+            HYDRA-PRIME
           </span>
           <span className={`flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${
             isStreaming
-              ? "bg-primary/10 border-primary/30 text-primary"
+              ? "bg-accent/10 border-accent/30 text-accent"
               : done.size > 0
                 ? "bg-green-400/10 border-green-400/30 text-green-300"
                 : "bg-muted/20 border-border/40 text-muted-foreground"
           }`}>
-            <span className={`w-1 h-1 rounded-full ${isStreaming ? "bg-primary animate-pulse" : done.size > 0 ? "bg-green-400" : "bg-muted-foreground"}`} />
+            <span className={`w-1 h-1 rounded-full ${isStreaming ? "bg-accent animate-pulse" : done.size > 0 ? "bg-green-400" : "bg-muted-foreground"}`} />
             {isStreaming
               ? `${activeKeys.size} ACTIVE · ${done.size} DONE`
               : done.size > 0
                 ? `${done.size} COMPLETE`
                 : "STANDBY"}
           </span>
-          {/* Live "working on…" ticker */}
           {isStreaming && activeAgent && (
-            <span className="text-[10px] font-mono text-primary/90 truncate max-w-[200px] hidden sm:inline">
+            <span className="text-[10px] font-mono text-accent/90 truncate max-w-[200px] hidden sm:inline">
               › {activeAgent.name}
               {currentTask ? <span className="text-muted-foreground/70"> — {currentTask}</span> : null}
             </span>
           )}
         </div>
         <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest">
-          {isStreaming ? "Processing…" : done.size > 0 ? "Build Complete" : "Swarm Online"}
+          {isStreaming ? "Processing…" : done.size > 0 ? "Build Complete" : "7 Layers · 24 Agents"}
         </span>
       </div>
-      <div className="grid grid-cols-7 sm:grid-cols-11 lg:grid-cols-21 gap-1.5">
-        {SWARM_AGENTS.map((a) => {
-          const active = activeKeys.has(a.key);
-          const complete = !active && done.has(a.key);
-          const state: "idle" | "active" | "done" = active ? "active" : complete ? "done" : "idle";
-          const label = active
-            ? `${a.name} — WORKING`
-            : complete
-              ? `${a.name} — COMPLETE`
-              : a.name;
+      {/* Layer rows */}
+      <div className="space-y-1.5">
+        {layers.map(layer => {
+          const agents = SWARM_AGENTS.filter(a => a.layer === layer);
+          const label  = LAYER_LABELS[layer] ?? `L${layer}`;
           return (
-            <div
-              key={a.key}
-              title={label}
-              className={`relative aspect-square flex flex-col items-center justify-center rounded border text-center transition-all duration-300 ${colorClasses(a.color, state)}`}
-            >
-              <div className="text-[8px] font-mono font-bold leading-none">{a.short}</div>
-              {active && (
-                <span className="absolute top-0.5 right-0.5 w-1 h-1 rounded-full bg-current animate-pulse" />
-              )}
-              {complete && (
-                <span className="absolute top-0.5 right-0.5 text-[7px] leading-none text-green-400 font-bold">✓</span>
-              )}
+            <div key={layer} className="flex items-center gap-1.5">
+              <span className="text-[8px] font-mono text-muted-foreground/40 w-[46px] shrink-0 text-right">
+                {label}
+              </span>
+              <div className="flex gap-1 flex-wrap">
+                {agents.map(a => {
+                  const active   = activeKeys.has(a.key);
+                  const complete = !active && done.has(a.key);
+                  const state: "idle" | "active" | "done" = active ? "active" : complete ? "done" : "idle";
+                  return (
+                    <div
+                      key={a.key}
+                      title={active ? `${a.name} — WORKING` : complete ? `${a.name} — COMPLETE` : a.name}
+                      className={`relative flex items-center justify-center rounded border text-center transition-all duration-300 ${
+                        compact ? "w-8 h-6" : "w-9 h-7"
+                      } ${colorClasses(a.color, state)}`}
+                    >
+                      <span className="text-[8px] font-mono font-bold leading-none">{a.short}</span>
+                      {active && (
+                        <span className="absolute top-0.5 right-0.5 w-1 h-1 rounded-full bg-current animate-pulse" />
+                      )}
+                      {complete && (
+                        <span className="absolute top-0.5 right-0.5 text-[7px] leading-none text-green-400 font-bold">✓</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
@@ -194,83 +251,44 @@ export function SwarmGrid({
 }
 
 /* ────────────────────────────────────────────────
-   Collapsed Work Block — replit-agent-style folder
+   WorkBlockFolder — collapsible build log entry
    ──────────────────────────────────────────────── */
 export function WorkBlockFolder({ block, defaultOpen = false }: { block: WorkBlock; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
-  const inProgress = block.completedAt === null;
-  const duration = block.completedAt
-    ? Math.max(1, Math.round((block.completedAt - block.startedAt) / 1000))
-    : Math.max(1, Math.round((Date.now() - block.startedAt) / 1000));
+  const dur = block.completedAt
+    ? `${((block.completedAt - block.startedAt) / 1000).toFixed(1)}s`
+    : "…";
 
   return (
-    <div className={`border rounded transition-colors ${
-      inProgress
-        ? "border-primary/40 bg-primary/5"
-        : "border-border/40 bg-background/40 hover:border-primary/30"
-    }`}>
+    <div className="border border-border/30 rounded overflow-hidden">
       <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary/10 transition-colors"
       >
         {open
-          ? <FolderOpen className={`w-3.5 h-3.5 shrink-0 ${inProgress ? "text-primary" : "text-muted-foreground"}`} />
-          : <Folder className={`w-3.5 h-3.5 shrink-0 ${inProgress ? "text-primary" : "text-muted-foreground"}`} />
+          ? <FolderOpen className="w-3 h-3 text-accent/70 shrink-0" />
+          : <Folder     className="w-3 h-3 text-muted-foreground/50 shrink-0" />
         }
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 text-[11px] font-mono">
-            <span className={`truncate ${inProgress ? "text-primary" : "text-foreground/80"}`}>
-              {block.userMessage}
-            </span>
-            {inProgress && <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />}
-          </div>
-          <div className="flex items-center gap-2 text-[9px] font-mono text-muted-foreground/60 mt-0.5">
-            <span>{block.agents.length || 1} {block.agents.length === 1 ? "agent" : "agents"}</span>
-            <span>•</span>
-            <span>{block.steps.length + block.buildLogs.length} steps</span>
-            <span>•</span>
-            <span>{duration}s</span>
-            {!inProgress && <><span>•</span><span className="text-green-400">✓ done</span></>}
-          </div>
-        </div>
+        <span className="flex-1 text-[11px] font-mono text-foreground/80 truncate">{block.userMessage}</span>
+        {block.completedAt
+          ? <span className="text-[9px] font-mono text-green-400/70 shrink-0">{dur}</span>
+          : <span className="text-[9px] font-mono text-accent/70 animate-pulse shrink-0">building…</span>
+        }
         {open
-          ? <ChevronDown className="w-3 h-3 text-muted-foreground/60 shrink-0" />
-          : <ChevronRight className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+          ? <ChevronDown  className="w-3 h-3 text-muted-foreground/40 shrink-0" />
+          : <ChevronRight className="w-3 h-3 text-muted-foreground/40 shrink-0" />
         }
       </button>
-
       {open && (
-        <div className="border-t border-border/30 px-2.5 py-2 space-y-1 max-h-60 overflow-y-auto">
-          {block.steps.length > 0 && (
-            <div className="space-y-0.5">
-              {block.steps.map((s, i) => (
-                <div key={`s-${i}`} className="text-[10px] font-mono text-muted-foreground/80 leading-snug flex items-start gap-1.5">
-                  <span className="shrink-0 mt-0.5 text-primary/50">›</span>
-                  <span>{s}</span>
-                </div>
-              ))}
+        <div className="border-t border-border/20 px-2 py-1.5 space-y-1">
+          {block.steps.map((s, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[10px] font-mono text-muted-foreground/70">
+              <ChevronRight className="w-2.5 h-2.5 mt-0.5 text-accent/50 shrink-0" />
+              {s}
             </div>
-          )}
-          {block.buildLogs.length > 0 && (
-            <div className="space-y-0.5 pt-1 border-t border-border/20">
-              {block.buildLogs.map((log, i) => {
-                const isOk  = log.includes("✅") || log.includes("🎉");
-                const isErr = log.includes("❌") || log.includes("Error");
-                const agent = log.match(/\[([^\]]+)\]/)?.[1];
-                const body  = log.replace(/\[[^\]]+\]\s?/, "");
-                return (
-                  <div key={`l-${i}`} className={`text-[10px] font-mono leading-snug flex items-start gap-1.5 ${
-                    isErr ? "text-red-400" : isOk ? "text-green-300" : "text-muted-foreground/80"
-                  }`}>
-                    {agent && <span className="shrink-0 text-[9px] text-primary/60 min-w-[80px] truncate">{agent}</span>}
-                    <span className="flex-1">{body}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          ))}
           {block.reply && (
-            <div className="pt-1.5 mt-1 border-t border-border/30 text-[11px] font-mono text-foreground/90 leading-relaxed whitespace-pre-wrap">
+            <div className="mt-1.5 pt-1.5 border-t border-border/20 text-[11px] font-mono text-foreground/85 leading-snug">
               {block.reply}
             </div>
           )}
@@ -281,137 +299,77 @@ export function WorkBlockFolder({ block, defaultOpen = false }: { block: WorkBlo
 }
 
 /* ────────────────────────────────────────────────
-   SwarmTerminal — main exported component
+   SwarmTerminal — main chat + swarm panel
    ──────────────────────────────────────────────── */
 export function SwarmTerminal({
   projectId,
-  projectName,
   onUpdateStarted,
-  onBuildComplete,
 }: {
   projectId: string;
-  projectName: string;
   onUpdateStarted?: () => void;
-  onBuildComplete?: () => void;
 }) {
-  const [greeting] = useState<ChatMsg>({
-    role: "agent",
-    content: `Swarm online for "${projectName}". Tell me what to build, fix, or change — work auto-collapses into folders as it completes.`,
-    timestamp: new Date().toISOString(),
-  });
-  const [blocks, setBlocks]       = useState<WorkBlock[]>([]);
-  const [input, setInput]         = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeKeys, setActiveKeys] = useState<Set<string>>(new Set());
+  const [blocks, setBlocks]               = useState<WorkBlock[]>([]);
+  const [isLoading, setIsLoading]         = useState(false);
+  const [isStreaming, setIsStreaming]      = useState(false);
+  const [input, setInput]                 = useState("");
+  const [activeKeys, setActiveKeys]       = useState<Set<string>>(new Set());
   const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set());
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [currentTask, setCurrentTask] = useState<string | null>(null);
+  const [currentTask, setCurrentTask]     = useState<string | null>(null);
+  const [currentAgentKey, setCurrentAgentKey] = useState<string | null>(null);
 
-  const bottomRef    = useRef<HTMLDivElement>(null);
-  const esRef        = useRef<EventSource | null>(null);
-  const currentIdRef = useRef<string | null>(null);
-  const pendingBuildRef = useRef(false);
-  // Stable refs for callbacks so SSE effect doesn't re-subscribe on every parent re-render
-  const onBuildCompleteRef = useRef(onBuildComplete);
-  const onUpdateStartedRef = useRef(onUpdateStarted);
-  useEffect(() => { onBuildCompleteRef.current = onBuildComplete; }, [onBuildComplete]);
-  useEffect(() => { onUpdateStartedRef.current = onUpdateStarted; }, [onUpdateStarted]);
-  // Track active-key fade timers so we can clear them on unmount
+  const esRef              = useRef<EventSource | null>(null);
+  const bottomRef          = useRef<HTMLDivElement>(null);
   const activeKeyTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const pendingBuildRef    = useRef(false);
+  const currentIdRef       = useRef<string | null>(null);
+  const onUpdateStartedRef = useRef(onUpdateStarted);
 
-  // ── SSE: push real build logs into the active work block ───────────
+  const greeting = {
+    content: "HYDRA-PRIME SWARM v4 online. 7 layers · 24 agents · fractal sub-swarming enabled. Describe your project to engage the build pipeline.",
+  };
+
   useEffect(() => {
-    if (!projectId) return;
     const es = new EventSource(`/api/projects/${projectId}/build-stream`);
     esRef.current = es;
     es.onmessage = (e) => {
       try {
-        const { msg } = JSON.parse(e.data) as { msg: string };
-        if (msg === "__DONE__") {
-          setIsStreaming(false);
-          // Mark current block complete + migrate all still-active agents to "done"
-          if (currentIdRef.current) {
-            const id = currentIdRef.current;
-            setBlocks(prev => prev.map(b => b.id === id && b.completedAt === null
-              ? { ...b, completedAt: Date.now() } : b));
-            currentIdRef.current = null;
-          }
-          setActiveKeys(prev => {
-            // Any agent that was still active at DONE is now complete
-            setCompletedKeys(done => {
-              const next = new Set(done);
-              prev.forEach(k => next.add(k));
-              return next;
-            });
-            return new Set();
-          });
-          setCurrentTask(null);
-          if (pendingBuildRef.current) {
-            pendingBuildRef.current = false;
-            onBuildCompleteRef.current?.();
-          }
-          return;
-        }
-        // Add to current block (if any)
-        const id = currentIdRef.current;
-        if (id) {
-          setBlocks(prev => prev.map(b => {
-            if (b.id !== id) return b;
-            const agentName = msg.match(/\[([^\]]+)\]/)?.[1] || "";
-            const agents = agentName && !b.agents.includes(agentName)
-              ? [...b.agents, agentName] : b.agents;
-            return { ...b, buildLogs: [...b.buildLogs, msg], agents };
-          }));
-        }
-        // Extract agent + task body for live "working on X" ticker
-        const agent = msg.match(/\[([^\]]+)\]/)?.[1] || msg;
-        const body  = msg.replace(/\[[^\]]+\]\s?/, "").trim();
-        setCurrentTask(body.slice(0, 80));
-        // Light up swarm grid based on agent name
-        const key = matchAgent(agent);
-        if (key) {
-          setActiveKeys(prev => {
-            const next = new Set(prev);
-            next.add(key);
-            return next;
-          });
-          // After 3s, mark this agent COMPLETE (green check) instead of just fading
+        const data = JSON.parse(e.data);
+        if (data.type === "build_start") {
+          setIsStreaming(true);
+          setActiveKeys(new Set());
+          setCompletedKeys(new Set());
+        } else if (data.type === "agent") {
+          const key = matchAgent(data.agent ?? data.text ?? "");
+          setCurrentAgentKey(key);
+          setCurrentTask(data.text ?? null);
+          if (key) setActiveKeys(prev => { const n = new Set(prev); n.add(key!); return n; });
           const t = setTimeout(() => {
-            setActiveKeys(prev => {
-              const next = new Set(prev);
-              next.delete(key);
-              return next;
-            });
-            setCompletedKeys(prev => {
-              const next = new Set(prev);
-              next.add(key);
-              return next;
-            });
+            setActiveKeys(prev  => { const n = new Set(prev);  n.delete(key!); return n; });
+            setCompletedKeys(prev => { const n = new Set(prev); n.add(key!);    return n; });
             activeKeyTimersRef.current.delete(t);
           }, 3000);
           activeKeyTimersRef.current.add(t);
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore parse errors */ }
     };
+
     es.onerror = () => { setIsStreaming(false); };
+
     return () => {
       es.close();
       esRef.current = null;
-      // Clear any pending fade-out timers to prevent setState-on-unmounted warnings
       activeKeyTimersRef.current.forEach(t => clearTimeout(t));
       activeKeyTimersRef.current.clear();
     };
-    // Only re-subscribe when projectId changes — callbacks are accessed via refs
-    // to avoid connection churn on every parent re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // ── Auto-scroll to bottom on new content ──────────────────────────
+  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [blocks.length, isLoading]);
 
-  // ── Send a chat message ───────────────────────────────────────────
+  // ── Send a chat message ───────────────────────────────────
   const send = useCallback(async (text: string) => {
     const userText = text.trim();
     if (!userText || isLoading) return;
@@ -419,68 +377,68 @@ export function SwarmTerminal({
     setInput("");
     setIsStreaming(true);
 
-    // Open a new work block. Optimistically mark "build pending" BEFORE the
-    // request fires so an early SSE __DONE__ can't be lost (race fix).
     pendingBuildRef.current = true;
     const id = `wb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     currentIdRef.current = id;
+
     const newBlock: WorkBlock = {
       id, userMessage: userText, startedAt: Date.now(), completedAt: null,
       steps: [], buildLogs: [], agents: [], reply: null,
     };
-    // Auto-collapse all previously open blocks (just keep new one expanded)
     setBlocks(prev => [...prev, newBlock]);
 
-    // Simulated narration steps (fast, for snappiness)
+    // HYDRA-themed narration steps
     const narrationSteps = [
-      "Parsing your request and routing to the swarm…",
-      "Architect agent designing the change…",
-      "Code Generator implementing logic…",
-      "UI/UX Agent refining interface…",
-      "Security Agent validating…",
-      "Testing Agent running checks…",
+      "SOVEREIGN analysing request and generating blueprint…",
+      "Architect Council convening — 5 specialists in parallel…",
+      "Department heads decomposing into atomic tasks…",
+      "Fractal worker swarm spawning — up to 200 parallel agents…",
+      "Critic ring running adversarial review…",
+      "Synthesizer merging artifacts and resolving conflicts…",
+      "Validator packaging output — README, .env, Dockerfile…",
     ];
     let i = 0;
     const stepInt = setInterval(() => {
       i++;
-      setBlocks(prev => prev.map(b => b.id === id
-        ? { ...b, steps: narrationSteps.slice(0, i) } : b));
+      setBlocks(prev => prev.map(b =>
+        b.id === id ? { ...b, steps: narrationSteps.slice(0, i) } : b
+      ));
       if (i >= narrationSteps.length) clearInterval(stepInt);
-    }, 600);
+    }, 700);
 
-    let reply = "Task received — agents are processing your request.";
+    let reply = "HYDRA-PRIME engaged — swarm is processing your request.";
+
     try {
       const token = typeof localStorage !== "undefined" ? localStorage.getItem("nexus-token") : null;
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(`/api/projects/${projectId}/chat`, {
+
+      const res  = await fetch(`/api/projects/${projectId}/chat`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ message: userText }),
+        body:   JSON.stringify({ message: userText }),
       });
       const data = await res.json();
       reply = data.reply || reply;
+
       if (data.updating) {
-        // Confirmed: build is in-flight. Optimistic flag stays true.
         onUpdateStartedRef.current?.();
       } else {
-        // Backend chose NOT to build — clear optimistic flag so a stray
-        // SSE __DONE__ from an unrelated event doesn't fire onBuildComplete.
         pendingBuildRef.current = false;
-        // No build triggered — close block immediately after narration
         setTimeout(() => {
           clearInterval(stepInt);
-          setBlocks(prev => prev.map(b => b.id === id && b.completedAt === null
-            ? { ...b, completedAt: Date.now(), reply } : b));
+          setBlocks(prev => prev.map(b =>
+            b.id === id && b.completedAt === null
+              ? { ...b, completedAt: Date.now(), reply } : b
+          ));
           if (currentIdRef.current === id) currentIdRef.current = null;
           setIsStreaming(false);
-        }, narrationSteps.length * 600 + 400);
+        }, narrationSteps.length * 700 + 400);
       }
     } catch {
-      reply = "Request queued — the swarm will retry when connectivity returns.";
+      reply = "Request queued — HYDRA will retry when connectivity returns.";
     }
 
-    // Attach reply to the current block (visible when expanded)
     setBlocks(prev => prev.map(b => b.id === id ? { ...b, reply } : b));
     setIsLoading(false);
   }, [projectId, isLoading, onUpdateStarted]);
@@ -492,28 +450,28 @@ export function SwarmTerminal({
     }
   };
 
-  // The most-recent block is auto-expanded, all older ones collapsed.
   const lastIdx = blocks.length - 1;
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#06060f]">
-      {/* Live 21-agent grid */}
+      {/* Live HYDRA 7-layer grid */}
       <SwarmGrid
         activeKeys={activeKeys}
         completedKeys={completedKeys}
         isStreaming={isStreaming}
         currentTask={currentTask}
+        currentAgentKey={currentAgentKey}
       />
 
-      {/* Greeting + work blocks (collapsed folders) */}
+      {/* Greeting + work blocks */}
       <div className="flex-1 overflow-y-auto px-3 py-2.5 space-y-2">
         {/* Greeting */}
         <div className="flex gap-2">
-          <div className="shrink-0 w-6 h-6 rounded bg-primary/10 border border-primary/40 flex items-center justify-center">
-            <Bot className="w-3 h-3 text-primary" />
+          <div className="shrink-0 w-6 h-6 rounded bg-accent/10 border border-accent/40 flex items-center justify-center">
+            <Bot className="w-3 h-3 text-accent" />
           </div>
           <div className="flex-1 bg-secondary/20 border border-border/30 rounded px-2.5 py-1.5">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider mb-0.5">Nexus Swarm</div>
+            <div className="text-[9px] text-accent/60 uppercase tracking-wider mb-0.5">HYDRA-PRIME SWARM</div>
             <p className="text-[11px] font-mono text-foreground/90 leading-snug">{greeting.content}</p>
           </div>
         </div>
@@ -526,24 +484,24 @@ export function SwarmTerminal({
         {blocks.length === 0 && (
           <div className="text-center py-6 text-[10px] font-mono text-muted-foreground/50">
             <Activity className="w-4 h-4 mx-auto mb-1.5 text-muted-foreground/30" />
-            No active work — send a request below to dispatch the swarm.
+            No active build — describe your project below to engage the swarm.
           </div>
         )}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* Compact input */}
-      <div className="shrink-0 border-t border-primary/20 bg-secondary/10 p-2">
+      {/* Input */}
+      <div className="shrink-0 border-t border-accent/20 bg-secondary/10 p-2">
         <div className="flex gap-1.5 items-end">
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Tell the swarm what to build…"
+            placeholder="Describe what to build — HYDRA will handle the rest…"
             rows={1}
             disabled={isLoading}
-            className="flex-1 bg-background/60 border border-border/50 rounded px-2.5 py-1.5 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/40 resize-none outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50 max-h-24"
+            className="flex-1 bg-background/60 border border-border/50 rounded px-2.5 py-1.5 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/40 resize-none outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition-all disabled:opacity-50 max-h-24"
           />
           <Button
             size="sm"
@@ -551,12 +509,15 @@ export function SwarmTerminal({
             disabled={isLoading || !input.trim()}
             className="h-8 px-2.5 glow-primary-hover"
           >
-            {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            {isLoading
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Send    className="w-3.5 h-3.5" />
+            }
           </Button>
         </div>
         <p className="text-[8px] text-muted-foreground/30 mt-1 font-mono flex items-center gap-1">
           <Zap className="w-2.5 h-2.5" />
-          21 SPECIALISTS · WORK AUTO-COLLAPSES INTO FOLDERS · MAIN PORTAL HAS FULL HISTORY
+          HYDRA-PRIME · 7 LAYERS · 24 SPECIALISTS · FRACTAL SUB-SWARMING · CRITIC RING
         </p>
       </div>
     </div>
