@@ -1327,14 +1327,6 @@ function AgentTerminal({
         </div>
       )}
 
-      {/* ── Live 21-Agent Swarm Grid (futuristic status at the very top) ── */}
-      <SwarmGrid
-        activeKeys={activeKeys}
-        completedKeys={completedKeys}
-        isStreaming={isStreaming}
-        currentTask={currentTask}
-      />
-
       {/* Orchestrator narration panel */}
       <OrchestratorPanel
         projectId={projectId}

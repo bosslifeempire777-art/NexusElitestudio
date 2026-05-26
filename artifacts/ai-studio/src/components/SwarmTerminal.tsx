@@ -96,16 +96,26 @@ export function matchAgent(text: string): string | null {
   if (t.includes("splitter")        || t.includes("fractal"))    return "fractal";
   if (t.includes("-w-")             || t.includes("worker"))     return "worker";
   // Layer 5
-  if (t.includes("bughunter")       || t.includes("bug hunt"))   return "bughunt";
-  if (t.includes("securityauditor") || t.includes("sec audit"))  return "secaudit";
+  if (t.includes("bughunter")       || t.includes("bug hunt") || t.includes("debugging agent") || t.includes("debug")) return "bughunt";
+  if (t.includes("securityauditor") || t.includes("sec audit") || t.includes("security auditor") || t.includes("security agent")) return "secaudit";
   if (t.includes("uxcritic")        || t.includes("ux critic"))  return "uxcrit";
   // Layer 6
   if (t.includes("synthesizer")     || t.includes("synth"))      return "synth";
   // Layer 7
-  if (t.includes("validator")       || t.includes("packag"))     return "valid";
-  // Broad fallbacks
+  if (t.includes("validator")       || t.includes("packag") || t.includes("testing agent")) return "valid";
+  // Broad fallbacks — cover the project-build agent names the server emits
   if (t.includes("orchestrat"))                                   return "sovereign";
+  if (t.includes("software architect"))                           return "sysarch";
+  if (t.includes("ui/ux")           || t.includes("ux agent"))   return "uxarch";
   if (t.includes("architect"))                                    return "sysarch";
+  if (t.includes("code generator")  || t.includes("codegen"))    return "worker";
+  if (t.includes("asset generator") || t.includes("asset"))      return "worker";
+  if (t.includes("devops engineer") || t.includes("devops"))     return "dvo";
+  if (t.includes("payment")         || t.includes("stripe"))     return "pay";
+  if (t.includes("auth"))                                         return "authh";
+  if (t.includes("database"))                                     return "db";
+  if (t.includes("mobile"))                                       return "mob";
+  if (t.includes("game"))                                         return "gme";
   if (t.includes("fixer"))                                        return "bughunt";
   return null;
 }
@@ -334,18 +344,31 @@ export function SwarmTerminal({
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.type === "build_start") {
-          setIsStreaming(true);
-          setActiveKeys(new Set());
-          setCompletedKeys(new Set());
-        } else if (data.type === "agent") {
-          const key = matchAgent(data.agent ?? data.text ?? "");
+        // Server sends { msg, ts } — handle both that format and legacy { type, agent, text }
+        const msg: string = data.msg ?? data.text ?? data.agent ?? "";
+
+        if (msg === "__DONE__") {
+          setIsStreaming(false);
+          return;
+        }
+
+        if (msg.startsWith("__REPLY__:")) {
+          // AI reply payload — not a swarm event, ignore for grid
+          return;
+        }
+
+        if (!msg) return;
+
+        setIsStreaming(true);
+        setCurrentTask(msg);
+
+        const key = matchAgent(msg);
+        if (key) {
           setCurrentAgentKey(key);
-          setCurrentTask(data.text ?? null);
-          if (key) setActiveKeys(prev => { const n = new Set(prev); n.add(key!); return n; });
+          setActiveKeys(prev => { const n = new Set(prev); n.add(key); return n; });
           const t = setTimeout(() => {
-            setActiveKeys(prev  => { const n = new Set(prev);  n.delete(key!); return n; });
-            setCompletedKeys(prev => { const n = new Set(prev); n.add(key!);    return n; });
+            setActiveKeys(prev  => { const n = new Set(prev);  n.delete(key); return n; });
+            setCompletedKeys(prev => { const n = new Set(prev); n.add(key);    return n; });
             activeKeyTimersRef.current.delete(t);
           }, 3000);
           activeKeyTimersRef.current.add(t);
