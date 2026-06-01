@@ -342,28 +342,45 @@ router.get("/:id/preview", async (req, res) => {
     if (payload && payload.userId === project.userId) isOwnerRequest = true;
   }
 
-  if (project.generatedCode && isOwnerRequest) {
+  if (project.generatedCode) {
     try {
-      const secrets = await getUserSecretsMap(project.userId);
-      // SECURITY: JSON.stringify does NOT escape `</script>`, allowing a
-      // crafted secret value to break out of the inline script. Replace
-      // every `<` with its safe \u003c escape (and `>` for symmetry).
-      const safeJson = JSON.stringify(secrets)
-        .replace(/</g, "\\u003c")
-        .replace(/>/g, "\\u003e")
-        .replace(/&/g, "\\u0026")
-        .replace(/\u2028/g, "\\u2028")
-        .replace(/\u2029/g, "\\u2029");
       // Build the platform backend URL for this project (NEXUS_API).
       // Prefer x-forwarded headers (set by Render / Cloudflare in production).
       const fwdProto = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
       const fwdHost  = (req.get("x-forwarded-host") || req.get("host") || "") as string;
       const nexusApiUrl = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
 
+      // Always inject NEXUS_API — it's just a URL (not a secret), scoped by
+      // project_id. Every generated app needs this to make buttons work.
+      // USER_SECRETS are only injected for verified owners (they contain real keys).
+      let secretsJson = "{}";
+      if (isOwnerRequest) {
+        const secrets = await getUserSecretsMap(project.userId);
+        // SECURITY: JSON.stringify does NOT escape `</script>`, allowing a
+        // crafted secret value to break out of the inline script. Replace
+        // every `<` with its safe \u003c escape (and `>` for symmetry).
+        secretsJson = JSON.stringify(secrets)
+          .replace(/</g, "\\u003c")
+          .replace(/>/g, "\\u003e")
+          .replace(/&/g, "\\u0026")
+          .replace(/\u2028/g, "\\u2028")
+          .replace(/\u2029/g, "\\u2029");
+      }
+
       const injection =
-        `<script>window.USER_SECRETS = ${safeJson};` +
+        `<script>` +
         `window.NEXUS_API = "${nexusApiUrl}";` +
         `window.NEXUS_PROJECT_ID = "${project.id}";` +
+        `window.USER_SECRETS = ${secretsJson};` +
+        // Null-guard shim: if any generated code calls window.NEXUS_API before
+        // the script runs, or NEXUS_API is somehow still undefined, surface a
+        // clear console error instead of a silent TypeError on every button click.
+        `(function(){` +
+        `var _orig = window.fetch;` +
+        `window._nexusFetch = function(col,opts){` +
+        `if(!window.NEXUS_API){console.error('[NEXUS] window.NEXUS_API is not set — buttons may not work');return Promise.reject(new Error('NEXUS_API not initialised'));}` +
+        `return _orig(window.NEXUS_API+'/'+col,opts);};` +
+        `})();` +
         `window.NEXUS_REQUIRE_KEY = function(name){` +
         `if(window.USER_SECRETS && window.USER_SECRETS[name]) return window.USER_SECRETS[name];` +
         `var d=document.createElement('div');` +
@@ -381,7 +398,7 @@ router.get("/:id/preview", async (req, res) => {
         html = injection + html;
       }
     } catch (err) {
-      console.error("Failed to inject user secrets into preview:", err);
+      console.error("Failed to inject runtime globals into preview:", err);
     }
   }
 

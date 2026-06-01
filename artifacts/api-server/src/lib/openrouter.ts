@@ -913,9 +913,16 @@ CRITICAL RULES — follow exactly or the game will not work:
       `Build a complete, production-quality ${type} web application called "${name}".\n\n` +
       `User's requirements: ${prompt}\n\n` +
       `PLATFORM CONTEXT:\n` +
-      `- The app is served in a browser with window.NEXUS_API already injected (real PostgreSQL backend)\n` +
-      `- Use window.NEXUS_API for ALL data — never localStorage for app data\n` +
-      `- Build real multi-user auth (register/login/logout via users collection) where appropriate\n` +
+      `- The app runs in a browser iframe. window.NEXUS_API is ALWAYS pre-injected (real PostgreSQL backend)\n` +
+      `- Use window.NEXUS_API for ALL persistent data — never localStorage for app data\n` +
+      `- EXACT fetch pattern (copy exactly — wrong patterns break buttons silently):\n` +
+      `    async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }\n` +
+      `    async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }\n` +
+      `    async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json()); }\n` +
+      `    async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }\n` +
+      `- AUTH: register/login via the 'users' collection. Store session in localStorage._sess = btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30}))\n` +
+      `- CRITICAL: EVERY button click handler must be async and wrapped in try/catch with visible error feedback\n` +
+      `- CRITICAL: Never use onclick="" attributes — always addEventListener so errors surface correctly\n` +
       `- Build every feature end-to-end with no dead ends\n` +
       `- Handle loading, empty, and error states throughout\n` +
       `- Dark cyberpunk aesthetic, polished UI, smooth animations`;
@@ -944,15 +951,20 @@ CRITICAL RULES:
 3. ALL CSS inside <style> tags. ALL JavaScript in <script> tags.
 4. No CDN scripts, no Google Fonts, no external CSS. You MAY use fetch() including window.NEXUS_API.
 5. System fonts only. For icons: Unicode emoji or inline SVG only.
-6. Every button does something, every form works, navigation switches views.
+6. Every button MUST work — use addEventListener (never inline onclick=""), always async+try/catch.
 7. Dark background, smooth animations, professional UI.
+8. NEVER call fetch() with a hardcoded path like fetch('/api/...') — always use window.NEXUS_API.
 
-NEXUS BACKEND (use window.NEXUS_API for ALL data — injected at runtime):
+NEXUS BACKEND (window.NEXUS_API is ALWAYS pre-injected — use these exact patterns):
   async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }
   async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
-  async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); }
+  async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json()); }
   async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }
-AUTH: Register/login using the users collection. Store session in localStorage._sess as btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30})).`,
+AUTH: Register/login using the users collection. Store session in localStorage._sess as btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30})).
+BUTTON PATTERN (always use this structure — never inline onclick):
+  document.getElementById('myBtn').addEventListener('click', async () => {
+    try { /* do work */ } catch(e) { alert('Error: '+e.message); }
+  });`,
         tier: "coding",
         maxTokens: 8_000,
         temperature: 0.7,
@@ -1007,7 +1019,12 @@ CRITICAL RULES:
 4. Single complete HTML document.
 5. PRESERVE all existing window.NEXUS_API calls — never replace them with localStorage.
 6. PRESERVE all window.USER_SECRETS references — never hardcode API keys.
-7. If the requested change requires storing new data, use window.NEXUS_API.${secretsBlock}`;
+7. If the requested change requires storing new data, use window.NEXUS_API.
+8. BUTTON/EVENT FIXES — if buttons are broken, apply ALL of these:
+   a. Replace every inline onclick="" attribute with addEventListener('click', async () => { try{...}catch(e){alert(e.message)} })
+   b. Replace any fetch('/api/...') or fetch('http://...') with fetch(window.NEXUS_API+'/collection')
+   c. Ensure window.NEXUS_API is used as-is (it is pre-injected — never check if it's defined or assign it)
+   d. Every async operation must show a loading state and surface errors visibly to the user${secretsBlock}`;
 
   const characterBlock = buildCharacterBlock(characters);
   const userMsg =
