@@ -1498,9 +1498,10 @@ router.post("/:id/mobile-submit", requireAuth, async (req, res) => {
   const { buildId, platform } = req.body as { buildId?: string; platform?: "android" | "ios" };
   if (!buildId || !platform) { res.status(400).json({ error: "bad_request", message: "buildId and platform are required" }); return; }
 
-  // Verify the build belongs to this project and is in a finished (terminal) state
+  // Verify the build belongs to this project and is in a finished (terminal) state.
+  // The frontend passes b.easBuildId (the EAS UUID), so we match on easBuildId.
   const [buildRow] = await db.select().from(mobileBuildTable)
-    .where(and(eq(mobileBuildTable.id, buildId), eq(mobileBuildTable.projectId, project.id)))
+    .where(and(eq(mobileBuildTable.easBuildId, buildId), eq(mobileBuildTable.projectId, project.id)))
     .limit(1);
   if (!buildRow) { res.status(404).json({ error: "build_not_found", message: "Build not found for this project." }); return; }
   if (buildRow.status !== "finished") {
