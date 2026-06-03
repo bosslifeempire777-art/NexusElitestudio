@@ -133,9 +133,9 @@ async function pushFilesToGitHub(
 export async function triggerMobileBuild(opts: {
   projectId:   string;
   projectName: string;
-  platform:    "android" | "ios";
+  platform:    "android" | "ios" | "all";
   files:       Record<string, string>;
-}): Promise<MobileBuildResult> {
+}): Promise<MobileBuildResult[]> {
   const { projectId, projectName, platform, files } = opts;
   const repoSlug = `nexus-mobile-${projectId}`.slice(0, 60);
 
@@ -158,28 +158,31 @@ export async function triggerMobileBuild(opts: {
     dir,
   );
 
-  let build: any = {};
+  let builds: any[] = [];
   try {
     const parsed = JSON.parse(output.trim());
-    build = Array.isArray(parsed) ? parsed[0] : parsed;
+    builds = Array.isArray(parsed) ? parsed : [parsed];
   } catch {
     const idMatch = output.match(/"id"\s*:\s*"([^"]+)"/);
-    build = { id: idMatch?.[1] ?? "unknown", status: "in-queue" };
+    builds = [{ id: idMatch?.[1] ?? "unknown", status: "in-queue", platform: platform === "all" ? "android" : platform }];
   }
 
-  const buildId = build.id ?? build.buildId ?? "unknown";
-  console.log(`[EAS] Build queued: ${buildId}`);
-
-  return {
-    buildId,
-    status:      build.status ?? "in-queue",
-    platform,
-    artifactUrl: build.artifacts?.applicationArchiveUrl ?? null,
-    expiresAt:   build.expirationDate ?? null,
-    repoUrl:     repoUrl || null,
-    error:       null,
-    logsUrl:     `https://expo.dev/accounts/${EXPO_OWNER}/projects/builds/${buildId}`,
-  };
+  return builds.map((build: any) => {
+    const buildId = build.id ?? build.buildId ?? "unknown";
+    const resolvedPlatform: "android" | "ios" =
+      String(build.platform ?? "").toLowerCase().includes("ios") ? "ios" : "android";
+    console.log(`[EAS] Build queued: ${buildId} (${resolvedPlatform})`);
+    return {
+      buildId,
+      status:      build.status ?? "in-queue",
+      platform:    resolvedPlatform,
+      artifactUrl: build.artifacts?.applicationArchiveUrl ?? null,
+      expiresAt:   build.expirationDate ?? null,
+      repoUrl:     repoUrl || null,
+      error:       null,
+      logsUrl:     `https://expo.dev/accounts/${EXPO_OWNER}/projects/builds/${buildId}`,
+    };
+  });
 }
 
 export async function getMobileBuildStatus(buildId: string): Promise<MobileBuildStatus> {

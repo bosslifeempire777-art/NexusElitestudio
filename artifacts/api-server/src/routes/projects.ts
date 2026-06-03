@@ -1196,7 +1196,9 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
     return;
   }
 
-  const platform: "android" | "ios" = (req.body?.platform === "ios") ? "ios" : "android";
+  const rawPlatform = req.body?.platform;
+  const platform: "android" | "ios" | "all" =
+    rawPlatform === "ios" ? "ios" : rawPlatform === "all" ? "all" : "android";
 
   // Build the NEXUS_API base URL
   const fwdProto   = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
@@ -1208,41 +1210,48 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
     console.log(`[MobileBuild] Generating Expo files for project ${project.id}...`);
     const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
 
-    // Push to GitHub + trigger EAS build
+    // Push to GitHub + trigger EAS build (returns array; "all" returns 2 builds)
     console.log(`[MobileBuild] Triggering ${platform} EAS build...`);
-    const result = await triggerMobileBuild({
+    const results = await triggerMobileBuild({
       projectId:   project.id,
       projectName: project.name,
       platform,
       files,
     });
 
-    // Persist build record
-    const buildRowId = nanoid();
-    await db.insert(mobileBuildTable).values({
-      id:          buildRowId,
-      projectId:   project.id,
-      easBuildId:  result.buildId,
-      platform,
-      status:      result.status ?? "in-queue",
-      profile:     "preview",
-      artifactUrl: result.artifactUrl ?? undefined,
-      repoUrl:     result.repoUrl ?? undefined,
-      logsUrl:     result.logsUrl ?? undefined,
-    });
+    // Persist a build record for every result (1 for android/ios, 2 for all)
+    const buildRows = await Promise.all(results.map(result =>
+      db.insert(mobileBuildTable).values({
+        id:          nanoid(),
+        projectId:   project.id,
+        easBuildId:  result.buildId,
+        platform:    result.platform,
+        status:      result.status ?? "in-queue",
+        profile:     "preview",
+        artifactUrl: result.artifactUrl ?? undefined,
+        repoUrl:     result.repoUrl ?? undefined,
+        logsUrl:     result.logsUrl ?? undefined,
+      }).returning(),
+    ));
 
-    // Store build ID on the project for polling
+    // Append log entries for all triggered builds
+    const newLogs = results.map(r => `[MobileBuild] 🚀 EAS ${r.platform} build triggered — ID: ${r.buildId}`);
     await db.update(projectsTable)
       .set({
         updatedAt: new Date(),
         agentLogs: [
           ...(Array.isArray(project.agentLogs) ? project.agentLogs as string[] : []),
-          `[MobileBuild] 🚀 EAS ${platform} build triggered — ID: ${result.buildId}`,
+          ...newLogs,
         ],
       })
       .where(eq(projectsTable.id, project.id));
 
-    res.json({ ...result, buildRowId });
+    // Return first result for single-platform builds; array for "all"
+    if (results.length === 1) {
+      res.json({ ...results[0], buildRowId: buildRows[0]?.[0]?.id });
+    } else {
+      res.json({ builds: results.map((r, i) => ({ ...r, buildRowId: buildRows[i]?.[0]?.id })) });
+    }
   } catch (err: any) {
     console.error("[MobileBuild] Failed:", err?.message ?? err);
     res.status(500).json({ error: "build_failed", message: err?.message ?? "EAS build failed" });

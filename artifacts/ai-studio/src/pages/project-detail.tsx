@@ -124,7 +124,7 @@ export default function ProjectDetail() {
   // ── Mobile / EAS Build state ──────────────────────────────────────────────
   const [showMobilePanel, setShowMobilePanel]     = useState(false);
   const [mobilePanelTab, setMobilePanelTab]       = useState<'build'|'history'|'ota'|'submit'|'webhooks'|'workflows'>('build');
-  const [mobilePlatform, setMobilePlatform]       = useState<'android' | 'ios'>('android');
+  const [mobilePlatform, setMobilePlatform]       = useState<'android' | 'ios' | 'all'>('android');
   const [mobileBuildId, setMobileBuildId]         = useState<string | null>(null);
   const [mobileBuildStatus, setMobileBuildStatus] = useState<string | null>(null);
   const [mobileArtifactUrl, setMobileArtifactUrl] = useState<string | null>(null);
@@ -187,6 +187,15 @@ export default function ProjectDetail() {
         return;
       }
       if (!res.ok) throw new Error(data.message || "Build failed");
+
+      // "all" platform returns { builds: [...] }; single platform returns the build directly
+      if (data.builds) {
+        // Both platforms queued — jump to History tab to monitor both
+        setMobilePanelTab('history');
+        setIsMobileBuilding(false);
+        return;
+      }
+
       setMobileBuildId(data.buildId);
       setMobileBuildStatus(data.status ?? "in-queue");
       setMobileRepoUrl(data.repoUrl ?? null);
@@ -657,15 +666,15 @@ export default function ProjectDetail() {
 
                   <div>
                     <p className="text-xs font-mono text-muted-foreground mb-2 uppercase tracking-wider">Target Platform</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {(['android', 'ios'] as const).map(p => (
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['android', 'ios', 'all'] as const).map(p => (
                         <button key={p} onClick={() => setMobilePlatform(p)}
                           className={`flex flex-col items-center gap-1 py-3 border rounded font-mono text-sm transition-all ${
                             mobilePlatform === p ? 'bg-violet-600/30 border-violet-500 text-violet-300' : 'border-border/50 text-muted-foreground hover:border-violet-500/50 hover:text-foreground'
                           }`}>
-                          <span className="text-xl">{p === 'android' ? '🤖' : '🍎'}</span>
-                          <span className="capitalize font-bold">{p}</span>
-                          <span className="text-[10px] opacity-60">{p === 'android' ? 'APK file' : 'IPA file'}</span>
+                          <span className="text-xl">{p === 'android' ? '🤖' : p === 'ios' ? '🍎' : '🚀'}</span>
+                          <span className="capitalize font-bold">{p === 'all' ? 'Both' : p}</span>
+                          <span className="text-[10px] opacity-60">{p === 'android' ? 'APK file' : p === 'ios' ? 'IPA file' : 'APK + IPA'}</span>
                         </button>
                       ))}
                     </div>
@@ -693,7 +702,7 @@ export default function ProjectDetail() {
                       {mobileBuildId && <p className="text-[10px] font-mono text-muted-foreground/60 break-all">Build ID: {mobileBuildId}</p>}
                       {mobileRepoUrl && <a href={mobileRepoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline"><ExternalLink className="w-3 h-3" /> View source on GitHub</a>}
                       {mobileLogsUrl && <a href={mobileLogsUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline"><ExternalLink className="w-3 h-3" /> Build logs on Expo</a>}
-                      {mobileArtifactUrl && <a href={mobileArtifactUrl} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 w-full py-2.5 bg-green-500/20 border border-green-500/40 text-green-400 text-sm font-mono font-bold rounded hover:bg-green-500/30 transition-colors"><Download className="w-4 h-4" /> Download {mobilePlatform === 'android' ? 'APK' : 'IPA'}</a>}
+                      {mobileArtifactUrl && <a href={mobileArtifactUrl} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 w-full py-2.5 bg-green-500/20 border border-green-500/40 text-green-400 text-sm font-mono font-bold rounded hover:bg-green-500/30 transition-colors"><Download className="w-4 h-4" /> Download {mobilePlatform === 'ios' ? 'IPA' : 'APK'}</a>}
                       {mobileError && <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-xs font-mono text-red-400">Error: {mobileError}</div>}
                     </div>
                   )}
@@ -702,7 +711,7 @@ export default function ProjectDetail() {
                     {!mobileBuildId ? (
                       <button onClick={triggerMobileBuild} disabled={isMobileBuilding}
                         className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-mono font-bold rounded transition-colors">
-                        {isMobileBuilding ? <><Loader2 className="w-4 h-4 animate-spin" /> Building…</> : <><Rocket className="w-4 h-4" /> Build {mobilePlatform === 'android' ? 'Android APK' : 'iOS IPA'}</>}
+                        {isMobileBuilding ? <><Loader2 className="w-4 h-4 animate-spin" /> Building…</> : <><Rocket className="w-4 h-4" /> Build {mobilePlatform === 'android' ? 'Android APK' : mobilePlatform === 'ios' ? 'iOS IPA' : 'Android + iOS'}</>}
                       </button>
                     ) : (
                       <button onClick={() => { setMobileBuildId(null); setMobileBuildStatus(null); setMobileArtifactUrl(null); setMobileError(null); }}
