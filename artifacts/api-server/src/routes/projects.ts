@@ -14,6 +14,11 @@ import { injectDiagnosticsWidget } from "../lib/diagnostics-widget.js";
 import AdmZip from "adm-zip";
 import { triggerMobileBuild, getMobileBuildStatus } from "../lib/eas.js";
 import { generateMobileCode } from "../lib/generateMobileCode.js";
+import { mobileBuildTable, easWebhookTable } from "@workspace/db/schema";
+import { listOtaUpdates, listChannels, listBranches } from "../lib/easUpdate.js";
+import { submitBuild, getSubmissionStatus } from "../lib/easSubmit.js";
+import { createEasWebhook, deleteEasWebhook, type WebhookEvent } from "../lib/easWebhooks.js";
+import { listWorkflowRuns, WORKFLOW_TEMPLATES } from "../lib/easWorkflows.js";
 
 const router: IRouter = Router();
 
@@ -1212,6 +1217,20 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
       files,
     });
 
+    // Persist build record
+    const buildRowId = nanoid();
+    await db.insert(mobileBuildTable).values({
+      id:          buildRowId,
+      projectId:   project.id,
+      easBuildId:  result.buildId,
+      platform,
+      status:      result.status ?? "in-queue",
+      profile:     "preview",
+      artifactUrl: result.artifactUrl ?? undefined,
+      repoUrl:     result.repoUrl ?? undefined,
+      logsUrl:     result.logsUrl ?? undefined,
+    });
+
     // Store build ID on the project for polling
     await db.update(projectsTable)
       .set({
@@ -1223,7 +1242,7 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
       })
       .where(eq(projectsTable.id, project.id));
 
-    res.json(result);
+    res.json({ ...result, buildRowId });
   } catch (err: any) {
     console.error("[MobileBuild] Failed:", err?.message ?? err);
     res.status(500).json({ error: "build_failed", message: err?.message ?? "EAS build failed" });
@@ -1246,6 +1265,17 @@ router.get("/:id/mobile-build/:buildId", requireAuth, async (req, res) => {
 
   try {
     const status = await getMobileBuildStatus(buildId);
+    // Update persisted build row if it exists
+    const isDone = ["finished", "errored", "cancelled"].includes(status.status);
+    await db.update(mobileBuildTable)
+      .set({
+        status:      status.status,
+        artifactUrl: status.artifactUrl ?? undefined,
+        logsUrl:     status.logsUrl ?? undefined,
+        errorMessage: status.error ?? undefined,
+        ...(isDone ? { finishedAt: new Date() } : {}),
+      })
+      .where(eq(mobileBuildTable.easBuildId, buildId));
     res.json(status);
   } catch (err: any) {
     res.status(500).json({ error: "poll_failed", message: err?.message ?? "Failed to get build status" });
@@ -1319,6 +1349,240 @@ router.delete("/:id/characters/:characterId", requireAuth, async (req, res) => {
     .set({ projectId: null, updatedAt: new Date() })
     .where(eq(charactersTable.id, characterId));
   res.json({ ok: true });
+});
+
+// ── Build History ─────────────────────────────────────────────────────────────
+
+/** List up to 20 most recent mobile builds for a project */
+router.get("/:id/mobile-builds", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const builds = await db.select().from(mobileBuildTable)
+    .where(eq(mobileBuildTable.projectId, project.id))
+    .orderBy(sql`created_at DESC`)
+    .limit(20);
+  res.json(builds);
+});
+
+/** Delete a build history record */
+router.delete("/:id/mobile-builds/:buildId", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const buildId = String(req.params.buildId);
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  await db.delete(mobileBuildTable).where(and(eq(mobileBuildTable.id, buildId), eq(mobileBuildTable.projectId, project.id)));
+  res.json({ ok: true });
+});
+
+// ── OTA Updates ───────────────────────────────────────────────────────────────
+
+function mobileGuard(userPlan: string, isAdmin: boolean, isVip: boolean): boolean {
+  return isAdmin || isVip || userPlan === "pro" || userPlan === "elite";
+}
+
+function projectEasSlug(projectId: string): string {
+  return `nexus-mobile-${projectId}`.slice(0, 60);
+}
+
+/** List recent OTA updates */
+router.get("/:id/ota-updates", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const updates = await listOtaUpdates(projectEasSlug(project.id));
+  res.json(updates);
+});
+
+/** List EAS channels */
+router.get("/:id/ota-channels", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const channels = await listChannels(projectEasSlug(project.id));
+  res.json(channels);
+});
+
+/** List EAS branches */
+router.get("/:id/ota-branches", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const branches = await listBranches(projectEasSlug(project.id));
+  res.json(branches);
+});
+
+// ── Store Submission ──────────────────────────────────────────────────────────
+
+/** Trigger a store submission for a finished build */
+router.post("/:id/mobile-submit", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  if (!mobileGuard(userPlan, isAdmin, isVip)) {
+    res.status(402).json({ error: "plan_limit", code: "MOBILE_SUBMIT_NOT_ALLOWED", message: "Store submission requires Pro or Elite plan." });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const { buildId, platform } = req.body as { buildId?: string; platform?: "android" | "ios" };
+  if (!buildId || !platform) { res.status(400).json({ error: "bad_request", message: "buildId and platform are required" }); return; }
+
+  try {
+    const result = await submitBuild({ buildId, platform });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "submit_failed", message: err?.message ?? "Submission failed" });
+  }
+});
+
+/** Poll submission status */
+router.get("/:id/mobile-submit/:submissionId", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const subId   = String(req.params.submissionId);
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  try {
+    const status = await getSubmissionStatus(subId);
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: "poll_failed", message: err?.message ?? "Failed to get submission status" });
+  }
+});
+
+// ── Webhooks ──────────────────────────────────────────────────────────────────
+
+/** List webhooks for a project */
+router.get("/:id/webhooks", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const hooks = await db.select().from(easWebhookTable)
+    .where(eq(easWebhookTable.projectId, project.id))
+    .orderBy(sql`created_at DESC`);
+  res.json(hooks);
+});
+
+/** Create a webhook for a project */
+router.post("/:id/webhooks", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  if (!mobileGuard(userPlan, isAdmin, isVip)) {
+    res.status(402).json({ error: "plan_limit", message: "Webhooks require Pro or Elite plan." });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const { url, secret, events } = req.body as { url?: string; secret?: string; events?: WebhookEvent[] };
+  if (!url) { res.status(400).json({ error: "bad_request", message: "url is required" }); return; }
+
+  const eventsArr: WebhookEvent[] = Array.isArray(events) && events.length > 0 ? events : ["BUILD"];
+
+  // Register with EAS (non-fatal)
+  const easWebhookId = await createEasWebhook({
+    appSlug: projectEasSlug(project.id),
+    url,
+    secret:  secret ?? "",
+    events:  eventsArr,
+  });
+
+  const [row] = await db.insert(easWebhookTable).values({
+    id:          nanoid(),
+    projectId:   project.id,
+    url,
+    secret:      secret ?? null,
+    events:      eventsArr,
+    easWebhookId: easWebhookId || null,
+  }).returning();
+
+  res.status(201).json(row);
+});
+
+/** Delete a webhook */
+router.delete("/:id/webhooks/:webhookId", requireAuth, async (req, res) => {
+  const userId    = req.auth!.userId;
+  const isAdmin   = req.auth!.isAdmin;
+  const webhookId = String(req.params.webhookId);
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const [hook] = await db.select().from(easWebhookTable).where(and(eq(easWebhookTable.id, webhookId), eq(easWebhookTable.projectId, project.id))).limit(1);
+  if (hook?.easWebhookId) await deleteEasWebhook(hook.easWebhookId);
+
+  await db.delete(easWebhookTable).where(and(eq(easWebhookTable.id, webhookId), eq(easWebhookTable.projectId, project.id)));
+  res.json({ ok: true });
+});
+
+// ── Workflows ─────────────────────────────────────────────────────────────────
+
+/** Get workflow templates */
+router.get("/:id/workflow-templates", requireAuth, async (_req, res) => {
+  res.json(WORKFLOW_TEMPLATES);
+});
+
+/** List recent workflow runs */
+router.get("/:id/workflows", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const runs = await listWorkflowRuns(projectEasSlug(project.id));
+  res.json(runs);
 });
 
 function buildMissingCodeHtml(name: string, type: string, id: string): string {

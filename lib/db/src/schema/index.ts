@@ -11,3 +11,5 @@ export * from "./usage_records";
 export * from "./ai_lab";
 export * from "./command_center";
 export * from "./recovery_email_events";
+export * from "./mobile_builds";
+export * from "./eas_webhooks";

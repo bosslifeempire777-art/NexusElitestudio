@@ -123,6 +123,7 @@ export default function ProjectDetail() {
 
   // ── Mobile / EAS Build state ──────────────────────────────────────────────
   const [showMobilePanel, setShowMobilePanel]     = useState(false);
+  const [mobilePanelTab, setMobilePanelTab]       = useState<'build'|'history'|'ota'|'submit'|'webhooks'|'workflows'>('build');
   const [mobilePlatform, setMobilePlatform]       = useState<'android' | 'ios'>('android');
   const [mobileBuildId, setMobileBuildId]         = useState<string | null>(null);
   const [mobileBuildStatus, setMobileBuildStatus] = useState<string | null>(null);
@@ -132,6 +133,33 @@ export default function ProjectDetail() {
   const [isMobileBuilding, setIsMobileBuilding]   = useState(false);
   const [mobileError, setMobileError]             = useState<string | null>(null);
   const mobilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Build history
+  const [buildHistory, setBuildHistory]           = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading]       = useState(false);
+  // OTA
+  const [otaUpdates, setOtaUpdates]               = useState<any[]>([]);
+  const [otaBranches, setOtaBranches]             = useState<string[]>(['main', 'staging']);
+  const [otaBranch, setOtaBranch]                 = useState('main');
+  const [otaMessage, setOtaMessage]               = useState('');
+  const [isOtaPublishing, setIsOtaPublishing]     = useState(false);
+  const [otaError, setOtaError]                   = useState<string | null>(null);
+  // Submit
+  const [submittingBuildId, setSubmittingBuildId] = useState<string | null>(null);
+  const [submissionId, setSubmissionId]           = useState<string | null>(null);
+  const [submissionStatus, setSubmissionStatus]   = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting]           = useState(false);
+  const submitPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Webhooks
+  const [webhooks, setWebhooks]                   = useState<any[]>([]);
+  const [webhookUrl, setWebhookUrl]               = useState('');
+  const [webhookSecret, setWebhookSecret]         = useState('');
+  const [webhookEvents, setWebhookEvents]         = useState<string[]>(['BUILD']);
+  const [isAddingWebhook, setIsAddingWebhook]     = useState(false);
+  // Workflows
+  const [workflowRuns, setWorkflowRuns]           = useState<any[]>([]);
+  const [workflowTemplates, setWorkflowTemplates] = useState<Record<string,{label:string;yaml:string}>>({});
+  const [selectedTemplate, setSelectedTemplate]   = useState('build-android');
+  const [customYaml, setCustomYaml]               = useState('');
 
   const triggerMobileBuild = useCallback(async () => {
     if (!id || isMobileBuilding) return;
@@ -202,6 +230,124 @@ export default function ProjectDetail() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [id, project?.name]);
+
+  // ── Data fetchers for new tabs ────────────────────────────────────────────
+  const loadBuildHistory = useCallback(async () => {
+    if (!id) return;
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/mobile-builds`, { headers: authHeaders() });
+      if (res.ok) setBuildHistory(await res.json());
+    } catch { /* non-fatal */ } finally { setHistoryLoading(false); }
+  }, [id]);
+
+  const loadOtaData = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [upRes, brRes] = await Promise.all([
+        fetch(`/api/projects/${id}/ota-updates`, { headers: authHeaders() }),
+        fetch(`/api/projects/${id}/ota-branches`, { headers: authHeaders() }),
+      ]);
+      if (upRes.ok) setOtaUpdates(await upRes.json());
+      if (brRes.ok) {
+        const branches: any[] = await brRes.json();
+        if (branches.length > 0) setOtaBranches(branches.map((b: any) => b.name ?? b));
+      }
+    } catch { /* non-fatal */ }
+  }, [id]);
+
+  const loadWebhooks = useCallback(async () => {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/projects/${id}/webhooks`, { headers: authHeaders() });
+      if (res.ok) setWebhooks(await res.json());
+    } catch { /* non-fatal */ }
+  }, [id]);
+
+  const loadWorkflows = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [tplRes, runRes] = await Promise.all([
+        fetch(`/api/projects/${id}/workflow-templates`, { headers: authHeaders() }),
+        fetch(`/api/projects/${id}/workflows`, { headers: authHeaders() }),
+      ]);
+      if (tplRes.ok) {
+        const tpls = await tplRes.json();
+        setWorkflowTemplates(tpls);
+        const first = Object.keys(tpls)[0];
+        if (first) { setSelectedTemplate(first); setCustomYaml(tpls[first].yaml); }
+      }
+      if (runRes.ok) setWorkflowRuns(await runRes.json());
+    } catch { /* non-fatal */ }
+  }, [id]);
+
+  const addWebhook = useCallback(async () => {
+    if (!id || !webhookUrl) return;
+    setIsAddingWebhook(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/webhooks`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ url: webhookUrl, secret: webhookSecret || undefined, events: webhookEvents }),
+      });
+      if (res.status === 402) { const d = await res.json(); setUpgradeMessage(d.message); setShowUpgradeModal(true); return; }
+      if (res.ok) { setWebhookUrl(''); setWebhookSecret(''); await loadWebhooks(); }
+    } catch { /* non-fatal */ } finally { setIsAddingWebhook(false); }
+  }, [id, webhookUrl, webhookSecret, webhookEvents, loadWebhooks]);
+
+  const deleteWebhook = useCallback(async (webhookId: string) => {
+    if (!id) return;
+    try {
+      await fetch(`/api/projects/${id}/webhooks/${webhookId}`, { method: 'DELETE', headers: authHeaders() });
+      setWebhooks(prev => prev.filter(w => w.id !== webhookId));
+    } catch { /* non-fatal */ }
+  }, [id]);
+
+  const submitStoreBuild = useCallback(async (buildId: string, platform: 'android' | 'ios') => {
+    if (!id) return;
+    setSubmittingBuildId(buildId);
+    setIsSubmitting(true);
+    setSubmissionId(null);
+    setSubmissionStatus(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/mobile-submit`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ buildId, platform }),
+      });
+      if (res.status === 402) { const d = await res.json(); setUpgradeMessage(d.message); setShowUpgradeModal(true); return; }
+      if (!res.ok) { throw new Error((await res.json()).message ?? 'Submit failed'); }
+      const data = await res.json();
+      setSubmissionId(data.submissionId);
+      setSubmissionStatus(data.status);
+      if (submitPollRef.current) clearInterval(submitPollRef.current);
+      submitPollRef.current = setInterval(async () => {
+        try {
+          const poll = await fetch(`/api/projects/${id}/mobile-submit/${data.submissionId}`, { headers: authHeaders() });
+          const pd = await poll.json();
+          setSubmissionStatus(pd.status);
+          if (['completed', 'errored', 'cancelled'].includes(pd.status)) {
+            if (submitPollRef.current) clearInterval(submitPollRef.current);
+            setIsSubmitting(false);
+          }
+        } catch { /* non-fatal */ }
+      }, 15_000);
+    } catch (err: any) {
+      setIsSubmitting(false);
+    }
+  }, [id]);
+
+  // When the panel opens, reset to Build tab; when tab changes, load data
+  const openMobilePanel = useCallback(() => {
+    setMobilePanelTab('build');
+    setShowMobilePanel(true);
+  }, []);
+
+  const onMobilePanelTabChange = useCallback((tab: typeof mobilePanelTab) => {
+    setMobilePanelTab(tab);
+    if (tab === 'history') loadBuildHistory();
+    if (tab === 'ota')     loadOtaData();
+    if (tab === 'webhooks') loadWebhooks();
+    if (tab === 'workflows') loadWorkflows();
+  }, [loadBuildHistory, loadOtaData, loadWebhooks, loadWorkflows]);
 
   function authHeaders(): Record<string, string> {
     const token = getToken();
@@ -441,155 +587,341 @@ export default function ProjectDetail() {
       {/* ── Mobile Build / Publish Panel ── */}
       {showMobilePanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg bg-card border border-violet-500/40 rounded-lg shadow-2xl overflow-hidden">
+          <div className="w-full max-w-2xl bg-card border border-violet-500/40 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-violet-500/30 bg-violet-900/20">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/30 bg-violet-900/20 shrink-0">
               <div className="flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-violet-400" />
-                <h3 className="font-display font-bold text-base text-violet-300">PUBLISH MOBILE APP</h3>
+                <Smartphone className="w-4 h-4 text-violet-400" />
+                <h3 className="font-display font-bold text-sm text-violet-300">MOBILE APP STUDIO</h3>
+                <span className="text-[10px] font-mono text-muted-foreground/60 ml-1">{project.name}</span>
               </div>
               <button onClick={() => setShowMobilePanel(false)} className="text-muted-foreground hover:text-foreground">
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-5 space-y-5">
-              {/* Project info */}
-              <div className="bg-background/60 border border-border/50 rounded p-3 text-xs font-mono text-muted-foreground space-y-1">
-                <p><span className="text-violet-400">Project:</span> {project.name}</p>
-                <p><span className="text-violet-400">Framework:</span> Expo (React Native)</p>
-                <p><span className="text-violet-400">Account:</span> Nexuselitestudio @ expo.dev</p>
-              </div>
+            {/* Tab bar */}
+            <div className="flex border-b border-border/50 bg-background/40 shrink-0 overflow-x-auto">
+              {([
+                { id: 'build',     label: '⚡ Build'    },
+                { id: 'history',   label: '🕐 History'  },
+                { id: 'ota',       label: '📡 OTA'      },
+                { id: 'submit',    label: '🏪 Submit'   },
+                { id: 'webhooks',  label: '🔗 Webhooks' },
+                { id: 'workflows', label: '⚙️ Workflows' },
+              ] as const).map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => onMobilePanelTabChange(t.id)}
+                  className={`px-4 py-2.5 text-xs font-mono whitespace-nowrap border-b-2 transition-colors ${
+                    mobilePanelTab === t.id
+                      ? 'border-violet-500 text-violet-300 bg-violet-500/10'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-violet-500/30'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
 
-              {/* Platform selector */}
-              <div>
-                <p className="text-xs font-mono text-muted-foreground mb-2 uppercase tracking-wider">Target Platform</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['android', 'ios'] as const).map(p => (
-                    <button
-                      key={p}
-                      onClick={() => setMobilePlatform(p)}
-                      className={`flex flex-col items-center gap-1.5 py-3 border rounded font-mono text-sm transition-all ${
-                        mobilePlatform === p
-                          ? 'bg-violet-600/30 border-violet-500 text-violet-300'
-                          : 'border-border/50 text-muted-foreground hover:border-violet-500/50 hover:text-foreground'
-                      }`}
-                    >
-                      <span className="text-xl">{p === 'android' ? '🤖' : '🍎'}</span>
-                      <span className="capitalize font-bold">{p}</span>
-                      <span className="text-[10px] opacity-60">{p === 'android' ? 'APK file' : 'IPA file'}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+            {/* Tab content — scrollable */}
+            <div className="overflow-y-auto flex-1 p-5">
 
-              {/* What happens */}
-              {!mobileBuildId && !isMobileBuilding && (
-                <div className="space-y-2">
-                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">What happens when you build:</p>
-                  {[
-                    '🤖  AI generates a complete Expo React Native project',
-                    '📤  Code is pushed to your GitHub (nexus-mobile-…)',
-                    '☁️  EAS Cloud builds your APK / IPA (~10–20 min)',
-                    '📲  Download link appears here when done',
-                  ].map(s => (
-                    <div key={s} className="flex items-start gap-2 text-xs font-mono text-muted-foreground">
-                      <span>{s}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Build status */}
-              {(mobileBuildId || isMobileBuilding) && (
-                <div className="space-y-3">
-                  <div className={`flex items-center gap-2 px-3 py-2 rounded text-xs font-mono border ${
-                    mobileBuildStatus === 'finished'   ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-                    mobileBuildStatus === 'errored'    ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-                    'bg-violet-500/10 border-violet-500/30 text-violet-300'
-                  }`}>
-                    {(mobileBuildStatus === 'in-queue' || mobileBuildStatus === 'in-progress' || isMobileBuilding) && (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                    )}
-                    {mobileBuildStatus === 'finished' && <Check className="w-3.5 h-3.5 shrink-0 text-green-400" />}
-                    {mobileBuildStatus === 'errored'  && <X className="w-3.5 h-3.5 shrink-0 text-red-400" />}
-                    <span className="capitalize">
-                      {isMobileBuilding && !mobileBuildId ? 'Generating project & triggering build…' :
-                       mobileBuildStatus === 'in-queue'    ? 'Build queued — EAS is warming up…' :
-                       mobileBuildStatus === 'in-progress' ? 'Building your app in the cloud…' :
-                       mobileBuildStatus === 'finished'    ? '✅ Build complete!' :
-                       mobileBuildStatus === 'errored'     ? '❌ Build failed' :
-                       mobileBuildStatus ?? 'Checking status…'}
-                    </span>
+              {/* ── BUILD TAB ── */}
+              {mobilePanelTab === 'build' && (
+                <div className="space-y-4">
+                  <div className="bg-background/60 border border-border/50 rounded p-3 text-xs font-mono text-muted-foreground space-y-1">
+                    <p><span className="text-violet-400">Account:</span> Nexuselitestudio @ expo.dev</p>
+                    <p><span className="text-violet-400">Framework:</span> Expo (React Native)</p>
                   </div>
 
-                  {mobileBuildId && (
-                    <p className="text-[10px] font-mono text-muted-foreground/60 break-all">Build ID: {mobileBuildId}</p>
+                  <div>
+                    <p className="text-xs font-mono text-muted-foreground mb-2 uppercase tracking-wider">Target Platform</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['android', 'ios'] as const).map(p => (
+                        <button key={p} onClick={() => setMobilePlatform(p)}
+                          className={`flex flex-col items-center gap-1 py-3 border rounded font-mono text-sm transition-all ${
+                            mobilePlatform === p ? 'bg-violet-600/30 border-violet-500 text-violet-300' : 'border-border/50 text-muted-foreground hover:border-violet-500/50 hover:text-foreground'
+                          }`}>
+                          <span className="text-xl">{p === 'android' ? '🤖' : '🍎'}</span>
+                          <span className="capitalize font-bold">{p}</span>
+                          <span className="text-[10px] opacity-60">{p === 'android' ? 'APK file' : 'IPA file'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {!mobileBuildId && !isMobileBuilding && (
+                    <div className="space-y-1.5">
+                      {['🤖  AI generates a complete Expo React Native project','📤  Code is pushed to your GitHub (nexus-mobile-…)','☁️  EAS Cloud builds your APK / IPA (~10–20 min)','📲  Download link appears here when done'].map(s => (
+                        <p key={s} className="text-xs font-mono text-muted-foreground">{s}</p>
+                      ))}
+                    </div>
                   )}
 
-                  {mobileRepoUrl && (
-                    <a href={mobileRepoUrl} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline">
-                      <ExternalLink className="w-3 h-3" /> View source on GitHub
-                    </a>
+                  {(mobileBuildId || isMobileBuilding) && (
+                    <div className="space-y-2">
+                      <div className={`flex items-center gap-2 px-3 py-2 rounded text-xs font-mono border ${
+                        mobileBuildStatus === 'finished' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+                        mobileBuildStatus === 'errored'  ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+                        'bg-violet-500/10 border-violet-500/30 text-violet-300'}`}>
+                        {(mobileBuildStatus === 'in-queue' || mobileBuildStatus === 'in-progress' || isMobileBuilding) && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
+                        {mobileBuildStatus === 'finished' && <Check className="w-3.5 h-3.5 shrink-0 text-green-400" />}
+                        {mobileBuildStatus === 'errored'  && <X className="w-3.5 h-3.5 shrink-0 text-red-400" />}
+                        <span>{isMobileBuilding && !mobileBuildId ? 'Generating & triggering build…' : mobileBuildStatus === 'in-queue' ? 'Build queued…' : mobileBuildStatus === 'in-progress' ? 'Building in the cloud…' : mobileBuildStatus === 'finished' ? '✅ Build complete!' : mobileBuildStatus === 'errored' ? '❌ Build failed' : mobileBuildStatus ?? 'Checking…'}</span>
+                      </div>
+                      {mobileBuildId && <p className="text-[10px] font-mono text-muted-foreground/60 break-all">Build ID: {mobileBuildId}</p>}
+                      {mobileRepoUrl && <a href={mobileRepoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline"><ExternalLink className="w-3 h-3" /> View source on GitHub</a>}
+                      {mobileLogsUrl && <a href={mobileLogsUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline"><ExternalLink className="w-3 h-3" /> Build logs on Expo</a>}
+                      {mobileArtifactUrl && <a href={mobileArtifactUrl} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 w-full py-2.5 bg-green-500/20 border border-green-500/40 text-green-400 text-sm font-mono font-bold rounded hover:bg-green-500/30 transition-colors"><Download className="w-4 h-4" /> Download {mobilePlatform === 'android' ? 'APK' : 'IPA'}</a>}
+                      {mobileError && <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-xs font-mono text-red-400">Error: {mobileError}</div>}
+                    </div>
                   )}
 
-                  {mobileLogsUrl && (
-                    <a href={mobileLogsUrl} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline">
-                      <ExternalLink className="w-3 h-3" /> View build logs on Expo
-                    </a>
-                  )}
+                  <div className="flex gap-2">
+                    {!mobileBuildId ? (
+                      <button onClick={triggerMobileBuild} disabled={isMobileBuilding}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-mono font-bold rounded transition-colors">
+                        {isMobileBuilding ? <><Loader2 className="w-4 h-4 animate-spin" /> Building…</> : <><Rocket className="w-4 h-4" /> Build {mobilePlatform === 'android' ? 'Android APK' : 'iOS IPA'}</>}
+                      </button>
+                    ) : (
+                      <button onClick={() => { setMobileBuildId(null); setMobileBuildStatus(null); setMobileArtifactUrl(null); setMobileError(null); }}
+                        className="flex-1 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-violet-500/50 hover:text-foreground transition-colors">
+                        Start New Build
+                      </button>
+                    )}
+                    <button onClick={downloadMobileZip} title="Download Expo source as ZIP"
+                      className="flex items-center gap-1.5 px-3 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-border hover:text-foreground transition-colors">
+                      <Download className="w-4 h-4" /> ZIP
+                    </button>
+                  </div>
+                  <p className="text-[10px] font-mono text-muted-foreground/40 text-center">Android ~10 min • iOS requires Apple Developer account</p>
+                </div>
+              )}
 
-                  {mobileArtifactUrl && (
-                    <a href={mobileArtifactUrl} target="_blank" rel="noreferrer"
-                      className="flex items-center justify-center gap-2 w-full py-2.5 bg-green-500/20 border border-green-500/40 text-green-400 text-sm font-mono font-bold rounded hover:bg-green-500/30 transition-colors">
-                      <Download className="w-4 h-4" />
-                      Download {mobilePlatform === 'android' ? 'APK' : 'IPA'}
-                    </a>
+              {/* ── HISTORY TAB ── */}
+              {mobilePanelTab === 'history' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Build History</p>
+                    <button onClick={loadBuildHistory} className="text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Refresh</button>
+                  </div>
+                  {historyLoading && <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>}
+                  {!historyLoading && buildHistory.length === 0 && (
+                    <div className="text-center py-8 text-xs font-mono text-muted-foreground/60">No builds yet. Trigger one on the Build tab.</div>
                   )}
+                  {buildHistory.map((b: any) => (
+                    <div key={b.id} className="bg-background/60 border border-border/50 rounded p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{b.platform === 'android' ? '🤖' : '🍎'}</span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-mono font-bold ${b.status === 'finished' ? 'text-green-400' : b.status === 'errored' ? 'text-red-400' : 'text-violet-300'}`}>{b.status}</span>
+                              <span className="text-[10px] font-mono text-muted-foreground/60 uppercase">{b.platform} • {b.profile}</span>
+                            </div>
+                            <p className="text-[10px] font-mono text-muted-foreground/50">{b.createdAt ? new Date(b.createdAt).toLocaleString() : ''}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {b.artifactUrl && <a href={b.artifactUrl} target="_blank" rel="noreferrer" className="text-xs font-mono text-green-400 hover:text-green-300 flex items-center gap-1"><Download className="w-3 h-3" /> DL</a>}
+                          {b.logsUrl && <a href={b.logsUrl} target="_blank" rel="noreferrer" className="text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Logs</a>}
+                          {b.status === 'finished' && (
+                            <button onClick={() => { submitStoreBuild(b.easBuildId, b.platform); setMobilePanelTab('submit'); }}
+                              className="text-xs font-mono text-cyan-400 hover:text-cyan-300 flex items-center gap-1 border border-cyan-500/30 rounded px-1.5 py-0.5">
+                              🏪 Submit
+                            </button>
+                          )}
+                          <button onClick={async () => {
+                            await fetch(`/api/projects/${id}/mobile-builds/${b.id}`, { method: 'DELETE', headers: authHeaders() });
+                            setBuildHistory(prev => prev.filter(x => x.id !== b.id));
+                          }} className="text-muted-foreground/40 hover:text-red-400 transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      {b.errorMessage && <p className="text-[10px] font-mono text-red-400/80 break-all">{b.errorMessage}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
 
-                  {mobileError && (
-                    <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-xs font-mono text-red-400">
-                      Error: {mobileError}
+              {/* ── OTA TAB ── */}
+              {mobilePanelTab === 'ota' && (
+                <div className="space-y-4">
+                  <div className="bg-background/60 border border-border/50 rounded p-4 space-y-3">
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Push OTA Update</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-mono text-muted-foreground/60 uppercase mb-1 block">Branch</label>
+                        <select value={otaBranch} onChange={e => setOtaBranch(e.target.value)}
+                          className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none">
+                          {otaBranches.map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-mono text-muted-foreground/60 uppercase mb-1 block">Message</label>
+                        <input value={otaMessage} onChange={e => setOtaMessage(e.target.value)} placeholder="Update description"
+                          className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none" />
+                      </div>
+                    </div>
+                    {otaError && <p className="text-xs font-mono text-red-400">{otaError}</p>}
+                    <button disabled={isOtaPublishing}
+                      onClick={async () => {
+                        setIsOtaPublishing(true); setOtaError(null);
+                        try {
+                          const r = await fetch(`/api/projects/${id}/ota-updates`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ branch: otaBranch, message: otaMessage || 'OTA update' }) });
+                          if (!r.ok) { const d = await r.json(); setOtaError(d.message ?? 'Failed'); }
+                          else { setOtaMessage(''); await loadOtaData(); }
+                        } catch(e:any) { setOtaError(e.message); } finally { setIsOtaPublishing(false); }
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-mono font-bold rounded transition-colors">
+                      {isOtaPublishing ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Publishing…</> : <>📡 Push OTA Update</>}
+                    </button>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Recent Updates</p>
+                      <button onClick={loadOtaData} className="text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Refresh</button>
+                    </div>
+                    {otaUpdates.length === 0 && <p className="text-xs font-mono text-muted-foreground/60 text-center py-4">No OTA updates yet.</p>}
+                    {otaUpdates.map((u: any) => (
+                      <div key={u.id} className="flex items-center justify-between bg-background/40 border border-border/30 rounded px-3 py-2 mb-1.5 text-xs font-mono">
+                        <div>
+                          <span className="text-foreground">{u.message || '—'}</span>
+                          <span className="text-muted-foreground/60 ml-2">{u.branch}</span>
+                        </div>
+                        <span className="text-muted-foreground/40">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── SUBMIT TAB ── */}
+              {mobilePanelTab === 'submit' && (
+                <div className="space-y-4">
+                  <div className="bg-background/60 border border-border/50 rounded p-4 text-xs font-mono text-muted-foreground space-y-2">
+                    <p className="text-violet-300 font-bold uppercase tracking-wider">Store Submission</p>
+                    <p>Submit a finished build directly to the Play Store (Android) or App Store (iOS). Requires store credentials configured in your Expo account.</p>
+                    <p className="text-amber-400/80">⚠️ iOS submissions require an Apple Developer account linked to Expo.</p>
+                  </div>
+                  {submissionId ? (
+                    <div className="space-y-2">
+                      <div className={`flex items-center gap-2 px-3 py-2.5 rounded text-xs font-mono border ${
+                        submissionStatus === 'completed' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+                        submissionStatus === 'errored'   ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+                        'bg-violet-500/10 border-violet-500/30 text-violet-300'}`}>
+                        {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
+                        {submissionStatus === 'completed' && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        <span>Submission {submissionStatus ?? 'in-queue'} — ID: {submissionId}</span>
+                      </div>
+                      <button onClick={() => { setSubmissionId(null); setSubmissionStatus(null); setSubmittingBuildId(null); }}
+                        className="text-xs font-mono text-muted-foreground hover:text-foreground underline">
+                        Clear & start another
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-xs font-mono text-muted-foreground">Select a finished build from the History tab and click <span className="text-cyan-400">🏪 Submit</span> to begin.</p>
+                      <button onClick={() => onMobilePanelTabChange('history')}
+                        className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline">
+                        <ArrowRight className="w-3 h-3" /> Go to Build History
+                      </button>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Actions */}
-              <div className="flex gap-2 pt-1">
-                {!mobileBuildId ? (
-                  <button
-                    onClick={triggerMobileBuild}
-                    disabled={isMobileBuilding}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-mono font-bold rounded transition-colors"
-                  >
-                    {isMobileBuilding
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating & Building…</>
-                      : <><Rocket className="w-4 h-4" /> Build {mobilePlatform === 'android' ? 'Android APK' : 'iOS IPA'}</>
-                    }
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => { setMobileBuildId(null); setMobileBuildStatus(null); setMobileArtifactUrl(null); setMobileError(null); }}
-                    className="flex-1 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-violet-500/50 hover:text-foreground transition-colors"
-                  >
-                    Start New Build
-                  </button>
-                )}
-                <button
-                  onClick={downloadMobileZip}
-                  title="Download Expo source code as ZIP"
-                  className="flex items-center gap-1.5 px-3 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-border hover:text-foreground transition-colors"
-                >
-                  <Download className="w-4 h-4" /> Expo ZIP
-                </button>
-              </div>
+              {/* ── WEBHOOKS TAB ── */}
+              {mobilePanelTab === 'webhooks' && (
+                <div className="space-y-4">
+                  <div className="bg-background/60 border border-border/50 rounded p-4 space-y-3">
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Add Webhook</p>
+                    <input value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder="https://your-server.com/eas-webhook"
+                      className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none" />
+                    <input value={webhookSecret} onChange={e => setWebhookSecret(e.target.value)} placeholder="Secret (optional)"
+                      className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none" />
+                    <div className="flex gap-3">
+                      {(['BUILD','SUBMIT','UPDATE'] as const).map(ev => (
+                        <label key={ev} className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground cursor-pointer">
+                          <input type="checkbox" checked={webhookEvents.includes(ev)}
+                            onChange={e => setWebhookEvents(prev => e.target.checked ? [...prev, ev] : prev.filter(x => x !== ev))}
+                            className="accent-violet-500" />
+                          {ev}
+                        </label>
+                      ))}
+                    </div>
+                    <button onClick={addWebhook} disabled={!webhookUrl || isAddingWebhook}
+                      className="w-full py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-mono font-bold rounded transition-colors flex items-center justify-center gap-2">
+                      {isAddingWebhook ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding…</> : <><Plus className="w-3.5 h-3.5" /> Add Webhook</>}
+                    </button>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Active Webhooks ({webhooks.length})</p>
+                      <button onClick={loadWebhooks} className="text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Refresh</button>
+                    </div>
+                    {webhooks.length === 0 && <p className="text-xs font-mono text-muted-foreground/60 text-center py-4">No webhooks configured.</p>}
+                    {webhooks.map((w: any) => (
+                      <div key={w.id} className="flex items-start justify-between bg-background/40 border border-border/30 rounded px-3 py-2.5 mb-1.5">
+                        <div className="text-xs font-mono space-y-0.5 min-w-0">
+                          <p className="text-foreground truncate">{w.url}</p>
+                          <p className="text-muted-foreground/60">{Array.isArray(w.events) ? w.events.join(', ') : w.events}</p>
+                        </div>
+                        <button onClick={() => deleteWebhook(w.id)} className="text-muted-foreground/40 hover:text-red-400 transition-colors ml-2 shrink-0">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-              <p className="text-[10px] font-mono text-muted-foreground/40 text-center">
-                EAS builds run in Expo's cloud • Android builds ~10 min • iOS requires Apple Developer account
-              </p>
+              {/* ── WORKFLOWS TAB ── */}
+              {mobilePanelTab === 'workflows' && (
+                <div className="space-y-4">
+                  <div className="bg-background/60 border border-border/50 rounded p-4 space-y-3">
+                    <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">CI/CD Workflow</p>
+                    <div>
+                      <label className="text-[10px] font-mono text-muted-foreground/60 uppercase mb-1 block">Template</label>
+                      <select value={selectedTemplate}
+                        onChange={e => { setSelectedTemplate(e.target.value); setCustomYaml(workflowTemplates[e.target.value]?.yaml ?? ''); }}
+                        className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none">
+                        {Object.entries(workflowTemplates).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                        {Object.keys(workflowTemplates).length === 0 && <option>Loading templates…</option>}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-mono text-muted-foreground/60 uppercase mb-1 block">Workflow YAML</label>
+                      <textarea value={customYaml} onChange={e => setCustomYaml(e.target.value)} rows={8}
+                        className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none resize-y" />
+                    </div>
+                    <p className="text-[10px] font-mono text-muted-foreground/50">Workflows run automatically on EAS when you push to a configured branch. Edit the YAML above to customise triggers, platforms, and steps.</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Recent Runs</p>
+                      <button onClick={loadWorkflows} className="text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Refresh</button>
+                    </div>
+                    {workflowRuns.length === 0 && <p className="text-xs font-mono text-muted-foreground/60 text-center py-4">No workflow runs yet.</p>}
+                    {workflowRuns.map((r: any) => (
+                      <div key={r.id} className="flex items-center justify-between bg-background/40 border border-border/30 rounded px-3 py-2 mb-1.5 text-xs font-mono">
+                        <div>
+                          <span className={`font-bold ${r.status === 'succeeded' ? 'text-green-400' : r.status === 'failed' ? 'text-red-400' : 'text-violet-300'}`}>{r.status}</span>
+                          <span className="text-muted-foreground ml-2">{r.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-muted-foreground/60">
+                          {r.duration && <span>{Math.round(r.duration / 60)}m</span>}
+                          {r.logsUrl && <a href={r.logsUrl} target="_blank" rel="noreferrer" className="text-violet-400 hover:text-violet-300"><ExternalLink className="w-3 h-3" /></a>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         </div>
@@ -744,7 +1076,7 @@ export default function ProjectDetail() {
               {project.type === 'mobile_app' && (
                 <Button
                   size="sm"
-                  onClick={() => setShowMobilePanel(true)}
+                  onClick={() => openMobilePanel()}
                   disabled={project.status === 'building' || !(project as any).hasCode}
                   title="Build & publish as Android APK or iOS IPA"
                   className="h-7 px-3 text-xs gap-1 bg-violet-600 hover:bg-violet-500 text-white border-0"
