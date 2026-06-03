@@ -4,10 +4,13 @@ export interface ExpoFiles {
   [path: string]: string;
 }
 
+const EXPO_OWNER = "Nexuselitestudio";
+
 const APP_JSON_TEMPLATE = (name: string, slug: string) => JSON.stringify({
   expo: {
     name,
     slug,
+    owner: EXPO_OWNER,
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
@@ -16,7 +19,6 @@ const APP_JSON_TEMPLATE = (name: string, slug: string) => JSON.stringify({
     ios:     { supportsTablet: true, bundleIdentifier: `com.nexuselite.${slug}` },
     android: { adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: "#0a0a0f" }, package: `com.nexuselite.${slug}` },
     web:     { favicon: "./assets/favicon.png" },
-    extra:   { eas: { projectId: "auto" } },
   },
 }, null, 2);
 
