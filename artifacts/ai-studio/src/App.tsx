@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 // Pages
 import Home from "@/pages/home";
@@ -117,6 +118,7 @@ function App() {
           </WouterRouter>
         </AuthProvider>
         <Toaster />
+        <SpeedInsights />
       </TooltipProvider>
     </QueryClientProvider>
   );
