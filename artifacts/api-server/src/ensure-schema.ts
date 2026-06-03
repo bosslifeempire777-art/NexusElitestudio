@@ -397,6 +397,47 @@ export async function ensureMainSchema(): Promise<void> {
         ON project_app_data (project_id, collection)
     `);
 
+    // ----------------------------------------------------------------
+    // EAS platform tables — mobile builds and webhook registrations
+    // ----------------------------------------------------------------
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS mobile_builds (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL,
+        eas_build_id  TEXT NOT NULL,
+        platform      TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'in-queue',
+        profile       TEXT NOT NULL DEFAULT 'preview',
+        artifact_url  TEXT,
+        repo_url      TEXT,
+        logs_url      TEXT,
+        error_message TEXT,
+        started_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+        finished_at   TIMESTAMP,
+        created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS mobile_builds_project_idx
+        ON mobile_builds (project_id, created_at DESC)
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS eas_webhooks (
+        id             TEXT PRIMARY KEY,
+        project_id     TEXT NOT NULL,
+        url            TEXT NOT NULL,
+        secret         TEXT,
+        events         JSONB NOT NULL DEFAULT '["BUILD"]',
+        active         BOOLEAN NOT NULL DEFAULT TRUE,
+        eas_webhook_id TEXT,
+        created_at     TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS eas_webhooks_project_idx
+        ON eas_webhooks (project_id)
+    `);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);

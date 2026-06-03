@@ -1612,15 +1612,14 @@ router.get("/:id/workflows", requireAuth, async (req, res) => {
   res.json(runs);
 });
 
-/** Trigger a workflow run */
+/** Trigger a workflow run — Elite or Admin only */
 router.post("/:id/workflows/run", requireAuth, async (req, res) => {
   const userId   = req.auth!.userId;
   const isAdmin  = req.auth!.isAdmin;
-  const isVip    = req.auth!.isVip;
   const userPlan = req.auth!.plan;
 
-  if (!mobileGuard(userPlan, isAdmin, isVip)) {
-    res.status(402).json({ error: "plan_limit", code: "WORKFLOW_NOT_ALLOWED", message: "CI/CD workflows require Pro or Elite plan." });
+  if (!isAdmin && userPlan !== "elite") {
+    res.status(402).json({ error: "plan_limit", code: "WORKFLOW_NOT_ALLOWED", message: "CI/CD workflow runs require the Elite plan." });
     return;
   }
 

@@ -72,26 +72,24 @@ export async function triggerWorkflowRun(opts: {
     await writeFile(join(dir, ".eas", "workflows", `${workflowName}.yml`), yaml, "utf8");
   });
 
-  let runId = `run-${Date.now()}`;
-  let status = "queued";
-  try {
-    const { stdout } = await execFileAsync(
-      EAS_BIN,
-      ["workflow:run", workflowName, "--non-interactive", "--json"],
-      {
-        cwd: dir,
-        timeout: 60_000,
-        env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
-      },
-    );
-    const parsed: any = JSON.parse(stdout.trim());
-    runId  = parsed?.id ?? runId;
-    status = parsed?.status ?? "queued";
-  } catch (err) {
-    console.warn("[easWorkflows] triggerWorkflowRun CLI failed (non-fatal):", err);
-  }
+  const { stdout } = await execFileAsync(
+    EAS_BIN,
+    ["workflow:run", workflowName, "--non-interactive", "--json"],
+    {
+      cwd: dir,
+      timeout: 60_000,
+      env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
+    },
+  );
 
-  return { id: runId, name: workflowName, status, createdAt: new Date().toISOString(), duration: null, logsUrl: null };
+  let parsed: any = {};
+  try { parsed = JSON.parse(stdout.trim()); } catch { /* ignore parse error, use defaults */ }
+
+  const runId  = parsed?.id ?? parsed?.runId;
+  const status = parsed?.status ?? "queued";
+  if (!runId) throw new Error("EAS workflow:run did not return a run ID — check EXPO_TOKEN and workflow YAML");
+
+  return { id: runId, name: workflowName, status, createdAt: new Date().toISOString(), duration: null, logsUrl: parsed?.logsPageUrl ?? null };
 }
 
 /** Get logs / status for a specific workflow run */

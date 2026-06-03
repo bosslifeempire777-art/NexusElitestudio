@@ -1,5 +1,11 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolve } from "node:path";
+
+const execFileAsync = promisify(execFile);
 const EXPO_OWNER = "Nexuselitestudio";
 const EAS_API    = "https://api.expo.dev";
+const EAS_BIN    = resolve(process.cwd(), "artifacts/api-server/node_modules/.bin/eas");
 
 function easHeaders(): Record<string, string> {
   const token = process.env.EXPO_TOKEN;
@@ -23,8 +29,9 @@ export interface SubmissionStatus {
 }
 
 /**
- * Submit a finished EAS build to the app stores via the EAS REST API.
- * Note: Requires Apple Developer / Google Play credentials configured in Expo.
+ * Submit a finished EAS build to the app stores via EAS CLI.
+ * Uses `eas submit --id <buildId> --platform <platform>`.
+ * Requires Apple Developer / Google Play credentials in your Expo account.
  */
 export async function submitBuild(opts: {
   buildId:  string;
@@ -34,29 +41,25 @@ export async function submitBuild(opts: {
   const token = process.env.EXPO_TOKEN;
   if (!token) throw new Error("EXPO_TOKEN not set");
 
-  const body = {
-    appId:    `${EXPO_OWNER}/${buildId}`,
-    buildId,
-    platform: platform.toUpperCase(),
-  };
+  const { stdout } = await execFileAsync(
+    EAS_BIN,
+    ["submit", "--id", buildId, "--platform", platform, "--non-interactive", "--no-wait", "--json"],
+    {
+      timeout: 120_000,
+      env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
+    },
+  );
 
-  const res  = await fetch(`${EAS_API}/v2/submissions`, {
-    method:  "POST",
-    headers: easHeaders(),
-    body:    JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`EAS Submit ${res.status}: ${text.slice(0, 300)}`);
-
-  const data: any = JSON.parse(text);
-  const sub        = data?.data ?? data;
-  const id         = sub.id ?? sub.submissionId ?? "unknown";
+  let parsed: any = {};
+  try { parsed = JSON.parse(stdout.trim()); } catch { /* ignore */ }
+  const sub = Array.isArray(parsed) ? parsed[0] : parsed;
+  const id  = sub?.id ?? sub?.submissionId ?? buildId;
 
   return {
     submissionId: id,
-    status:       sub.status ?? "in-queue",
+    status:       sub?.status ?? "in-queue",
     platform,
-    logsPageUrl:  sub.logsPageUrl ?? `https://expo.dev/accounts/${EXPO_OWNER}/submissions/${id}`,
+    logsPageUrl:  sub?.logsPageUrl ?? `https://expo.dev/accounts/${EXPO_OWNER}/submissions/${id}`,
   };
 }
 
