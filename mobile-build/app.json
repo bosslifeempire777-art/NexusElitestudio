@@ -3,9 +3,21 @@
     "name": "NexusElite AI Studio",
     "slug": "nexuselite-ai-studio",
     "version": "1.0.0",
-    "owner": "Nexuselitestudio",
-    "platforms": ["ios", "android"],
-    "android": { "package": "com.nexuselite.aistudio" },
-    "ios": { "bundleIdentifier": "com.nexuselite.aistudio" }
+    "owner": "nexuselitestudio",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "android": {
+      "package": "com.nexuselite.aistudio"
+    },
+    "ios": {
+      "bundleIdentifier": "com.nexuselite.aistudio"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "290a2e3f-ca4f-408c-b226-4bb2b6d6ba76"
+      }
+    }
   }
 }
