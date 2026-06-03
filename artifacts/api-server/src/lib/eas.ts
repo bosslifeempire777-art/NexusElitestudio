@@ -2,16 +2,16 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
 const EXPO_OWNER   = "Nexuselitestudio";
 const GITHUB_OWNER = "bosslifeempire777-art";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const EAS_BIN = resolve(__dirname, "../../node_modules/.bin/eas");
+// process.cwd() is the workspace root in both dev (pnpm --filter) and prod
+// (node artifacts/api-server/dist/index.cjs run from workspace root)
+const EAS_BIN = resolve(process.cwd(), "artifacts/api-server/node_modules/.bin/eas");
 
 export interface MobileBuildResult {
   buildId:     string;
