@@ -88,27 +88,48 @@ export interface OtaPublishResult {
   createdAt: string;
 }
 
-/** Publish an OTA update via EAS CLI for a project */
+/** Publish an OTA update via EAS CLI using the project's actual Expo files */
 export async function publishOtaUpdate(opts: {
   easProjectSlug: string;
+  accountName:    string;
   branch:         string;
   message:        string;
+  projectFiles:   Record<string, string>;
 }): Promise<OtaPublishResult> {
-  const { easProjectSlug, branch, message } = opts;
+  const { easProjectSlug, accountName, branch, message, projectFiles } = opts;
   const token = process.env.EXPO_TOKEN;
   if (!token) throw new Error("EXPO_TOKEN not set");
 
+  const { writeFile: wf, mkdir: mk } = await import("node:fs/promises");
   const dir = await mkdtemp(join(tmpdir(), "nexus-ota-"));
-  const appJson = JSON.stringify({ expo: { name: easProjectSlug, slug: easProjectSlug, version: "1.0.0" } }, null, 2);
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(join(dir, "app.json"), appJson, "utf8");
+
+  // Write the actual generated project files to the temp dir
+  for (const [filePath, content] of Object.entries(projectFiles)) {
+    const full = join(dir, filePath);
+    await mk(join(full, ".."), { recursive: true }).catch(() => undefined);
+    await wf(full, content, "utf8");
+  }
+
+  // Ensure app.json exists with proper EAS slug linkage
+  const appJson = JSON.stringify({
+    expo: { name: easProjectSlug, slug: easProjectSlug, version: "1.0.0", owner: accountName },
+  }, null, 2);
+  await wf(join(dir, "app.json"), appJson, "utf8");
+
+  // eas.json — project linkage so `eas update` targets the right project
+  const easJson = JSON.stringify({
+    cli: { version: ">= 5.0.0" },
+    build: { preview: { distribution: "internal" } },
+    submit: { production: {} },
+  }, null, 2);
+  await wf(join(dir, "eas.json"), easJson, "utf8");
 
   const { stdout } = await execFileAsync(
     EAS_BIN,
     ["update", "--branch", branch, "--message", message, "--non-interactive", "--json"],
     {
       cwd: dir,
-      timeout: 120_000,
+      timeout: 180_000,
       env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
     },
   );
@@ -118,7 +139,7 @@ export async function publishOtaUpdate(opts: {
   const update = Array.isArray(parsed) ? parsed[0] : parsed;
 
   return {
-    updateId:  update?.id ?? update?.updateId ?? `local-${Date.now()}`,
+    updateId:  update?.id ?? update?.updateId,
     branch:    update?.branchName ?? branch,
     message:   update?.message ?? message,
     platform:  update?.platform ?? "android,ios",

@@ -58,19 +58,30 @@ export interface WorkflowRunLog {
 /** Trigger an EAS workflow run for a project using the given YAML */
 export async function triggerWorkflowRun(opts: {
   easProjectSlug: string;
+  accountName:    string;
   workflowName:   string;
   yaml:           string;
 }): Promise<WorkflowRun> {
-  const { easProjectSlug, workflowName, yaml } = opts;
+  const { easProjectSlug, accountName, workflowName, yaml } = opts;
   const token = process.env.EXPO_TOKEN;
   if (!token) throw new Error("EXPO_TOKEN not set");
 
+  const { mkdir } = await import("node:fs/promises");
   const dir = await mkdtemp(join(tmpdir(), "nexus-wf-"));
-  await writeFile(join(dir, ".eas", "workflows", `${workflowName}.yml`), yaml, "utf8").catch(async () => {
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(join(dir, ".eas", "workflows"), { recursive: true });
-    await writeFile(join(dir, ".eas", "workflows", `${workflowName}.yml`), yaml, "utf8");
-  });
+
+  // Write project linkage files so EAS CLI knows which project/account to target
+  await writeFile(join(dir, "app.json"), JSON.stringify({
+    expo: { name: easProjectSlug, slug: easProjectSlug, version: "1.0.0", owner: accountName },
+  }, null, 2), "utf8");
+  await writeFile(join(dir, "eas.json"), JSON.stringify({
+    cli: { version: ">= 5.0.0" },
+    build: { preview: { distribution: "internal" } },
+    submit: { production: {} },
+  }, null, 2), "utf8");
+
+  // Write the workflow YAML
+  await mkdir(join(dir, ".eas", "workflows"), { recursive: true });
+  await writeFile(join(dir, ".eas", "workflows", `${workflowName}.yml`), yaml, "utf8");
 
   const { stdout } = await execFileAsync(
     EAS_BIN,

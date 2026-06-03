@@ -1457,7 +1457,19 @@ router.post("/:id/ota-updates", requireAuth, async (req, res) => {
   const { branch = "main", message = "OTA update" } = req.body as { branch?: string; message?: string };
 
   try {
-    const result = await publishOtaUpdate({ easProjectSlug: projectEasSlug(project.id), branch, message });
+    // Generate the project's actual Expo files so the OTA update bundles real app code
+    const fwdProto     = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
+    const fwdHost      = (req.get("x-forwarded-host")  || req.get("host") || "") as string;
+    const nexusApiBase = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+    const projectFiles = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
+
+    const result = await publishOtaUpdate({
+      easProjectSlug: projectEasSlug(project.id),
+      accountName:    "Nexuselitestudio",
+      branch,
+      message,
+      projectFiles,
+    });
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: "ota_publish_failed", message: err?.message ?? "OTA publish failed" });
@@ -1486,8 +1498,19 @@ router.post("/:id/mobile-submit", requireAuth, async (req, res) => {
   const { buildId, platform } = req.body as { buildId?: string; platform?: "android" | "ios" };
   if (!buildId || !platform) { res.status(400).json({ error: "bad_request", message: "buildId and platform are required" }); return; }
 
+  // Verify the build belongs to this project and is in a finished (terminal) state
+  const [buildRow] = await db.select().from(mobileBuildTable)
+    .where(and(eq(mobileBuildTable.id, buildId), eq(mobileBuildTable.projectId, project.id)))
+    .limit(1);
+  if (!buildRow) { res.status(404).json({ error: "build_not_found", message: "Build not found for this project." }); return; }
+  if (buildRow.status !== "finished") {
+    res.status(409).json({ error: "build_not_finished", message: `Build status is '${buildRow.status}' — can only submit finished builds.` });
+    return;
+  }
+
   try {
-    const result = await submitBuild({ buildId, platform });
+    // Use the EAS build ID (not the internal DB row ID) for submission
+    const result = await submitBuild({ buildId: buildRow.easBuildId, platform });
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: "submit_failed", message: err?.message ?? "Submission failed" });
@@ -1632,7 +1655,12 @@ router.post("/:id/workflows/run", requireAuth, async (req, res) => {
   if (!yaml) { res.status(400).json({ error: "bad_request", message: "yaml is required" }); return; }
 
   try {
-    const run = await triggerWorkflowRun({ easProjectSlug: projectEasSlug(project.id), workflowName, yaml });
+    const run = await triggerWorkflowRun({
+      easProjectSlug: projectEasSlug(project.id),
+      accountName:    "Nexuselitestudio",
+      workflowName,
+      yaml,
+    });
     res.json(run);
   } catch (err: any) {
     res.status(500).json({ error: "workflow_run_failed", message: err?.message ?? "Workflow trigger failed" });
