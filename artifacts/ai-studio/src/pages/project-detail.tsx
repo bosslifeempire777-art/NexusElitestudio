@@ -332,7 +332,7 @@ export default function ProjectDetail() {
         method: 'POST', headers: authHeaders(),
         body: JSON.stringify({ buildId, platform }),
       });
-      if (res.status === 402) { const d = await res.json(); setUpgradeMessage(d.message); setShowUpgradeModal(true); return; }
+      if (res.status === 402) { const d = await res.json(); setUpgradeMessage(d.message); setShowUpgradeModal(true); setIsSubmitting(false); return; }
       if (!res.ok) { throw new Error((await res.json()).message ?? 'Submit failed'); }
       const data = await res.json();
       setSubmissionId(data.submissionId);

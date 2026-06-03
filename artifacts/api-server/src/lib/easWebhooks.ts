@@ -15,7 +15,7 @@ export interface EasWebhookRemote {
   createdAt: string;
 }
 
-/** Register a webhook with EAS for a given app slug */
+/** Register a webhook with EAS for a given app slug — throws if EAS rejects */
 export async function createEasWebhook(opts: {
   appSlug: string;
   url:     string;
@@ -24,34 +24,46 @@ export async function createEasWebhook(opts: {
 }): Promise<string> {
   const { appSlug, url, secret, events } = opts;
 
-  try {
-    const res  = await fetch(`${EAS_API}/v2/webhooks`, {
-      method:  "POST",
-      headers: easHeaders(),
-      body:    JSON.stringify({ appSlug, url, secret, events }),
-    });
+  const res  = await fetch(`${EAS_API}/v2/webhooks`, {
+    method:  "POST",
+    headers: easHeaders(),
+    body:    JSON.stringify({ appSlug, url, secret, events }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`EAS CreateWebhook ${res.status}: ${text.slice(0, 300)}`);
+  const data: any = JSON.parse(text);
+  const id = data?.data?.id ?? data?.id;
+  if (!id) throw new Error("EAS CreateWebhook: no webhook ID in response");
+  return id;
+}
+
+/** Delete a webhook from EAS — throws if EAS rejects */
+export async function deleteEasWebhook(easWebhookId: string): Promise<void> {
+  const res = await fetch(`${EAS_API}/v2/webhooks/${easWebhookId}`, {
+    method:  "DELETE",
+    headers: easHeaders(),
+  });
+  if (!res.ok) {
     const text = await res.text();
-    if (!res.ok) throw new Error(`EAS CreateWebhook ${res.status}: ${text.slice(0, 300)}`);
-    const data: any = JSON.parse(text);
-    return data?.data?.id ?? data?.id ?? "";
-  } catch (err) {
-    console.warn("[easWebhooks] createEasWebhook failed (non-fatal):", err);
-    return "";
+    throw new Error(`EAS DeleteWebhook ${res.status}: ${text.slice(0, 200)}`);
   }
 }
 
-/** Delete a webhook from EAS */
-export async function deleteEasWebhook(easWebhookId: string): Promise<void> {
-  try {
-    const res = await fetch(`${EAS_API}/v2/webhooks/${easWebhookId}`, {
-      method:  "DELETE",
-      headers: easHeaders(),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.warn(`[easWebhooks] deleteEasWebhook ${res.status}: ${text.slice(0, 200)}`);
-    }
-  } catch (err) {
-    console.warn("[easWebhooks] deleteEasWebhook failed (non-fatal):", err);
+/** List webhooks registered with EAS for a given app slug */
+export async function listEasWebhooks(appSlug: string): Promise<EasWebhookRemote[]> {
+  const res = await fetch(`${EAS_API}/v2/webhooks?appSlug=${encodeURIComponent(appSlug)}`, {
+    headers: easHeaders(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`EAS ListWebhooks ${res.status}: ${text.slice(0, 200)}`);
   }
+  const data: any = await res.json();
+  const list: any[] = data?.data ?? data ?? [];
+  return list.map((w: any) => ({
+    id:        w.id,
+    url:       w.url,
+    events:    w.events ?? [],
+    createdAt: w.createdAt ?? new Date().toISOString(),
+  }));
 }

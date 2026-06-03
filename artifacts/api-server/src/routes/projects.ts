@@ -17,7 +17,7 @@ import { generateMobileCode } from "../lib/generateMobileCode.js";
 import { mobileBuildTable, easWebhookTable } from "@workspace/db/schema";
 import { listOtaUpdates, listChannels, listBranches, publishOtaUpdate } from "../lib/easUpdate.js";
 import { submitBuild, getSubmissionStatus } from "../lib/easSubmit.js";
-import { createEasWebhook, deleteEasWebhook, type WebhookEvent } from "../lib/easWebhooks.js";
+import { createEasWebhook, deleteEasWebhook, listEasWebhooks, type WebhookEvent } from "../lib/easWebhooks.js";
 import { listWorkflowRuns, WORKFLOW_TEMPLATES, triggerWorkflowRun, getWorkflowRunLogs } from "../lib/easWorkflows.js";
 
 const router: IRouter = Router();
@@ -1539,7 +1539,7 @@ router.get("/:id/mobile-submit/:submissionId", requireAuth, async (req, res) => 
 
 // ── Webhooks ──────────────────────────────────────────────────────────────────
 
-/** List webhooks for a project */
+/** List webhooks for a project — reconciles local DB with EAS remote state */
 router.get("/:id/webhooks", requireAuth, async (req, res) => {
   const userId  = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
@@ -1549,10 +1549,25 @@ router.get("/:id/webhooks", requireAuth, async (req, res) => {
     : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
   if (!project) { res.status(404).json({ error: "not_found" }); return; }
 
-  const hooks = await db.select().from(easWebhookTable)
+  const localHooks = await db.select().from(easWebhookTable)
     .where(eq(easWebhookTable.projectId, project.id))
     .orderBy(sql`created_at DESC`);
-  res.json(hooks);
+
+  // Reconcile with EAS remote: mark hooks that are no longer registered remotely
+  let remoteIds: Set<string> = new Set();
+  try {
+    const remoteHooks = await listEasWebhooks(projectEasSlug(project.id));
+    remoteIds = new Set(remoteHooks.map(h => h.id));
+  } catch {
+    // If EAS is unavailable, serve local data with a sync_status flag
+    return res.json(localHooks.map(h => ({ ...h, syncStatus: "eas_unavailable" })));
+  }
+
+  const reconciled = localHooks.map(h => ({
+    ...h,
+    syncStatus: h.easWebhookId && remoteIds.has(h.easWebhookId) ? "active" : "unsynced",
+  }));
+  res.json(reconciled);
 });
 
 /** Create a webhook for a project */
@@ -1577,24 +1592,30 @@ router.post("/:id/webhooks", requireAuth, async (req, res) => {
 
   const eventsArr: WebhookEvent[] = Array.isArray(events) && events.length > 0 ? events : ["BUILD"];
 
-  // Register with EAS (non-fatal)
-  const easWebhookId = await createEasWebhook({
-    appSlug: projectEasSlug(project.id),
-    url,
-    secret:  secret ?? "",
-    events:  eventsArr,
-  });
+  // Register with EAS first — fail closed: do not persist if EAS rejects
+  let easWebhookId: string;
+  try {
+    easWebhookId = await createEasWebhook({
+      appSlug: projectEasSlug(project.id),
+      url,
+      secret:  secret ?? "",
+      events:  eventsArr,
+    });
+  } catch (err: any) {
+    res.status(502).json({ error: "eas_registration_failed", message: err?.message ?? "EAS webhook registration failed" });
+    return;
+  }
 
   const [row] = await db.insert(easWebhookTable).values({
-    id:          nanoid(),
-    projectId:   project.id,
+    id:           nanoid(),
+    projectId:    project.id,
     url,
-    secret:      secret ?? null,
-    events:      eventsArr,
-    easWebhookId: easWebhookId || null,
+    secret:       secret ?? null,
+    events:       eventsArr,
+    easWebhookId,
   }).returning();
 
-  res.status(201).json(row);
+  res.status(201).json({ ...row, syncStatus: "active" });
 });
 
 /** Delete a webhook */
@@ -1609,7 +1630,16 @@ router.delete("/:id/webhooks/:webhookId", requireAuth, async (req, res) => {
   if (!project) { res.status(404).json({ error: "not_found" }); return; }
 
   const [hook] = await db.select().from(easWebhookTable).where(and(eq(easWebhookTable.id, webhookId), eq(easWebhookTable.projectId, project.id))).limit(1);
-  if (hook?.easWebhookId) await deleteEasWebhook(hook.easWebhookId);
+  if (!hook) { res.status(404).json({ error: "not_found" }); return; }
+
+  if (hook.easWebhookId) {
+    try {
+      await deleteEasWebhook(hook.easWebhookId);
+    } catch (err: any) {
+      res.status(502).json({ error: "eas_delete_failed", message: err?.message ?? "EAS webhook deletion failed" });
+      return;
+    }
+  }
 
   await db.delete(easWebhookTable).where(and(eq(easWebhookTable.id, webhookId), eq(easWebhookTable.projectId, project.id)));
   res.json({ ok: true });

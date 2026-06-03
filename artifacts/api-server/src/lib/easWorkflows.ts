@@ -186,6 +186,28 @@ jobs:
       profile: production
 `,
   },
+  "build-submit-ios": {
+    label: "Build & Submit iOS",
+    yaml: `on:
+  push:
+    branches:
+      - main
+jobs:
+  build:
+    name: Build iOS
+    type: build
+    params:
+      platform: ios
+      profile: production
+  submit:
+    name: Submit to App Store
+    needs: build
+    type: submit
+    params:
+      platform: ios
+      profile: production
+`,
+  },
   "ota-update": {
     label: "OTA Update (main branch)",
     yaml: `on:
