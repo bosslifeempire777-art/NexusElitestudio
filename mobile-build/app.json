@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "NexusElite AI Studio",
+    "slug": "nexuselite-ai-studio",
+    "version": "1.0.0",
+    "owner": "Nexuselitestudio",
+    "platforms": ["ios", "android"],
+    "android": { "package": "com.nexuselite.aistudio" },
+    "ios": { "bundleIdentifier": "com.nexuselite.aistudio" }
+  }
+}
