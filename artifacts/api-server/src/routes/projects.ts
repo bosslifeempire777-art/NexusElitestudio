@@ -12,6 +12,8 @@ import { getUserSecretNames, getUserSecretsMap } from "./secrets.js";
 import { verifyToken } from "../middleware/auth.js";
 import { injectDiagnosticsWidget } from "../lib/diagnostics-widget.js";
 import AdmZip from "adm-zip";
+import { triggerMobileBuild, getMobileBuildStatus } from "../lib/eas.js";
+import { generateMobileCode } from "../lib/generateMobileCode.js";
 
 const router: IRouter = Router();
 
@@ -1155,6 +1157,149 @@ router.post("/:id/characters/:characterId", requireAuth, async (req, res) => {
     .where(eq(charactersTable.id, characterId))
     .returning();
   res.json(updated);
+});
+
+// ── Mobile Build (EAS) ──────────────────────────────────────────────────────
+
+/** Trigger an EAS build for a mobile_app project */
+router.post("/:id/mobile-build", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  // Pro / Elite / Admin / VIP only
+  if (!isAdmin && !isVip && userPlan !== "pro" && userPlan !== "elite") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "MOBILE_BUILD_NOT_ALLOWED",
+      message: "Mobile app publishing (EAS Build) is available on Pro ($60/mo) and Elite ($269/mo) plans.",
+      currentPlan: userPlan,
+    });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+  if (project.type !== "mobile_app") {
+    res.status(400).json({ error: "not_mobile", message: "Only mobile_app projects can be built with EAS." });
+    return;
+  }
+
+  const platform: "android" | "ios" = (req.body?.platform === "ios") ? "ios" : "android";
+
+  // Build the NEXUS_API base URL
+  const fwdProto   = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
+  const fwdHost    = (req.get("x-forwarded-host")  || req.get("host") || "") as string;
+  const nexusApiBase = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+
+  try {
+    // Generate Expo project files via AI
+    console.log(`[MobileBuild] Generating Expo files for project ${project.id}...`);
+    const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
+
+    // Push to GitHub + trigger EAS build
+    console.log(`[MobileBuild] Triggering ${platform} EAS build...`);
+    const result = await triggerMobileBuild({
+      projectId:   project.id,
+      projectName: project.name,
+      platform,
+      files,
+    });
+
+    // Store build ID on the project for polling
+    await db.update(projectsTable)
+      .set({
+        updatedAt: new Date(),
+        agentLogs: [
+          ...(Array.isArray(project.agentLogs) ? project.agentLogs as string[] : []),
+          `[MobileBuild] 🚀 EAS ${platform} build triggered — ID: ${result.buildId}`,
+        ],
+      })
+      .where(eq(projectsTable.id, project.id));
+
+    res.json(result);
+  } catch (err: any) {
+    console.error("[MobileBuild] Failed:", err?.message ?? err);
+    res.status(500).json({ error: "build_failed", message: err?.message ?? "EAS build failed" });
+  }
+});
+
+/** Poll EAS build status */
+router.get("/:id/mobile-build/:buildId", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const buildId = String(req.params.buildId);
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  try {
+    const status = await getMobileBuildStatus(buildId);
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: "poll_failed", message: err?.message ?? "Failed to get build status" });
+  }
+});
+
+/** Download the Expo project as a ZIP (no build — just the source) */
+router.get("/:id/mobile-download", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  if (!isAdmin && !isVip && userPlan === "free") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "DOWNLOAD_NOT_ALLOWED",
+      message: "ZIP download requires a paid plan.",
+    });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const fwdProto   = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
+  const fwdHost    = (req.get("x-forwarded-host")  || req.get("host") || "") as string;
+  const nexusApiBase = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+
+  try {
+    const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
+    const zip = new AdmZip();
+    for (const [filePath, content] of Object.entries(files)) {
+      // Binary PNG placeholder files are stored as base64
+      if (filePath.endsWith(".png")) {
+        zip.addFile(filePath, Buffer.from(content, "base64"));
+      } else {
+        zip.addFile(filePath, Buffer.from(content, "utf-8"));
+      }
+    }
+    const safeName = project.name.replace(/[^a-z0-9_-]/gi, "_").slice(0, 60);
+    const buffer = zip.toBuffer();
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}-expo.zip"`);
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err: any) {
+    res.status(500).json({ error: "zip_failed", message: err?.message ?? "Failed to generate ZIP" });
+  }
 });
 
 /** Unlink a character from this project */

@@ -1,0 +1,1 @@
+- [Mobile Build Pipeline](mobile-build-pipeline.md) — EAS Build integration: Expo account Nexuselitestudio, GitHub bosslifeempire777-art, callLLM must be exported from openrouter.ts

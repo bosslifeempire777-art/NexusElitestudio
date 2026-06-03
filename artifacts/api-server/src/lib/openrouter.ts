@@ -211,7 +211,7 @@ export interface CallOpts {
   mem?:         SharedMemory;
 }
 
-async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
+export async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
   const {
     system      = "You are an elite production-grade engineer.",
     tier        = "coding",

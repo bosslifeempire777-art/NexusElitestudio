@@ -121,6 +121,88 @@ export default function ProjectDetail() {
   // Split view: when true AND activeTab==='preview', shows preview top + SwarmTerminal bottom
   const [splitView, setSplitView] = useState(false);
 
+  // ── Mobile / EAS Build state ──────────────────────────────────────────────
+  const [showMobilePanel, setShowMobilePanel]     = useState(false);
+  const [mobilePlatform, setMobilePlatform]       = useState<'android' | 'ios'>('android');
+  const [mobileBuildId, setMobileBuildId]         = useState<string | null>(null);
+  const [mobileBuildStatus, setMobileBuildStatus] = useState<string | null>(null);
+  const [mobileArtifactUrl, setMobileArtifactUrl] = useState<string | null>(null);
+  const [mobileLogsUrl, setMobileLogsUrl]         = useState<string | null>(null);
+  const [mobileRepoUrl, setMobileRepoUrl]         = useState<string | null>(null);
+  const [isMobileBuilding, setIsMobileBuilding]   = useState(false);
+  const [mobileError, setMobileError]             = useState<string | null>(null);
+  const mobilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const triggerMobileBuild = useCallback(async () => {
+    if (!id || isMobileBuilding) return;
+    setIsMobileBuilding(true);
+    setMobileError(null);
+    setMobileBuildId(null);
+    setMobileBuildStatus(null);
+    setMobileArtifactUrl(null);
+    setMobileLogsUrl(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/mobile-build`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ platform: mobilePlatform }),
+      });
+      const data = await res.json();
+      if (res.status === 402) {
+        setUpgradeMessage(data.message || "Mobile publishing requires a Pro or Elite plan.");
+        setShowUpgradeModal(true);
+        setIsMobileBuilding(false);
+        return;
+      }
+      if (!res.ok) throw new Error(data.message || "Build failed");
+      setMobileBuildId(data.buildId);
+      setMobileBuildStatus(data.status ?? "in-queue");
+      setMobileRepoUrl(data.repoUrl ?? null);
+      // Start polling every 15s
+      if (mobilePollRef.current) clearInterval(mobilePollRef.current);
+      mobilePollRef.current = setInterval(async () => {
+        try {
+          const poll = await fetch(`/api/projects/${id}/mobile-build/${data.buildId}`, { headers: authHeaders() });
+          const pollData = await poll.json();
+          setMobileBuildStatus(pollData.status);
+          setMobileLogsUrl(pollData.logsUrl ?? null);
+          if (pollData.artifactUrl) {
+            setMobileArtifactUrl(pollData.artifactUrl);
+          }
+          if (["finished", "errored", "cancelled"].includes(pollData.status)) {
+            if (mobilePollRef.current) clearInterval(mobilePollRef.current);
+            setIsMobileBuilding(false);
+            if (pollData.error) setMobileError(pollData.error);
+          }
+        } catch { /* poll errors are non-fatal */ }
+      }, 15_000);
+    } catch (err: any) {
+      setMobileError(err.message ?? "Unknown error");
+      setIsMobileBuilding(false);
+    }
+  }, [id, isMobileBuilding, mobilePlatform]);
+
+  const downloadMobileZip = useCallback(async () => {
+    if (!id) return;
+    const res = await fetch(`/api/projects/${id}/mobile-download`, { headers: authHeaders() });
+    if (res.status === 402) {
+      const data = await res.json();
+      setUpgradeMessage(data.message || "Upgrade to download Expo source.");
+      setShowUpgradeModal(true);
+      return;
+    }
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${project?.name ?? "expo-app"}-expo.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [id, project?.name]);
+
   function authHeaders(): Record<string, string> {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
@@ -356,6 +438,163 @@ export default function ProjectDetail() {
         </div>
       )}
 
+      {/* ── Mobile Build / Publish Panel ── */}
+      {showMobilePanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg bg-card border border-violet-500/40 rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-violet-500/30 bg-violet-900/20">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-5 h-5 text-violet-400" />
+                <h3 className="font-display font-bold text-base text-violet-300">PUBLISH MOBILE APP</h3>
+              </div>
+              <button onClick={() => setShowMobilePanel(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {/* Project info */}
+              <div className="bg-background/60 border border-border/50 rounded p-3 text-xs font-mono text-muted-foreground space-y-1">
+                <p><span className="text-violet-400">Project:</span> {project.name}</p>
+                <p><span className="text-violet-400">Framework:</span> Expo (React Native)</p>
+                <p><span className="text-violet-400">Account:</span> Nexuselitestudio @ expo.dev</p>
+              </div>
+
+              {/* Platform selector */}
+              <div>
+                <p className="text-xs font-mono text-muted-foreground mb-2 uppercase tracking-wider">Target Platform</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['android', 'ios'] as const).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setMobilePlatform(p)}
+                      className={`flex flex-col items-center gap-1.5 py-3 border rounded font-mono text-sm transition-all ${
+                        mobilePlatform === p
+                          ? 'bg-violet-600/30 border-violet-500 text-violet-300'
+                          : 'border-border/50 text-muted-foreground hover:border-violet-500/50 hover:text-foreground'
+                      }`}
+                    >
+                      <span className="text-xl">{p === 'android' ? '🤖' : '🍎'}</span>
+                      <span className="capitalize font-bold">{p}</span>
+                      <span className="text-[10px] opacity-60">{p === 'android' ? 'APK file' : 'IPA file'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* What happens */}
+              {!mobileBuildId && !isMobileBuilding && (
+                <div className="space-y-2">
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">What happens when you build:</p>
+                  {[
+                    '🤖  AI generates a complete Expo React Native project',
+                    '📤  Code is pushed to your GitHub (nexus-mobile-…)',
+                    '☁️  EAS Cloud builds your APK / IPA (~10–20 min)',
+                    '📲  Download link appears here when done',
+                  ].map(s => (
+                    <div key={s} className="flex items-start gap-2 text-xs font-mono text-muted-foreground">
+                      <span>{s}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Build status */}
+              {(mobileBuildId || isMobileBuilding) && (
+                <div className="space-y-3">
+                  <div className={`flex items-center gap-2 px-3 py-2 rounded text-xs font-mono border ${
+                    mobileBuildStatus === 'finished'   ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+                    mobileBuildStatus === 'errored'    ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+                    'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                  }`}>
+                    {(mobileBuildStatus === 'in-queue' || mobileBuildStatus === 'in-progress' || isMobileBuilding) && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    )}
+                    {mobileBuildStatus === 'finished' && <Check className="w-3.5 h-3.5 shrink-0 text-green-400" />}
+                    {mobileBuildStatus === 'errored'  && <X className="w-3.5 h-3.5 shrink-0 text-red-400" />}
+                    <span className="capitalize">
+                      {isMobileBuilding && !mobileBuildId ? 'Generating project & triggering build…' :
+                       mobileBuildStatus === 'in-queue'    ? 'Build queued — EAS is warming up…' :
+                       mobileBuildStatus === 'in-progress' ? 'Building your app in the cloud…' :
+                       mobileBuildStatus === 'finished'    ? '✅ Build complete!' :
+                       mobileBuildStatus === 'errored'     ? '❌ Build failed' :
+                       mobileBuildStatus ?? 'Checking status…'}
+                    </span>
+                  </div>
+
+                  {mobileBuildId && (
+                    <p className="text-[10px] font-mono text-muted-foreground/60 break-all">Build ID: {mobileBuildId}</p>
+                  )}
+
+                  {mobileRepoUrl && (
+                    <a href={mobileRepoUrl} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline">
+                      <ExternalLink className="w-3 h-3" /> View source on GitHub
+                    </a>
+                  )}
+
+                  {mobileLogsUrl && (
+                    <a href={mobileLogsUrl} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1.5 text-xs font-mono text-violet-400 hover:text-violet-300 underline">
+                      <ExternalLink className="w-3 h-3" /> View build logs on Expo
+                    </a>
+                  )}
+
+                  {mobileArtifactUrl && (
+                    <a href={mobileArtifactUrl} target="_blank" rel="noreferrer"
+                      className="flex items-center justify-center gap-2 w-full py-2.5 bg-green-500/20 border border-green-500/40 text-green-400 text-sm font-mono font-bold rounded hover:bg-green-500/30 transition-colors">
+                      <Download className="w-4 h-4" />
+                      Download {mobilePlatform === 'android' ? 'APK' : 'IPA'}
+                    </a>
+                  )}
+
+                  {mobileError && (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-xs font-mono text-red-400">
+                      Error: {mobileError}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-1">
+                {!mobileBuildId ? (
+                  <button
+                    onClick={triggerMobileBuild}
+                    disabled={isMobileBuilding}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-mono font-bold rounded transition-colors"
+                  >
+                    {isMobileBuilding
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating & Building…</>
+                      : <><Rocket className="w-4 h-4" /> Build {mobilePlatform === 'android' ? 'Android APK' : 'iOS IPA'}</>
+                    }
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { setMobileBuildId(null); setMobileBuildStatus(null); setMobileArtifactUrl(null); setMobileError(null); }}
+                    className="flex-1 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-violet-500/50 hover:text-foreground transition-colors"
+                  >
+                    Start New Build
+                  </button>
+                )}
+                <button
+                  onClick={downloadMobileZip}
+                  title="Download Expo source code as ZIP"
+                  className="flex items-center gap-1.5 px-3 py-2.5 border border-border/50 text-muted-foreground text-sm font-mono rounded hover:border-border hover:text-foreground transition-colors"
+                >
+                  <Download className="w-4 h-4" /> Expo ZIP
+                </button>
+              </div>
+
+              <p className="text-[10px] font-mono text-muted-foreground/40 text-center">
+                EAS builds run in Expo's cloud • Android builds ~10 min • iOS requires Apple Developer account
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Upgrade / Paywall Modal ── */}
       {showUpgradeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -501,6 +740,19 @@ export default function ProjectDetail() {
                   : <><Rocket className="w-3.5 h-3.5" /><span className="hidden sm:inline">{project.status === 'deployed' ? 'Redeploy' : 'Deploy'}</span></>
                 }
               </Button>
+              {/* Mobile publish button — only shown for mobile_app projects */}
+              {project.type === 'mobile_app' && (
+                <Button
+                  size="sm"
+                  onClick={() => setShowMobilePanel(true)}
+                  disabled={project.status === 'building' || !(project as any).hasCode}
+                  title="Build & publish as Android APK or iOS IPA"
+                  className="h-7 px-3 text-xs gap-1 bg-violet-600 hover:bg-violet-500 text-white border-0"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Publish App</span>
+                </Button>
+              )}
             </div>
           </div>
 
