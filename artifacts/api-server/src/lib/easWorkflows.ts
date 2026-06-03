@@ -63,6 +63,12 @@ export async function triggerWorkflowRun(opts: {
   yaml:           string;
 }): Promise<WorkflowRun> {
   const { easProjectSlug, accountName, workflowName, yaml } = opts;
+
+  // Validate workflowName to a safe slug — reject anything that could escape the path
+  if (!/^[a-z0-9_-]{1,64}$/.test(workflowName)) {
+    throw new Error("Invalid workflowName: must match ^[a-z0-9_-]{1,64}$");
+  }
+
   const token = process.env.EXPO_TOKEN;
   if (!token) throw new Error("EXPO_TOKEN not set");
 

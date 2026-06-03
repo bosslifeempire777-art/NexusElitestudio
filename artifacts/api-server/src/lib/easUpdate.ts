@@ -101,13 +101,18 @@ export async function publishOtaUpdate(opts: {
   if (!token) throw new Error("EXPO_TOKEN not set");
 
   const { writeFile: wf, mkdir: mk } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
   const dir = await mkdtemp(join(tmpdir(), "nexus-ota-"));
 
-  // Write the actual generated project files to the temp dir
+  // Write the actual generated project files to the temp dir.
+  // Containment check: resolve each target path and verify it stays inside dir.
   for (const [filePath, content] of Object.entries(projectFiles)) {
-    const full = join(dir, filePath);
-    await mk(join(full, ".."), { recursive: true }).catch(() => undefined);
-    await wf(full, content, "utf8");
+    const resolved = resolve(dir, filePath);
+    if (!resolved.startsWith(dir + "/") && resolved !== dir) {
+      throw new Error(`Path traversal rejected: ${filePath}`);
+    }
+    await mk(join(resolved, ".."), { recursive: true }).catch(() => undefined);
+    await wf(resolved, content, "utf8");
   }
 
   // Ensure app.json exists with proper EAS slug linkage
