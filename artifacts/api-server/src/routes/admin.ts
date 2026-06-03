@@ -1,11 +1,15 @@
 import { Router, type IRouter } from "express";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from "fs";
 import { join, dirname, resolve, sep } from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { db } from "@workspace/db";
 import { projectsTable, referralsTable, creditTransactionsTable, usersTable, buildsTable, recoveryEmailEventsTable } from "@workspace/db/schema";
 import { eq, count, sum, desc, sql, inArray, gte, asc } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth.js";
 import { getRecentTraffic, getTrafficSummary } from "../lib/traffic-log.js";
+
+const execAsync = promisify(exec);
 
 const router: IRouter = Router();
 
@@ -89,6 +93,48 @@ function getPlatformFiles(requestedPaths?: string[]): Array<{ path: string; cont
   }
   return results;
 }
+
+/** POST /admin/shell — run a real shell command in the workspace (admin only) */
+router.post("/shell", async (req, res) => {
+  const { command, cwd } = req.body as { command?: string; cwd?: string };
+  if (!command?.trim()) {
+    res.status(400).json({ error: "command is required" });
+    return;
+  }
+
+  let safeDir = WORKSPACE_ROOT;
+  if (cwd) {
+    const candidate = resolve(WORKSPACE_ROOT, cwd.replace(/^\/+/, ""));
+    if (candidate.startsWith(WORKSPACE_ROOT)) safeDir = candidate;
+  }
+
+  console.log(`[admin/shell] cwd=${safeDir} cmd=${command.slice(0, 120)}`);
+  const started = Date.now();
+
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: safeDir,
+      timeout: 120_000,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, FORCE_COLOR: "0" },
+    });
+    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+    res.json({
+      output: [stdout, stderr ? `[stderr]\n${stderr}` : ""].filter(Boolean).join("\n").trim(),
+      exitCode: 0,
+      elapsed,
+    });
+  } catch (err: any) {
+    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+    res.json({
+      output: [err.stdout, err.stderr ? `[stderr]\n${err.stderr}` : "", !err.stdout && !err.stderr ? err.message : ""]
+        .filter(Boolean).join("\n").trim(),
+      exitCode: typeof err.code === "number" ? err.code : 1,
+      elapsed,
+      error: err.message,
+    });
+  }
+});
 
 /** POST /admin/repair */
 router.post("/repair", async (req, res) => {

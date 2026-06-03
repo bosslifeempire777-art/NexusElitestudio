@@ -11,7 +11,7 @@ import {
 import { useState, useRef, useEffect } from "react";
 import { getToken } from "@/lib/auth";
 
-type RepairMode = "platform" | "project";
+type RepairMode = "platform" | "project" | "shell";
 
 interface TerminalLine {
   id: string;
@@ -460,17 +460,18 @@ function RepairTerminal() {
   const [projectId, setProjectId] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [shellCwd, setShellCwd] = useState("artifacts/api-server");
   const [lines, setLines] = useState<TerminalLine[]>([
     {
       id: "boot",
       type: "system",
-      text: "NEXUS REPAIR CORE v2.0 — AI self-repair system online. Platform code and project apps can be edited via natural language.",
+      text: "NEXUS REPAIR CORE v2.0 — AI self-repair + shell executor online.",
       timestamp: now(),
     },
     {
       id: "boot2",
       type: "system",
-      text: 'Select a mode: [Platform Code] to edit the studio\'s own source, or [Project App] to fix a specific generated app. Then type your instruction below.',
+      text: "Modes: [Platform Code] AI patches source files · [Project App] AI fixes a generated app · [Shell] run real commands (pnpm install, etc.)",
       timestamp: now(),
     },
   ]);
@@ -495,9 +496,42 @@ function RepairTerminal() {
     }
 
     setInput("");
+    setLoading(true);
+
+    if (mode === "shell") {
+      addLine({ type: "user", text: `$ ${msg}` });
+      addLine({ type: "system", text: `[shell] cwd: ${shellCwd} — running…` });
+      try {
+        const token = getToken();
+        const res = await fetch("/api/admin/shell", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ command: msg, cwd: shellCwd }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          addLine({ type: "error", text: `ERROR ${res.status}: ${data.error ?? "Unknown"}` });
+        } else {
+          const lines = (data.output || "(no output)").split("\n");
+          for (const line of lines) {
+            addLine({ type: data.exitCode === 0 ? "ai" : "error", text: line });
+          }
+          addLine({
+            type: data.exitCode === 0 ? "success" : "warn",
+            text: `exit ${data.exitCode} — ${data.elapsed}s`,
+          });
+        }
+      } catch (err: any) {
+        addLine({ type: "error", text: `NETWORK ERROR: ${err.message}` });
+      } finally {
+        setLoading(false);
+        inputRef.current?.focus();
+      }
+      return;
+    }
+
     addLine({ type: "user", text: `> ${msg}` });
     addLine({ type: "system", text: `[${mode === "platform" ? "Platform Repair" : `Project: ${projectId}`}] Scanning codebase and generating patch…` });
-    setLoading(true);
 
     try {
       const token = getToken();
@@ -614,6 +648,16 @@ function RepairTerminal() {
           >
             <FileCode2 className="w-3 h-3" /> Project App
           </button>
+          <button
+            onClick={() => setMode("shell")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border transition-all ${
+              mode === "shell"
+                ? "border-green-500/60 bg-green-500/10 text-green-400"
+                : "border-border/50 text-muted-foreground hover:border-border"
+            }`}
+          >
+            <Terminal className="w-3 h-3" /> Shell
+          </button>
 
           {mode === "platform" && (
             <span className="text-xs font-mono text-muted-foreground ml-2">
@@ -629,6 +673,18 @@ function RepairTerminal() {
               placeholder="e.g. rqPwThyu7y4x — find in the project URL"
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
+              className="font-mono text-xs h-8 max-w-sm"
+            />
+          </div>
+        )}
+
+        {mode === "shell" && (
+          <div className="flex gap-2 items-center">
+            <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">Working dir:</span>
+            <Input
+              placeholder="e.g. artifacts/api-server"
+              value={shellCwd}
+              onChange={(e) => setShellCwd(e.target.value)}
               className="font-mono text-xs h-8 max-w-sm"
             />
           </div>
@@ -662,14 +718,16 @@ function RepairTerminal() {
             <Textarea
               ref={inputRef}
               placeholder={
-                mode === "platform"
-                  ? "e.g. Fix the rebuild button not working on mobile  |  Add a dark/light mode toggle to the sidebar  |  The preview iframe is blank — debug and fix it"
+                mode === "shell"
+                  ? "e.g. pnpm add axios  |  pnpm install  |  ls node_modules/.bin  |  node --version"
+                  : mode === "platform"
+                  ? "e.g. Fix the rebuild button not working on mobile  |  Add a dark/light mode toggle to the sidebar"
                   : "e.g. Add a high score leaderboard  |  Fix the enemy collision detection  |  Add a pause menu"
               }
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              rows={2}
+              rows={mode === "shell" ? 1 : 2}
               className="pl-8 font-mono text-sm resize-none"
               disabled={loading}
             />
@@ -708,6 +766,15 @@ function RepairTerminal() {
             </div>
           </div>
         )}
+        {mode === "shell" && (
+          <div className="flex items-start gap-2 bg-green-500/5 border border-green-500/20 rounded p-3 text-xs font-mono text-green-400/80">
+            <Terminal className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <strong>Shell mode</strong> runs real commands on the server (2 min timeout). Use <em>Working dir</em> to target the right package.
+              Commands run as the server process — no sudo. Good for: <em>pnpm add</em>, <em>pnpm install</em>, <em>node --version</em>, <em>ls</em>, <em>cat package.json</em>.
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -738,6 +805,12 @@ const EXAMPLE_COMMANDS: Record<RepairMode, string[]> = {
     "Fix the game so enemies don't stack on top of each other",
     "Make the UI dark-themed with neon cyan accents",
     "Add a pause menu when the player presses Escape",
+  ],
+  shell: [
+    "pnpm install",
+    "pnpm add eas-cli",
+    "node --version && pnpm --version",
+    "ls node_modules/.bin | grep eas",
   ],
 };
 
