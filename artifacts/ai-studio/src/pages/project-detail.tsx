@@ -138,6 +138,7 @@ export default function ProjectDetail() {
   const [historyLoading, setHistoryLoading]       = useState(false);
   // OTA
   const [otaUpdates, setOtaUpdates]               = useState<any[]>([]);
+  const [otaChannels, setOtaChannels]             = useState<any[]>([]);
   const [otaBranches, setOtaBranches]             = useState<string[]>(['main', 'staging']);
   const [otaBranch, setOtaBranch]                 = useState('main');
   const [otaMessage, setOtaMessage]               = useState('');
@@ -160,6 +161,9 @@ export default function ProjectDetail() {
   const [workflowTemplates, setWorkflowTemplates] = useState<Record<string,{label:string;yaml:string}>>({});
   const [selectedTemplate, setSelectedTemplate]   = useState('build-android');
   const [customYaml, setCustomYaml]               = useState('');
+  const [isRunningWorkflow, setIsRunningWorkflow] = useState(false);
+  const [workflowRunError, setWorkflowRunError]   = useState<string | null>(null);
+  const historyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const triggerMobileBuild = useCallback(async () => {
     if (!id || isMobileBuilding) return;
@@ -241,18 +245,33 @@ export default function ProjectDetail() {
     } catch { /* non-fatal */ } finally { setHistoryLoading(false); }
   }, [id]);
 
+  // Auto-refresh Build History every 5s while any build is in progress
+  useEffect(() => {
+    const TERMINAL = new Set(['finished', 'errored', 'cancelled']);
+    const hasInProgress = buildHistory.some((b: any) => !TERMINAL.has(b.status));
+    if (hasInProgress && mobilePanelTab === 'history') {
+      if (historyPollRef.current) clearInterval(historyPollRef.current);
+      historyPollRef.current = setInterval(loadBuildHistory, 5_000);
+    } else {
+      if (historyPollRef.current) { clearInterval(historyPollRef.current); historyPollRef.current = null; }
+    }
+    return () => { if (historyPollRef.current) { clearInterval(historyPollRef.current); historyPollRef.current = null; } };
+  }, [buildHistory, mobilePanelTab, loadBuildHistory]);
+
   const loadOtaData = useCallback(async () => {
     if (!id) return;
     try {
-      const [upRes, brRes] = await Promise.all([
-        fetch(`/api/projects/${id}/ota-updates`, { headers: authHeaders() }),
+      const [upRes, brRes, chRes] = await Promise.all([
+        fetch(`/api/projects/${id}/ota-updates`,  { headers: authHeaders() }),
         fetch(`/api/projects/${id}/ota-branches`, { headers: authHeaders() }),
+        fetch(`/api/projects/${id}/ota-channels`, { headers: authHeaders() }),
       ]);
       if (upRes.ok) setOtaUpdates(await upRes.json());
       if (brRes.ok) {
         const branches: any[] = await brRes.json();
         if (branches.length > 0) setOtaBranches(branches.map((b: any) => b.name ?? b));
       }
+      if (chRes.ok) setOtaChannels(await chRes.json());
     } catch { /* non-fatal */ }
   }, [id]);
 
@@ -796,6 +815,20 @@ export default function ProjectDetail() {
                       </div>
                     ))}
                   </div>
+                  {otaChannels.length > 0 && (
+                    <div>
+                      <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">Channels</p>
+                      {otaChannels.map((c: any) => (
+                        <div key={c.id} className="flex items-center justify-between bg-background/40 border border-border/30 rounded px-3 py-2 mb-1.5 text-xs font-mono">
+                          <div>
+                            <span className="text-cyan-400 font-bold">{c.name}</span>
+                            {c.branchName && <span className="text-muted-foreground/60 ml-2">→ {c.branchName}</span>}
+                          </div>
+                          <span className="text-muted-foreground/40">{c.createdAt ? new Date(c.createdAt).toLocaleDateString() : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -898,7 +931,23 @@ export default function ProjectDetail() {
                       <textarea value={customYaml} onChange={e => setCustomYaml(e.target.value)} rows={8}
                         className="w-full bg-background border border-border/50 rounded px-2 py-1.5 text-xs font-mono text-foreground focus:border-violet-500 focus:outline-none resize-y" />
                     </div>
-                    <p className="text-[10px] font-mono text-muted-foreground/50">Workflows run automatically on EAS when you push to a configured branch. Edit the YAML above to customise triggers, platforms, and steps.</p>
+                    <p className="text-[10px] font-mono text-muted-foreground/50">Edit the YAML above to customise triggers, platforms, and steps. Click Run to trigger it manually on EAS.</p>
+                    {workflowRunError && <p className="text-xs font-mono text-red-400">{workflowRunError}</p>}
+                    <button disabled={isRunningWorkflow || !customYaml}
+                      onClick={async () => {
+                        setIsRunningWorkflow(true); setWorkflowRunError(null);
+                        try {
+                          const r = await fetch(`/api/projects/${id}/workflows/run`, {
+                            method: 'POST', headers: authHeaders(),
+                            body: JSON.stringify({ workflowName: selectedTemplate || 'custom-workflow', yaml: customYaml }),
+                          });
+                          if (!r.ok) { const d = await r.json(); setWorkflowRunError(d.message ?? 'Failed to trigger workflow'); }
+                          else { await loadWorkflows(); }
+                        } catch(e:any) { setWorkflowRunError(e.message); } finally { setIsRunningWorkflow(false); }
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-mono font-bold rounded transition-colors">
+                      {isRunningWorkflow ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Running…</> : <>▶ Run Workflow</>}
+                    </button>
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-2">

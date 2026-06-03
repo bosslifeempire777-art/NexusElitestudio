@@ -15,10 +15,10 @@ import AdmZip from "adm-zip";
 import { triggerMobileBuild, getMobileBuildStatus } from "../lib/eas.js";
 import { generateMobileCode } from "../lib/generateMobileCode.js";
 import { mobileBuildTable, easWebhookTable } from "@workspace/db/schema";
-import { listOtaUpdates, listChannels, listBranches } from "../lib/easUpdate.js";
+import { listOtaUpdates, listChannels, listBranches, publishOtaUpdate } from "../lib/easUpdate.js";
 import { submitBuild, getSubmissionStatus } from "../lib/easSubmit.js";
 import { createEasWebhook, deleteEasWebhook, type WebhookEvent } from "../lib/easWebhooks.js";
-import { listWorkflowRuns, WORKFLOW_TEMPLATES } from "../lib/easWorkflows.js";
+import { listWorkflowRuns, WORKFLOW_TEMPLATES, triggerWorkflowRun, getWorkflowRunLogs } from "../lib/easWorkflows.js";
 
 const router: IRouter = Router();
 
@@ -1437,6 +1437,33 @@ router.get("/:id/ota-branches", requireAuth, async (req, res) => {
   res.json(branches);
 });
 
+/** Publish an OTA update */
+router.post("/:id/ota-updates", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  if (!mobileGuard(userPlan, isAdmin, isVip)) {
+    res.status(402).json({ error: "plan_limit", code: "OTA_NOT_ALLOWED", message: "OTA updates require Pro or Elite plan." });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const { branch = "main", message = "OTA update" } = req.body as { branch?: string; message?: string };
+
+  try {
+    const result = await publishOtaUpdate({ easProjectSlug: projectEasSlug(project.id), branch, message });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "ota_publish_failed", message: err?.message ?? "OTA publish failed" });
+  }
+});
+
 // ── Store Submission ──────────────────────────────────────────────────────────
 
 /** Trigger a store submission for a finished build */
@@ -1583,6 +1610,48 @@ router.get("/:id/workflows", requireAuth, async (req, res) => {
 
   const runs = await listWorkflowRuns(projectEasSlug(project.id));
   res.json(runs);
+});
+
+/** Trigger a workflow run */
+router.post("/:id/workflows/run", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const isVip    = req.auth!.isVip;
+  const userPlan = req.auth!.plan;
+
+  if (!mobileGuard(userPlan, isAdmin, isVip)) {
+    res.status(402).json({ error: "plan_limit", code: "WORKFLOW_NOT_ALLOWED", message: "CI/CD workflows require Pro or Elite plan." });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const { workflowName = "custom-workflow", yaml } = req.body as { workflowName?: string; yaml?: string };
+  if (!yaml) { res.status(400).json({ error: "bad_request", message: "yaml is required" }); return; }
+
+  try {
+    const run = await triggerWorkflowRun({ easProjectSlug: projectEasSlug(project.id), workflowName, yaml });
+    res.json(run);
+  } catch (err: any) {
+    res.status(500).json({ error: "workflow_run_failed", message: err?.message ?? "Workflow trigger failed" });
+  }
+});
+
+/** Get workflow run logs */
+router.get("/:id/workflows/:runId/logs", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({ where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)) });
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const logs = await getWorkflowRunLogs(String(req.params.runId));
+  res.json(logs);
 });
 
 function buildMissingCodeHtml(name: string, type: string, id: string): string {

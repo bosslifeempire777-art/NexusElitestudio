@@ -1,5 +1,13 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const execFileAsync = promisify(execFile);
 const EXPO_OWNER = "Nexuselitestudio";
 const EAS_API    = "https://api.expo.dev";
+const EAS_BIN    = resolve(process.cwd(), "artifacts/api-server/node_modules/.bin/eas");
 
 function easHeaders(): Record<string, string> {
   const token = process.env.EXPO_TOKEN;
@@ -70,6 +78,52 @@ export async function listChannels(easProjectSlug: string): Promise<OtaChannel[]
     console.warn("[easUpdate] listChannels failed (non-fatal):", err);
     return [];
   }
+}
+
+export interface OtaPublishResult {
+  updateId:  string;
+  branch:    string;
+  message:   string;
+  platform:  string;
+  createdAt: string;
+}
+
+/** Publish an OTA update via EAS CLI for a project */
+export async function publishOtaUpdate(opts: {
+  easProjectSlug: string;
+  branch:         string;
+  message:        string;
+}): Promise<OtaPublishResult> {
+  const { easProjectSlug, branch, message } = opts;
+  const token = process.env.EXPO_TOKEN;
+  if (!token) throw new Error("EXPO_TOKEN not set");
+
+  const dir = await mkdtemp(join(tmpdir(), "nexus-ota-"));
+  const appJson = JSON.stringify({ expo: { name: easProjectSlug, slug: easProjectSlug, version: "1.0.0" } }, null, 2);
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(dir, "app.json"), appJson, "utf8");
+
+  const { stdout } = await execFileAsync(
+    EAS_BIN,
+    ["update", "--branch", branch, "--message", message, "--non-interactive", "--json"],
+    {
+      cwd: dir,
+      timeout: 120_000,
+      env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
+    },
+  );
+
+  let parsed: any = {};
+  try { parsed = JSON.parse(stdout.trim()); } catch { /* ignore */ }
+  const update = Array.isArray(parsed) ? parsed[0] : parsed;
+
+  return {
+    updateId:  update?.id ?? update?.updateId ?? `local-${Date.now()}`,
+    branch:    update?.branchName ?? branch,
+    message:   update?.message ?? message,
+    platform:  update?.platform ?? "android,ios",
+    createdAt: update?.createdAt ?? new Date().toISOString(),
+  };
 }
 
 /** List EAS branches for a project slug */
