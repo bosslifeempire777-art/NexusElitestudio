@@ -1,0 +1,1 @@
+Trigger clean pnpm install after lockfile deletion
