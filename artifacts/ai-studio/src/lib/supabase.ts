@@ -95,7 +95,7 @@ export function onAuthStateChanged(
   callback: (user: any | null) => void
 ): { unsubscribe: () => void } | null {
   if (!supabase) return null;
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+  const { data } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
     callback(session?.user ?? null);
   });
   return data?.subscription || null;
