@@ -1,1 +1,2 @@
 - [Mobile Build Pipeline](mobile-build-pipeline.md) — EAS Build integration: Expo account Nexuselitestudio, GitHub bosslifeempire777-art, callLLM must be exported from openrouter.ts
+- [OpenRouter model ID audit](openrouter-model-ids.md) — several "next-gen" model IDs in the swarm config were fictional; always verify against live /api/v1/models before adding.
