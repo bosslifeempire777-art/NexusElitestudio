@@ -1362,7 +1362,9 @@ router.delete("/:id/characters/:characterId", requireAuth, async (req, res) => {
 
 // ── Build History ─────────────────────────────────────────────────────────────
 
-/** List up to 20 most recent mobile builds for a project */
+/** List up to 20 most recent mobile builds for a project.
+ *  Any rows still in-queue or in-progress are reconciled against EAS before
+ *  the response is returned so the History tab never shows permanently stale statuses. */
 router.get("/:id/mobile-builds", requireAuth, async (req, res) => {
   const userId  = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
@@ -1376,6 +1378,36 @@ router.get("/:id/mobile-builds", requireAuth, async (req, res) => {
     .where(eq(mobileBuildTable.projectId, project.id))
     .orderBy(sql`created_at DESC`)
     .limit(20);
+
+  // Reconcile any builds that are still in-flight against EAS live state.
+  const inFlight = builds.filter(b =>
+    (b.status === "in-queue" || b.status === "in-progress") && b.easBuildId
+  );
+  if (inFlight.length > 0) {
+    await Promise.allSettled(inFlight.map(async (b) => {
+      try {
+        const live = await getMobileBuildStatus(b.easBuildId!);
+        const isDone = ["finished", "errored", "cancelled"].includes(live.status);
+        await db.update(mobileBuildTable)
+          .set({
+            status:       live.status,
+            artifactUrl:  live.artifactUrl ?? undefined,
+            logsUrl:      live.logsUrl     ?? undefined,
+            errorMessage: live.error       ?? undefined,
+            ...(isDone ? { finishedAt: new Date() } : {}),
+          })
+          .where(eq(mobileBuildTable.easBuildId, b.easBuildId!));
+        // Mutate the in-memory row so the response reflects the fresh status
+        b.status      = live.status as typeof b.status;
+        b.artifactUrl = live.artifactUrl ?? b.artifactUrl;
+        b.logsUrl     = live.logsUrl     ?? b.logsUrl;
+        if (isDone && !b.finishedAt) b.finishedAt = new Date();
+      } catch {
+        // Best-effort — if EAS is unreachable, return the last-known DB status
+      }
+    }));
+  }
+
   res.json(builds);
 });
 
