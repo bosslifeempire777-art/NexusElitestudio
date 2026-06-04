@@ -16,6 +16,14 @@ import {
   triggerRenderRedeploy,
   urlToHostname,
 } from "../lib/render.js";
+import {
+  isVercelConfigured,
+  pingVercel,
+  createVercelDeployment,
+  getVercelDeploymentStatus,
+  deleteVercelDeployment,
+  injectNexusApi,
+} from "../lib/vercel.js";
 
 function getPublicBaseUrl(): string {
   const domain =
@@ -80,6 +88,16 @@ router.get("/render/status", requireAuth, async (_req, res) => {
     return;
   }
   const ping = await pingRender();
+  res.json({ configured: true, ...ping });
+});
+
+// ── Vercel integration health ─────────────────────────────────────────────
+router.get("/vercel/status", requireAuth, async (_req, res) => {
+  if (!isVercelConfigured()) {
+    res.json({ configured: false, ok: false, message: "VERCEL_TOKEN not set" });
+    return;
+  }
+  const ping = await pingVercel();
   res.json({ configured: true, ...ping });
 });
 
@@ -188,14 +206,31 @@ router.post("/", requireAuth, async (req, res) => {
   }
 
   if (existing) {
-    // If this deployment lives on a dedicated Render service, the static
-    // HTML snapshot is taken at container start — so a Nexus redeploy
-    // means nothing until we trigger a Render redeploy. Do that here.
     const redeployLogs: string[] = [
       `[${new Date().toISOString()}] Re-deployed from latest project code`,
     ];
     let newStatus: string = "live";
-    if (existing.providerServiceId && isRenderConfigured()) {
+    let newProviderServiceId: string | null = existing.providerServiceId;
+    let newProviderLiveUrl: string | null = existing.providerLiveUrl;
+
+    if (existing.providerServiceId && existing.provider === "vercel" && isVercelConfigured()) {
+      // Vercel: push fresh HTML as a new deployment (no server-side containers to restart)
+      const nexusApiUrl = `${getPublicBaseUrl()}/api/projects/${project.id}/appdata`;
+      const htmlWithApi = injectNexusApi(project.generatedCode!, nexusApiUrl, project.id);
+      const r = await createVercelDeployment({ slug: existing.slug, html: htmlWithApi });
+      if (r.ok && r.deploymentId) {
+        newStatus = "provisioning";
+        newProviderServiceId = r.deploymentId;
+        newProviderLiveUrl = r.url ?? existing.providerLiveUrl;
+        redeployLogs.push(
+          `[${new Date().toISOString()}] 🔁 Re-deployed to Vercel (${r.deploymentId})`,
+        );
+      } else {
+        redeployLogs.push(
+          `[${new Date().toISOString()}] ⚠ Vercel redeploy failed: ${r.error}`,
+        );
+      }
+    } else if (existing.providerServiceId && existing.provider === "render" && isRenderConfigured()) {
       const r = await triggerRenderRedeploy(existing.providerServiceId);
       if (r.ok) {
         newStatus = "provisioning";
@@ -204,10 +239,11 @@ router.post("/", requireAuth, async (req, res) => {
         );
       } else {
         redeployLogs.push(
-          `[${new Date().toISOString()}] ⚠ Render redeploy failed: ${r.error}. The dedicated service may serve stale content until you click Sync or retry.`,
+          `[${new Date().toISOString()}] ⚠ Render redeploy failed: ${r.error}`,
         );
       }
     }
+
     const [updated] = await db
       .update(deploymentsTable)
       .set({
@@ -215,6 +251,8 @@ router.post("/", requireAuth, async (req, res) => {
         errorMessage: null,
         lastDeployedAt: new Date(),
         updatedAt: new Date(),
+        providerServiceId: newProviderServiceId,
+        providerLiveUrl: newProviderLiveUrl,
         buildLogs: [
           ...(Array.isArray(existing.buildLogs) ? (existing.buildLogs as string[]) : []),
           ...redeployLogs,
@@ -279,17 +317,20 @@ router.delete("/:id", requireAuth, async (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  // Best-effort cleanup of any associated Render service so we don't leave
-  // orphaned billable resources behind.
-  if (dep.providerServiceId && isRenderConfigured()) {
-    await deleteRenderService(dep.providerServiceId).catch(() => undefined);
+  // Best-effort cleanup of the dedicated hosting provider to avoid orphaned resources.
+  if (dep.providerServiceId) {
+    if (dep.provider === "vercel" && isVercelConfigured()) {
+      await deleteVercelDeployment(dep.providerServiceId).catch(() => undefined);
+    } else if (dep.provider === "render" && isRenderConfigured()) {
+      await deleteRenderService(dep.providerServiceId).catch(() => undefined);
+    }
   }
   await db.delete(customDomainsTable).where(eq(customDomainsTable.deploymentId, dep.id));
   await db.delete(deploymentsTable).where(eq(deploymentsTable.id, dep.id));
   res.status(204).send();
 });
 
-// ── Provision dedicated Render hosting for a deployment ───────────────────
+// ── Provision dedicated Vercel hosting for a deployment ───────────────────
 router.post("/:id/provision", requireAuth, async (req, res) => {
   const userId = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
@@ -307,8 +348,8 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
     return;
   }
 
-  if (!isRenderConfigured()) {
-    res.status(503).json({ error: "not_configured", message: "Render hosting is not configured on this server." });
+  if (!isVercelConfigured()) {
+    res.status(503).json({ error: "not_configured", message: "Vercel hosting is not configured on this server. Set the VERCEL_TOKEN secret." });
     return;
   }
 
@@ -331,56 +372,46 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
     return;
   }
 
-  const proxyTarget  = `${getPublicBaseUrl()}/api/projects/${dep.projectId}/preview`;
-  const serverTarget = `${getPublicBaseUrl()}/api/projects/${dep.projectId}/server`;
-  const result = await createRenderService({
-    name: `nexus-${dep.slug}`.slice(0, 60),
-    proxyTarget,
-    serverTarget,
+  // Fetch the project to get its generated HTML
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, dep.projectId),
   });
-  if (!result.ok || !result.serviceId) {
-    res.status(502).json({ error: "render_failed", message: result.error || "Failed to create Render service" });
+  if (!project?.generatedCode) {
+    res.status(400).json({ error: "no_code", message: "Project has no generated code to deploy to Vercel." });
     return;
   }
 
-  // Backfill: register any pre-existing custom domains with the new
-  // Render service so SSL is handled correctly. Best-effort — failures
-  // are recorded in build logs but don't abort provisioning.
-  const existingDomains = await db
-    .select()
-    .from(customDomainsTable)
-    .where(eq(customDomainsTable.deploymentId, dep.id));
-  const backfillLogs: string[] = [];
-  for (const cd of existingDomains) {
-    const r = await addCustomDomainToService(result.serviceId, cd.domain);
-    if (r.ok) {
-      const target = r.verificationTarget ?? urlToHostname(result.serviceUrl ?? null);
-      if (target) {
-        await db
-          .update(customDomainsTable)
-          .set({ verificationTarget: target, status: "pending", verifiedAt: null })
-          .where(eq(customDomainsTable.id, cd.id));
-      }
-      backfillLogs.push(`[${new Date().toISOString()}] ↳ Registered existing domain ${cd.domain} on Render`);
-    } else {
-      backfillLogs.push(`[${new Date().toISOString()}] ⚠ Failed to register ${cd.domain} on Render: ${r.error}`);
-    }
+  // Inject the correct absolute NEXUS_API URL into the HTML before uploading.
+  // This ensures buttons in the Vercel-hosted app call back to the NexusElite
+  // platform API (CORS wildcard allows cross-origin fetches).
+  const nexusApiUrl = `${getPublicBaseUrl()}/api/projects/${project.id}/appdata`;
+  const htmlWithApi = injectNexusApi(project.generatedCode, nexusApiUrl, project.id);
+
+  const result = await createVercelDeployment({ slug: dep.slug, html: htmlWithApi });
+  if (!result.ok || !result.deploymentId) {
+    res.status(502).json({ error: "vercel_failed", message: result.error || "Failed to create Vercel deployment" });
+    return;
   }
+
+  // Vercel static deployments are usually live in seconds — do an immediate status check
+  const statusCheck = await getVercelDeploymentStatus(result.deploymentId);
+  const initialStatus = statusCheck.readyState === "READY" ? "live" : "provisioning";
+  const liveUrl = statusCheck.url || result.url;
 
   const now = new Date();
   const [updated] = await db
     .update(deploymentsTable)
     .set({
-      provider: "render",
-      providerServiceId: result.serviceId,
-      providerLiveUrl: result.serviceUrl ?? null,
-      status: "provisioning",
+      provider: "vercel",
+      providerServiceId: result.deploymentId,
+      providerLiveUrl: liveUrl ?? null,
+      status: initialStatus,
       updatedAt: now,
       buildLogs: [
         ...(Array.isArray(dep.buildLogs) ? (dep.buildLogs as string[]) : []),
-        `[${now.toISOString()}] 🛠  Provisioning dedicated Render service (${result.serviceId})`,
-        `[${now.toISOString()}] ↳ Source: ${proxyTarget}`,
-        ...backfillLogs,
+        `[${now.toISOString()}] 🛠  Provisioning dedicated Vercel deployment (${result.deploymentId})`,
+        `[${now.toISOString()}] ↳ Vercel URL: ${liveUrl ?? "pending…"}`,
+        `[${now.toISOString()}] ↳ NEXUS_API wired to: ${nexusApiUrl}`,
       ],
     })
     .where(eq(deploymentsTable.id, dep.id))
@@ -393,7 +424,7 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
   res.status(202).json(deploymentResponse(updated!, domains));
 });
 
-// ── Sync deployment status from Render ────────────────────────────────────
+// ── Sync deployment status from provider (Vercel or Render) ──────────────
 router.post("/:id/sync", requireAuth, async (req, res) => {
   const userId = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
@@ -406,41 +437,82 @@ router.post("/:id/sync", requireAuth, async (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  if (!dep.providerServiceId || !isRenderConfigured()) {
-    res.status(400).json({ error: "no_provider", message: "Deployment has no dedicated Render service to sync." });
+  if (!dep.providerServiceId) {
+    res.status(400).json({ error: "no_provider", message: "Deployment has no dedicated hosting to sync." });
     return;
   }
 
-  const status = await getRenderServiceStatus(dep.providerServiceId);
-  if (!status.ok) {
-    res.status(502).json({ error: "render_failed", message: status.error });
-    return;
-  }
-
-  // Map Render deploy status → our deployment status
   let newStatus = dep.status;
   let errorMessage: string | null = dep.errorMessage;
-  switch (status.state) {
-    case "live":
-      newStatus = "live";
-      errorMessage = null;
-      break;
-    case "build_failed":
-    case "update_failed":
-    case "canceled":
-    case "deactivated":
-      newStatus = "failed";
-      errorMessage = `Render reported state: ${status.state}`;
-      break;
-    case "created":
-    case "build_in_progress":
-    case "update_in_progress":
-    case "pre_deploy_in_progress":
-      newStatus = "provisioning";
-      break;
-    default:
-      // unknown state: leave status alone
-      break;
+  let providerLiveUrl: string | null = dep.providerLiveUrl;
+  let statusLabel = "unknown";
+
+  if (dep.provider === "vercel") {
+    if (!isVercelConfigured()) {
+      res.status(503).json({ error: "not_configured", message: "VERCEL_TOKEN not set on this server." });
+      return;
+    }
+    const status = await getVercelDeploymentStatus(dep.providerServiceId);
+    if (!status.ok) {
+      res.status(502).json({ error: "vercel_failed", message: status.error });
+      return;
+    }
+    statusLabel = status.readyState ?? "unknown";
+    if (status.url) providerLiveUrl = status.url;
+    switch (status.readyState) {
+      case "READY":
+        newStatus = "live";
+        errorMessage = null;
+        break;
+      case "ERROR":
+      case "CANCELED":
+        newStatus = "failed";
+        errorMessage = `Vercel reported: ${status.readyState}`;
+        break;
+      case "INITIALIZING":
+      case "BUILDING":
+      case "QUEUED":
+        newStatus = "provisioning";
+        break;
+      default:
+        break;
+    }
+  } else if (dep.provider === "render") {
+    if (!isRenderConfigured()) {
+      res.status(503).json({ error: "not_configured", message: "RENDER_API_KEY not set on this server." });
+      return;
+    }
+    const status = await getRenderServiceStatus(dep.providerServiceId);
+    if (!status.ok) {
+      res.status(502).json({ error: "render_failed", message: status.error });
+      return;
+    }
+    statusLabel = status.state ?? "unknown";
+    if (status.serviceUrl) providerLiveUrl = status.serviceUrl;
+    switch (status.state) {
+      case "live":
+        newStatus = "live";
+        errorMessage = null;
+        break;
+      case "build_failed":
+      case "update_failed":
+      case "canceled":
+      case "deactivated":
+        newStatus = "failed";
+        errorMessage = `Render reported state: ${status.state}`;
+        break;
+      case "created":
+      case "build_in_progress":
+      case "update_in_progress":
+      case "pre_deploy_in_progress":
+        newStatus = "provisioning";
+        break;
+      default:
+        break;
+    }
+  } else {
+    res.status(400).json({ error: "unknown_provider", message: `Unknown provider: ${dep.provider}` });
+    return;
   }
 
   const now = new Date();
@@ -448,13 +520,13 @@ router.post("/:id/sync", requireAuth, async (req, res) => {
     .update(deploymentsTable)
     .set({
       status: newStatus,
-      providerLiveUrl: status.serviceUrl ?? dep.providerLiveUrl,
+      providerLiveUrl,
       errorMessage,
       lastDeployedAt: newStatus === "live" ? now : dep.lastDeployedAt,
       updatedAt: now,
       buildLogs: [
         ...(Array.isArray(dep.buildLogs) ? (dep.buildLogs as string[]) : []),
-        `[${now.toISOString()}] 🔄 Render status: ${status.state ?? "unknown"}`,
+        `[${now.toISOString()}] 🔄 ${dep.provider} status: ${statusLabel}`,
       ],
     })
     .where(eq(deploymentsTable.id, dep.id))
@@ -511,12 +583,10 @@ router.post("/:id/domains", requireAuth, async (req, res) => {
     return;
   }
 
-  // If the deployment is on dedicated Render hosting, the domain MUST be
-  // registered with Render so they handle SSL. Fail loudly if Render
-  // rejects it — silently falling back would leave the domain serving
-  // without SSL on a service Render isn't aware of.
+  // For Render-hosted deployments, register the domain with Render for SSL.
+  // For Vercel-hosted or shared-edge deployments, CNAME → branded subdomain.
   let verificationTarget: string | null = null;
-  if (dep.providerServiceId) {
+  if (dep.providerServiceId && dep.provider === "render") {
     if (!isRenderConfigured()) {
       res.status(503).json({
         error: "render_not_configured",
@@ -537,7 +607,7 @@ router.post("/:id/domains", requireAuth, async (req, res) => {
       urlToHostname(dep.providerLiveUrl) ??
       `${dep.slug}.${BRAND_DOMAIN}`;
   } else {
-    // Shared edge: instruct user to CNAME → branded subdomain
+    // Shared edge or Vercel: CNAME → branded subdomain (Nexus edge handles routing)
     verificationTarget = `${dep.slug}.${BRAND_DOMAIN}`;
   }
 
@@ -637,7 +707,7 @@ router.delete("/:id/domains/:domainId", requireAuth, async (req, res) => {
   const parent = await db.query.deploymentsTable.findFirst({
     where: eq(deploymentsTable.id, cd.deploymentId),
   });
-  if (parent?.providerServiceId && isRenderConfigured()) {
+  if (parent?.providerServiceId && parent.provider === "render" && isRenderConfigured()) {
     await removeCustomDomainFromService(parent.providerServiceId, cd.domain).catch(() => undefined);
   }
   await db.delete(customDomainsTable).where(eq(customDomainsTable.id, cd.id));

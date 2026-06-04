@@ -183,7 +183,7 @@ export default function DeploymentsPage() {
   }
 
   async function handleProvision(id: string) {
-    if (!confirm("Provision a dedicated Render web service for this deployment? This isolates traffic from the main server (Pro/Elite plan).")) return;
+    if (!confirm("Provision a dedicated Vercel deployment for this project? The app will be hosted on Vercel with your NEXUS_API wired in (Pro/Elite plan).")) return;
     setProvisioning(id);
     setError(null);
     try {
@@ -327,7 +327,9 @@ export default function DeploymentsPage() {
                       {d.providerServiceId && (
                         <div className="mt-1 flex items-center gap-2 text-xs text-violet-300">
                           <Server className="w-3 h-3" />
-                          <span className="font-mono">Dedicated Render service</span>
+                          <span className="font-mono">
+                            Dedicated {d.provider === "vercel" ? "Vercel" : "Render"} deployment
+                          </span>
                           {d.providerLiveUrl && (
                             <a
                               href={d.providerLiveUrl}
@@ -378,7 +380,7 @@ export default function DeploymentsPage() {
                           onClick={() => handleSync(d.id)}
                           disabled={syncing === d.id}
                           className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded hover:bg-violet-500/10 flex items-center gap-1 disabled:opacity-40"
-                          title="Refresh status from Render"
+                          title="Refresh status from provider"
                         >
                           {syncing === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                           Sync
@@ -388,7 +390,7 @@ export default function DeploymentsPage() {
                           onClick={() => handleProvision(d.id)}
                           disabled={provisioning === d.id}
                           className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded hover:bg-violet-500/10 flex items-center gap-1 disabled:opacity-40"
-                          title="Move this deployment off the shared edge onto its own Render web service"
+                          title="Deploy to Vercel — your app gets its own vercel.app URL with NEXUS_API wired in"
                         >
                           {provisioning === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Server className="w-3 h-3" />}
                           Provision Dedicated

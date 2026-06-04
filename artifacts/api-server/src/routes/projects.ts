@@ -352,10 +352,11 @@ router.get("/:id/preview", async (req, res) => {
   if (project.generatedCode) {
     try {
       // Build the platform backend URL for this project (NEXUS_API).
-      // Prefer x-forwarded headers (set by Render / Cloudflare in production).
-      const fwdProto = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
-      const fwdHost  = (req.get("x-forwarded-host") || req.get("host") || "") as string;
-      const nexusApiUrl = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+      // getBaseUrl() uses REPLIT_DOMAINS / REPLIT_DEV_DOMAIN so the URL is
+      // always reachable from the browser — x-forwarded-host is NOT used because
+      // Replit's proxy does not forward it, which caused localhost:8080 fallback
+      // and broke all buttons in live previews.
+      const nexusApiUrl = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
 
       // Always inject NEXUS_API — it's just a URL (not a secret), scoped by
       // project_id. Every generated app needs this to make buttons work.
@@ -1200,10 +1201,7 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
   const platform: "android" | "ios" | "all" =
     rawPlatform === "ios" ? "ios" : rawPlatform === "all" ? "all" : "android";
 
-  // Build the NEXUS_API base URL
-  const fwdProto   = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
-  const fwdHost    = (req.get("x-forwarded-host")  || req.get("host") || "") as string;
-  const nexusApiBase = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+  const nexusApiBase = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
 
   try {
     // Generate Expo project files via AI
@@ -1315,9 +1313,7 @@ router.get("/:id/mobile-download", requireAuth, async (req, res) => {
 
   if (!project) { res.status(404).json({ error: "not_found" }); return; }
 
-  const fwdProto   = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
-  const fwdHost    = (req.get("x-forwarded-host")  || req.get("host") || "") as string;
-  const nexusApiBase = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+  const nexusApiBase = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
 
   try {
     const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
@@ -1499,9 +1495,7 @@ router.post("/:id/ota-updates", requireAuth, async (req, res) => {
 
   try {
     // Generate the project's actual Expo files so the OTA update bundles real app code
-    const fwdProto     = (req.get("x-forwarded-proto") || req.protocol || "https") as string;
-    const fwdHost      = (req.get("x-forwarded-host")  || req.get("host") || "") as string;
-    const nexusApiBase = `${fwdProto}://${fwdHost}/api/projects/${project.id}/appdata`;
+    const nexusApiBase = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
     const projectFiles = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
 
     const result = await publishOtaUpdate({
