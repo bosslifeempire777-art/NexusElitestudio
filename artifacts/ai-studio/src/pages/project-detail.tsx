@@ -17,7 +17,7 @@ import {
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
   Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
   ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity, ArrowRight,
-  Plus, Users,
+  Plus, Users, Key, Eye, EyeOff,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { getToken, apiFetch } from "@/lib/auth";
@@ -1368,6 +1368,7 @@ export default function ProjectDetail() {
           {activeTab === 'agent' && (
             <div className="flex-1 flex flex-col min-h-0">
               <ProjectMemoryPanel memory={(project as any).memory ?? null} />
+              <AppSecretsPanel projectId={project.id} />
               <AgentTerminal
                 projectId={project.id}
                 projectName={project.name}
@@ -2821,6 +2822,120 @@ function getLogLevelColor(level: string) {
     case 'success': return 'hsl(var(--chart-4))';
     default:        return 'hsl(var(--primary))';
   }
+}
+
+// ── App Secrets Panel ─────────────────────────────────────────────────────────
+function AppSecretsPanel({ projectId }: { projectId: string }) {
+  const [open, setOpen]           = useState(false);
+  const [secrets, setSecrets]     = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading]     = useState(false);
+  const [newName, setNewName]     = useState("");
+  const [newValue, setNewValue]   = useState("");
+  const [showVal, setShowVal]     = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch<{ id: string; name: string }[]>(`/api/projects/${projectId}/secrets`);
+      setSecrets(data);
+    } catch { /* ignore */ } finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const handleAdd = async () => {
+    if (!newName.trim() || !newValue.trim()) return;
+    setSaving(true); setError(null);
+    try {
+      await apiFetch(`/api/projects/${projectId}/secrets`, { method: "POST", body: JSON.stringify({ name: newName, value: newValue }) });
+      setNewName(""); setNewValue(""); setShowVal(false);
+      await load();
+    } catch (e: any) { setError(e?.message ?? "Failed to save"); } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (name: string) => {
+    try {
+      await apiFetch(`/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
+      setSecrets(s => s.filter(x => x.name !== name));
+    } catch (e: any) { setError(e?.message ?? "Failed to delete"); }
+  };
+
+  return (
+    <div className="border-b border-border/30 bg-background/60 shrink-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-mono text-cyan-400 uppercase tracking-wider hover:bg-background/80 transition"
+      >
+        <Key className="w-3 h-3" />
+        <span>App Secrets</span>
+        <span className="normal-case tracking-normal text-muted-foreground ml-1">
+          {secrets.length > 0 ? `${secrets.length} key${secrets.length !== 1 ? "s" : ""}` : "store API keys for this app"}
+        </span>
+        <span className="ml-auto">{open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}</span>
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-2 text-xs">
+          <p className="text-muted-foreground font-mono text-[10px] pb-1">
+            Injected as <code className="text-yellow-400">window.APP_SECRETS.NAME</code> in your app preview. Only you see these values.
+          </p>
+
+          {loading && <div className="text-muted-foreground font-mono">Loading…</div>}
+
+          {secrets.length > 0 && (
+            <div className="space-y-1">
+              {secrets.map(s => (
+                <div key={s.id} className="flex items-center justify-between bg-background/40 border border-border/40 rounded px-2 py-1 font-mono">
+                  <span className="text-cyan-300 text-[11px]">{s.name}</span>
+                  <span className="text-muted-foreground text-[10px] mx-2">••••••••</span>
+                  <button onClick={() => handleDelete(s.name)} className="text-red-400 hover:text-red-300 ml-auto" title="Delete">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add new secret form */}
+          <div className="flex gap-1.5 flex-wrap pt-1">
+            <input
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              placeholder="KEY_NAME"
+              className="flex-1 min-w-[100px] bg-background/60 border border-border/50 rounded px-2 py-1 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-cyan-400/50"
+            />
+            <div className="relative flex-1 min-w-[140px]">
+              <input
+                type={showVal ? "text" : "password"}
+                value={newValue}
+                onChange={e => setNewValue(e.target.value)}
+                placeholder="secret value"
+                className="w-full bg-background/60 border border-border/50 rounded px-2 py-1 pr-7 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-cyan-400/50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowVal(v => !v)}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showVal ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              </button>
+            </div>
+            <button
+              onClick={handleAdd}
+              disabled={saving || !newName.trim() || !newValue.trim()}
+              className="flex items-center gap-1 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 rounded px-2 py-1 text-[11px] font-mono disabled:opacity-40 transition"
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              Add
+            </button>
+          </div>
+          {error && <p className="text-red-400 font-mono text-[10px]">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const MOCK_CODE = `import React from 'react';

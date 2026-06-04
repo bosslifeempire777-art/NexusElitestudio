@@ -438,6 +438,30 @@ export async function ensureMainSchema(): Promise<void> {
         ON eas_webhooks (project_id)
     `);
 
+    // ----------------------------------------------------------------
+    // project_app_secrets — per-app key/value secrets for generated apps.
+    // Injected as window.APP_SECRETS in the preview (owner-only).
+    // Separate from user_secrets (which are the platform owner's global keys).
+    // ----------------------------------------------------------------
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS project_app_secrets (
+        id         TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS project_app_secrets_uq
+        ON project_app_secrets (project_id, name)
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS project_app_secrets_project_idx
+        ON project_app_secrets (project_id)
+    `);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);

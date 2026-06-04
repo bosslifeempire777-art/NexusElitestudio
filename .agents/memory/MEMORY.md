@@ -2,3 +2,6 @@
 - [OpenRouter model ID audit](openrouter-model-ids.md) — several "next-gen" model IDs in the swarm config were fictional; always verify against live /api/v1/models before adding.
 - [NEXUS_API button fix](nexus-api-url.md) — `x-forwarded-host` not set by Replit proxy; always use `getBaseUrl()` (REPLIT_DOMAINS) not fwdHost fallback
 - [Vercel deployment integration](vercel-deployment.md) — static HTML deploy via /v13/deployments; inject NEXUS_API before upload; CORS wildcard allows callbacks to platform
+- [App-level auth routes](app-auth-routes.md) — real bcrypt+JWT auth for generated apps at /api/projects/:id/auth/*; window.NEXUS_AUTH injected in preview; users stored in _users collection
+- [Per-app secrets](per-app-secrets.md) — project_app_secrets table; window.APP_SECRETS injected owner-only in preview; AppSecretsPanel UI in agent tab of project-detail
+- [AI prompt auth pattern](ai-prompt-auth.md) — old btoa/localStorage auth replaced in 3 prompt locations; now uses fetch(NEXUS_AUTH/register|login|me) with real JWTs

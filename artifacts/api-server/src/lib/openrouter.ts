@@ -644,10 +644,14 @@ NEXUS PLATFORM BACKEND — use window.NEXUS_API for ALL data (injected at runtim
   async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); }
   async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }
 
-AUTH (build real multi-user auth if the project needs it):
-  Register: createRecord('users',{username,email,passwordHash:btoa(unescape(encodeURIComponent(pw))),role:'user',createdAt:Date.now()})
-  Login: listRecords('users') → find user → verify → store in localStorage._sess as btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30}))
-  Check: try{const s=JSON.parse(atob(localStorage.getItem('_sess')||''));if(s.exp>Date.now())return s;}catch{return null;}
+AUTH (server-side, real bcrypt passwords, cross-device sessions — window.NEXUS_AUTH is pre-injected):
+  Register: const r=await fetch(window.NEXUS_AUTH+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})}).then(r=>r.json()); if(r.token){localStorage.setItem('_nexus_token',r.token);}
+  Login:    const r=await fetch(window.NEXUS_AUTH+'/login',   {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})}).then(r=>r.json());           if(r.token){localStorage.setItem('_nexus_token',r.token);}
+  Me:       const me=await fetch(window.NEXUS_AUTH+'/me',{headers:{Authorization:'Bearer '+localStorage.getItem('_nexus_token')}}).then(r=>r.ok?r.json():null);
+  Logout:   localStorage.removeItem('_nexus_token')
+  Errors: register returns 409 for duplicate, login returns 401 for bad credentials — always check r.error
+  Session restore on load: call /me on page load; if null show login screen, if valid restore user state
+  Protected fetch: add {headers:{Authorization:'Bearer '+localStorage.getItem('_nexus_token')}} to any NEXUS_API call needing a logged-in user
 
 DESIGN: dark cyberpunk aesthetic (#0f0f1a background, #00d4ff accent), smooth animations, polished UI.
 Every button does something. Every form works. Handle loading, empty, and error states.`;
@@ -909,7 +913,12 @@ CRITICAL RULES — follow exactly or the game will not work:
       `    async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }\n` +
       `    async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json()); }\n` +
       `    async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }\n` +
-      `- AUTH: register/login via the 'users' collection. Store session in localStorage._sess = btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30}))\n` +
+      `- AUTH (server-side, real bcrypt+JWT — window.NEXUS_AUTH is pre-injected):\n` +
+      `    Register: fetch(window.NEXUS_AUTH+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})}).then(r=>r.json()).then(d=>{if(d.token)localStorage.setItem('_nexus_token',d.token);})\n` +
+      `    Login:    fetch(window.NEXUS_AUTH+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})}).then(r=>r.json()).then(d=>{if(d.token)localStorage.setItem('_nexus_token',d.token);})\n` +
+      `    Me:       fetch(window.NEXUS_AUTH+'/me',{headers:{Authorization:'Bearer '+localStorage.getItem('_nexus_token')}}).then(r=>r.ok?r.json():null)\n` +
+      `    Logout:   localStorage.removeItem('_nexus_token')\n` +
+      `    Always check /me on page load to restore session; show login screen if null\n` +
       `- CRITICAL: EVERY button click handler must be async and wrapped in try/catch with visible error feedback\n` +
       `- CRITICAL: Never use onclick="" attributes — always addEventListener so errors surface correctly\n` +
       `- Build every feature end-to-end with no dead ends\n` +
@@ -949,7 +958,12 @@ NEXUS BACKEND (window.NEXUS_API is ALWAYS pre-injected — use these exact patte
   async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
   async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json()); }
   async function deleteRecord(col,id)   { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'}); }
-AUTH: Register/login using the users collection. Store session in localStorage._sess as btoa(JSON.stringify({userId,username,role,exp:Date.now()+86400000*30})).
+AUTH (server-side, real bcrypt+JWT — window.NEXUS_AUTH is pre-injected):
+  Register: fetch(window.NEXUS_AUTH+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})}).then(r=>r.json()).then(d=>{if(d.token)localStorage.setItem('_nexus_token',d.token);})
+  Login:    fetch(window.NEXUS_AUTH+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})}).then(r=>r.json()).then(d=>{if(d.token)localStorage.setItem('_nexus_token',d.token);})
+  Me:       fetch(window.NEXUS_AUTH+'/me',{headers:{Authorization:'Bearer '+localStorage.getItem('_nexus_token')}}).then(r=>r.ok?r.json():null)
+  Logout:   localStorage.removeItem('_nexus_token')
+  Always call /me on page load to restore session; show login screen if null.
 BUTTON PATTERN (always use this structure — never inline onclick):
   document.getElementById('myBtn').addEventListener('click', async () => {
     try { /* do work */ } catch(e) { alert('Error: '+e.message); }

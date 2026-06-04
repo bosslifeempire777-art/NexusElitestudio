@@ -11,6 +11,8 @@ import { getPlanLimits } from "./plans.js";
 import { getUserSecretNames, getUserSecretsMap } from "./secrets.js";
 import { verifyToken } from "../middleware/auth.js";
 import { injectDiagnosticsWidget } from "../lib/diagnostics-widget.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import AdmZip from "adm-zip";
 import { triggerMobileBuild, getMobileBuildStatus } from "../lib/eas.js";
 import { generateMobileCode } from "../lib/generateMobileCode.js";
@@ -36,6 +38,36 @@ async function getProjectCharacters(projectId: string): Promise<CharacterContext
     tags:      r.tags,
     notes:     r.notes,
   }));
+}
+
+/** Get all app-level secrets for a project (injected as window.APP_SECRETS, owner-only). */
+async function getProjectSecretsMap(projectId: string): Promise<Record<string, string>> {
+  try {
+    const result = await db.execute(sql`
+      SELECT name, value FROM project_app_secrets WHERE project_id = ${projectId}
+    `);
+    const rows: any[] = Array.isArray(result) ? result : ((result as any).rows ?? []);
+    return Object.fromEntries(rows.map((r: any) => [r.name, r.value]));
+  } catch {
+    return {};
+  }
+}
+
+function getAppJwtSecret(): string {
+  const s = process.env["JWT_SECRET"];
+  return s ? `${s}:app` : "nexuselite-app-dev-fallback";
+}
+
+function signAppToken(payload: { sub: string; projectId: string; username: string; email: string; role: string }): string {
+  return jwt.sign(payload, getAppJwtSecret(), { expiresIn: "7d" });
+}
+
+function verifyAppToken(token: string): { sub: string; projectId: string; username: string; email: string; role: string } | null {
+  try {
+    return jwt.verify(token, getAppJwtSecret()) as any;
+  } catch {
+    return null;
+  }
 }
 
 function inferFramework(type: string, prompt: string): string {
@@ -362,24 +394,29 @@ router.get("/:id/preview", async (req, res) => {
       // project_id. Every generated app needs this to make buttons work.
       // USER_SECRETS are only injected for verified owners (they contain real keys).
       let secretsJson = "{}";
+      let appSecretsJson = "{}";
       if (isOwnerRequest) {
         const secrets = await getUserSecretsMap(project.userId);
         // SECURITY: JSON.stringify does NOT escape `</script>`, allowing a
         // crafted secret value to break out of the inline script. Replace
         // every `<` with its safe \u003c escape (and `>` for symmetry).
-        secretsJson = JSON.stringify(secrets)
-          .replace(/</g, "\\u003c")
-          .replace(/>/g, "\\u003e")
-          .replace(/&/g, "\\u0026")
-          .replace(/\u2028/g, "\\u2028")
-          .replace(/\u2029/g, "\\u2029");
+        const safeEscape = (s: string) => s
+          .replace(/</g, "\\u003c").replace(/>/g, "\\u003e")
+          .replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+        secretsJson    = safeEscape(JSON.stringify(secrets));
+        const appSecrets = await getProjectSecretsMap(project.id);
+        appSecretsJson = safeEscape(JSON.stringify(appSecrets));
       }
+
+      const nexusAuthUrl = `${getBaseUrl()}/api/projects/${project.id}/auth`;
 
       const injection =
         `<script>` +
         `window.NEXUS_API = "${nexusApiUrl}";` +
+        `window.NEXUS_AUTH = "${nexusAuthUrl}";` +
         `window.NEXUS_PROJECT_ID = "${project.id}";` +
         `window.USER_SECRETS = ${secretsJson};` +
+        `window.APP_SECRETS = ${appSecretsJson};` +
         // Null-guard shim: if any generated code calls window.NEXUS_API before
         // the script runs, or NEXUS_API is somehow still undefined, surface a
         // clear console error instead of a silent TypeError on every button click.
@@ -562,11 +599,115 @@ router.get("/:id/download", requireAuth, async (req, res) => {
   res.send(buffer);
 });
 
+// ── App-level authentication for generated apps ───────────────────────────────
+// Generated apps call window.NEXUS_AUTH + /register, /login, /me
+// Real bcrypt passwords, real JWTs — NOT the fake btoa localStorage pattern.
+// Platform auth (NexusElite login) is entirely separate.
+
+function appAuthCors(res: { setHeader: (k: string, v: string) => void }): void {
+  res.setHeader("Access-Control-Allow-Origin",  "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+router.options("/:id/auth/:action", (_req, res) => { appAuthCors(res); res.sendStatus(200); });
+
+// POST /api/projects/:id/auth/register
+router.post("/:id/auth/register", async (req, res) => {
+  const projectId = String(req.params.id);
+  appAuthCors(res as any);
+  const { username, email, password } = req.body ?? {};
+  if (!password || (!username && !email)) {
+    res.status(400).json({ error: "username or email and password are required" });
+    return;
+  }
+  try {
+    if (username) {
+      const dup = await db.execute(sql`
+        SELECT doc_id FROM project_app_data
+        WHERE project_id = ${projectId} AND collection = '_users'
+          AND data->>'username' = ${String(username)} LIMIT 1
+      `);
+      const dupRows: any[] = Array.isArray(dup) ? dup : ((dup as any).rows ?? []);
+      if (dupRows.length > 0) { res.status(409).json({ error: "Username already taken" }); return; }
+    }
+    if (email) {
+      const dup = await db.execute(sql`
+        SELECT doc_id FROM project_app_data
+        WHERE project_id = ${projectId} AND collection = '_users'
+          AND data->>'email' = ${String(email)} LIMIT 1
+      `);
+      const dupRows: any[] = Array.isArray(dup) ? dup : ((dup as any).rows ?? []);
+      if (dupRows.length > 0) { res.status(409).json({ error: "Email already registered" }); return; }
+    }
+    const passwordHash = await bcrypt.hash(String(password), 10);
+    const docId = nanoid();
+    const userData = {
+      username: username ? String(username) : undefined,
+      email:    email    ? String(email)    : undefined,
+      passwordHash,
+      role:      "user",
+      createdAt: new Date().toISOString(),
+    };
+    await db.execute(sql`
+      INSERT INTO project_app_data (id, project_id, collection, doc_id, data)
+      VALUES (${nanoid()}, ${projectId}, '_users', ${docId}, ${JSON.stringify(userData)}::jsonb)
+    `);
+    const token = signAppToken({ sub: docId, projectId, username: username ?? email ?? "", email: email ?? "", role: "user" });
+    res.status(201).json({ token, user: { id: docId, username: username ?? null, email: email ?? null, role: "user" } });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Registration failed" });
+  }
+});
+
+// POST /api/projects/:id/auth/login
+router.post("/:id/auth/login", async (req, res) => {
+  const projectId = String(req.params.id);
+  appAuthCors(res as any);
+  const { username, email, password } = req.body ?? {};
+  const identifier = email ?? username;
+  if (!identifier || !password) {
+    res.status(400).json({ error: "email or username and password are required" });
+    return;
+  }
+  try {
+    const field = email ? "email" : "username";
+    const result = await db.execute(sql`
+      SELECT doc_id, data FROM project_app_data
+      WHERE project_id = ${projectId} AND collection = '_users'
+        AND data->>${field} = ${String(identifier)} LIMIT 1
+    `);
+    const rows: any[] = Array.isArray(result) ? result : ((result as any).rows ?? []);
+    if (rows.length === 0) { res.status(401).json({ error: "Invalid credentials" }); return; }
+    const row  = rows[0];
+    const data = typeof row.data === "object" ? row.data : JSON.parse(row.data as string);
+    const match = await bcrypt.compare(String(password), data.passwordHash ?? "");
+    if (!match) { res.status(401).json({ error: "Invalid credentials" }); return; }
+    const docId = String(row.doc_id);
+    const token = signAppToken({ sub: docId, projectId, username: data.username ?? "", email: data.email ?? "", role: data.role ?? "user" });
+    res.json({ token, user: { id: docId, username: data.username ?? null, email: data.email ?? null, role: data.role ?? "user" } });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Login failed" });
+  }
+});
+
+// GET /api/projects/:id/auth/me
+router.get("/:id/auth/me", (req, res) => {
+  const projectId = String(req.params.id);
+  appAuthCors(res as any);
+  const header = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+  if (!header) { res.status(401).json({ error: "No token provided" }); return; }
+  const payload = verifyAppToken(header);
+  if (!payload || payload.projectId !== projectId) {
+    res.status(401).json({ error: "Invalid or expired token" }); return;
+  }
+  res.json({ id: payload.sub, username: payload.username, email: payload.email, role: payload.role });
+});
+
 // ── NEXUS App Database — public REST API for generated apps ──────────────────
 // No auth required: project_id scopes the data; these are app-level records,
 // not user secrets. The platform stores them in real PostgreSQL (project_app_data).
-// Generated apps call these from window.NEXUS_API in the preview iframe, and
-// the deployed server.js provides the same contract locally on Render.
+// Collections starting with _ are reserved (auth uses _users internally).
 
 function appdataCors(res: { setHeader: (k: string, v: string) => void }): void {
   res.setHeader("Access-Control-Allow-Origin",  "*");
@@ -581,6 +722,10 @@ router.get("/:id/appdata/:collection", async (req, res) => {
   const projectId  = String(req.params.id);
   const collection = String(req.params.collection);
   (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  if (collection.startsWith("_")) {
+    res.status(403).json({ error: "reserved", message: "Collections starting with _ are reserved. Use /auth routes for user management." });
+    return;
+  }
   try {
     const result = await db.execute(sql`
       SELECT doc_id AS id, data, created_at, updated_at
@@ -607,6 +752,10 @@ router.post("/:id/appdata/:collection", async (req, res) => {
   const rowId      = nanoid();
   const data       = req.body && typeof req.body === "object" ? req.body : {};
   (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  if (collection.startsWith("_")) {
+    res.status(403).json({ error: "reserved", message: "Collections starting with _ are reserved. Use /auth routes for user management." });
+    return;
+  }
   try {
     await db.execute(sql`
       INSERT INTO project_app_data (id, project_id, collection, doc_id, data)
@@ -624,6 +773,10 @@ router.put("/:id/appdata/:collection/:docId", async (req, res) => {
   const docId      = String(req.params.docId);
   const data       = req.body && typeof req.body === "object" ? req.body : {};
   (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  if (collection.startsWith("_")) {
+    res.status(403).json({ error: "reserved", message: "Collections starting with _ are reserved. Use /auth routes for user management." });
+    return;
+  }
   try {
     await db.execute(sql`
       UPDATE project_app_data
@@ -641,6 +794,10 @@ router.delete("/:id/appdata/:collection/:docId", async (req, res) => {
   const collection = String(req.params.collection);
   const docId      = String(req.params.docId);
   (res as any).setHeader("Access-Control-Allow-Origin", "*");
+  if (collection.startsWith("_")) {
+    res.status(403).json({ error: "reserved", message: "Collections starting with _ are reserved. Use /auth routes for user management." });
+    return;
+  }
   try {
     await db.execute(sql`
       DELETE FROM project_app_data
@@ -650,6 +807,52 @@ router.delete("/:id/appdata/:collection/:docId", async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "Database error" });
   }
+});
+
+// ── Per-app secrets management (platform owner only) ─────────────────────────
+// These are per-project secrets (e.g. a Stripe key for "My Store App" only).
+// Injected as window.APP_SECRETS in the preview — owner-only, like USER_SECRETS.
+
+router.get("/:id/secrets", requireAuth, async (req, res) => {
+  const projectId = String(req.params.id);
+  const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+  if (project.userId !== req.auth!.userId && !req.auth!.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+  const result = await db.execute(sql`
+    SELECT id, name, created_at, updated_at FROM project_app_secrets
+    WHERE project_id = ${projectId} ORDER BY name
+  `);
+  const rows: any[] = Array.isArray(result) ? result : ((result as any).rows ?? []);
+  res.json(rows.map((r: any) => ({ id: r.id, name: r.name, createdAt: r.created_at, updatedAt: r.updated_at })));
+});
+
+router.post("/:id/secrets", requireAuth, async (req, res) => {
+  const projectId = String(req.params.id);
+  const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+  if (project.userId !== req.auth!.userId && !req.auth!.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+  const { name, value } = req.body ?? {};
+  if (!name || value === undefined || value === "") { res.status(400).json({ error: "name and value are required" }); return; }
+  const normName = String(name).trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64);
+  if (!normName) { res.status(400).json({ error: "Invalid secret name" }); return; }
+  const id = nanoid();
+  await db.execute(sql`
+    INSERT INTO project_app_secrets (id, project_id, name, value)
+    VALUES (${id}, ${projectId}, ${normName}, ${String(value)})
+    ON CONFLICT (project_id, name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+  res.status(201).json({ id, name: normName });
+});
+
+router.delete("/:id/secrets/:name", requireAuth, async (req, res) => {
+  const projectId = String(req.params.id);
+  const project = await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, projectId) });
+  if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+  if (project.userId !== req.auth!.userId && !req.auth!.isAdmin) { res.status(403).json({ error: "Forbidden" }); return; }
+  await db.execute(sql`
+    DELETE FROM project_app_secrets WHERE project_id = ${projectId} AND name = ${String(req.params.name)}
+  `);
+  res.status(204).send();
 });
 
 // Serve the generated Node.js server.js — downloaded by Render containers at boot
