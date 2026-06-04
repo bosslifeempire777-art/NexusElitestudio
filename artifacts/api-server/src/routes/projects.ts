@@ -55,7 +55,12 @@ async function getProjectSecretsMap(projectId: string): Promise<Record<string, s
 
 function getAppJwtSecret(): string {
   const s = process.env["JWT_SECRET"];
-  return s ? `${s}:app` : "nexuselite-app-dev-fallback";
+  if (s) return `${s}:app`;
+  if (process.env["NODE_ENV"] === "production") {
+    throw new Error("JWT_SECRET is required in production for app-level auth");
+  }
+  console.warn("[APP-AUTH] JWT_SECRET not set — using dev-only fallback. Set JWT_SECRET before deploying.");
+  return "nexuselite-app-dev-only-do-not-deploy-without-jwt-secret";
 }
 
 function signAppToken(payload: { sub: string; projectId: string; username: string; email: string; role: string }): string {

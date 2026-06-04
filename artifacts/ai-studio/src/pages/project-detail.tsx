@@ -2838,8 +2838,8 @@ function AppSecretsPanel({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiFetch<{ id: string; name: string }[]>(`/api/projects/${projectId}/secrets`);
-      setSecrets(data);
+      const res = await apiFetch(`/api/projects/${projectId}/secrets`);
+      if (res.ok) setSecrets(await res.json());
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [projectId]);
 
@@ -2849,7 +2849,8 @@ function AppSecretsPanel({ projectId }: { projectId: string }) {
     if (!newName.trim() || !newValue.trim()) return;
     setSaving(true); setError(null);
     try {
-      await apiFetch(`/api/projects/${projectId}/secrets`, { method: "POST", body: JSON.stringify({ name: newName, value: newValue }) });
+      const res = await apiFetch(`/api/projects/${projectId}/secrets`, { method: "POST", body: JSON.stringify({ name: newName, value: newValue }) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error((e as any).error ?? "Failed to save"); }
       setNewName(""); setNewValue(""); setShowVal(false);
       await load();
     } catch (e: any) { setError(e?.message ?? "Failed to save"); } finally { setSaving(false); }
@@ -2857,8 +2858,8 @@ function AppSecretsPanel({ projectId }: { projectId: string }) {
 
   const handleDelete = async (name: string) => {
     try {
-      await apiFetch(`/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
-      setSecrets(s => s.filter(x => x.name !== name));
+      const res = await apiFetch(`/api/projects/${projectId}/secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (res.ok || res.status === 204) setSecrets(s => s.filter(x => x.name !== name));
     } catch (e: any) { setError(e?.message ?? "Failed to delete"); }
   };
 
