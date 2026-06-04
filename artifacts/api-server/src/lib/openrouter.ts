@@ -638,7 +638,7 @@ CRITICAL RULES:
 5. System fonts ONLY: -apple-system, 'Segoe UI', Arial, monospace, sans-serif.
 6. For icons: Unicode emoji or inline SVG ONLY.
 
-NEXUS PLATFORM BACKEND — use window.NEXUS_API for ALL data (injected at runtime):
+NEXUS PLATFORM BACKEND — use window.NEXUS_API for ALL data (injected at runtime, backed by real PostgreSQL):
   async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }
   async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
   async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); }
@@ -652,6 +652,13 @@ AUTH (server-side, real bcrypt passwords, cross-device sessions — window.NEXUS
   Errors: register returns 409 for duplicate, login returns 401 for bad credentials — always check r.error
   Session restore on load: call /me on page load; if null show login screen, if valid restore user state
   Protected fetch: add {headers:{Authorization:'Bearer '+localStorage.getItem('_nexus_token')}} to any NEXUS_API call needing a logged-in user
+
+⛔ ABSOLUTELY FORBIDDEN — these patterns silently break all buttons and lose all data:
+  ✗ const db = { items: [] }  OR  let items = []  — in-memory arrays VANISH on reload
+  ✗ localStorage.setItem('items', ...)  — localStorage is for _nexus_token ONLY, NOT app data
+  ✗ fetch('/api/anything')  — relative paths don't exist; always fetch(window.NEXUS_API+'/anything')
+  ✗ window.NEXUS_API = '...'  — NEVER reassign; it is pre-injected
+  Every piece of app data (records, users except token, settings) MUST go through window.NEXUS_API.
 
 DESIGN: dark cyberpunk aesthetic (#0f0f1a background, #00d4ff accent), smooth animations, polished UI.
 Every button does something. Every form works. Handle loading, empty, and error states.`;
@@ -711,9 +718,22 @@ async function validateAndPackage(
     "Your job:\n" +
     "1. Cross-check every key_feature from the blueprint — add any that are missing.\n" +
     "2. Fix broken flows, empty states, or placeholder text.\n" +
-    "3. Ensure window.NEXUS_API is used for ALL data (never localStorage for app data).\n" +
-    "4. Polish the UI: loading spinners, error messages, empty-state CTAs.\n" +
-    "5. Return ONLY the complete, fixed HTML — no fences, no explanation.";
+    "3. CRITICAL — hunt and fix every broken data pattern:\n" +
+    "   a. Replace ALL in-memory arrays/objects used as databases:\n" +
+    "      WRONG: const db = { items: [] }  →  RIGHT: remove it; load with listRecords('items') on init\n" +
+    "      WRONG: let tasks = []; tasks.push(x)  →  RIGHT: await createRecord('tasks', x); then reload\n" +
+    "   b. Replace ALL localStorage app data:\n" +
+    "      WRONG: localStorage.setItem('items', JSON.stringify(arr))  →  RIGHT: await createRecord('items', obj)\n" +
+    "      ONLY localStorage._nexus_token is allowed.\n" +
+    "   c. Replace ALL relative fetch calls:\n" +
+    "      WRONG: fetch('/api/...')  →  RIGHT: fetch(window.NEXUS_API+'/...')\n" +
+    "4. Ensure these exact helpers are defined at the top of the script (add if missing):\n" +
+    "   async function listRecords(col){return fetch(window.NEXUS_API+'/'+col).then(r=>r.json());}\n" +
+    "   async function createRecord(col,d){return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json());}\n" +
+    "   async function updateRecord(col,id,d){return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json());}\n" +
+    "   async function deleteRecord(col,id){return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'});}\n" +
+    "5. Polish the UI: loading spinners, error messages, empty-state CTAs.\n" +
+    "6. Return ONLY the complete, fixed HTML — no fences, no explanation.";
 
   const task =
     `BLUEPRINT:\n${JSON.stringify({ project_name: blueprint.project_name, project_type: blueprint.project_type, key_features: blueprint.key_features, stack: blueprint.stack }, null, 2)}\n\n` +
@@ -908,7 +928,7 @@ CRITICAL RULES — follow exactly or the game will not work:
       `PLATFORM CONTEXT:\n` +
       `- The app runs in a browser iframe. window.NEXUS_API is ALWAYS pre-injected (real PostgreSQL backend)\n` +
       `- Use window.NEXUS_API for ALL persistent data — never localStorage for app data\n` +
-      `- EXACT fetch pattern (copy exactly — wrong patterns break buttons silently):\n` +
+      `- EXACT fetch helpers (paste these verbatim at top of your script — do NOT deviate):\n` +
       `    async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }\n` +
       `    async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }\n` +
       `    async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json()); }\n` +
@@ -923,7 +943,14 @@ CRITICAL RULES — follow exactly or the game will not work:
       `- CRITICAL: Never use onclick="" attributes — always addEventListener so errors surface correctly\n` +
       `- Build every feature end-to-end with no dead ends\n` +
       `- Handle loading, empty, and error states throughout\n` +
-      `- Dark cyberpunk aesthetic, polished UI, smooth animations`;
+      `- Dark cyberpunk aesthetic, polished UI, smooth animations\n` +
+      `\n` +
+      `⛔ THESE PATTERNS ARE BANNED — they make buttons appear to work but save NOTHING:\n` +
+      `  WRONG: const db = { items: [] }  →  RIGHT: const items = await listRecords('items')\n` +
+      `  WRONG: let users = []            →  RIGHT: const users = await listRecords('users')\n` +
+      `  WRONG: localStorage.setItem('tasks', JSON.stringify(arr))  →  RIGHT: await createRecord('tasks', obj)\n` +
+      `  WRONG: fetch('/api/todos')       →  RIGHT: fetch(window.NEXUS_API+'/todos')\n` +
+      `  WRONG: window.NEXUS_API = '...' →  NEVER reassign — it is pre-injected by the platform`;
 
     const html = await hydraSwarm(swarmPrompt, name);
     if (html && (html.startsWith("<!DOCTYPE") || html.startsWith("<html") || html.startsWith("<HTML"))) {
@@ -952,8 +979,10 @@ CRITICAL RULES:
 6. Every button MUST work — use addEventListener (never inline onclick=""), always async+try/catch.
 7. Dark background, smooth animations, professional UI.
 8. NEVER call fetch() with a hardcoded path like fetch('/api/...') — always use window.NEXUS_API.
+9. NEVER create in-memory arrays/objects as a database (no const db={}, no let items=[]) — data vanishes on reload.
+10. NEVER use localStorage for app data — localStorage stores ONLY _nexus_token. All records go through NEXUS_API.
 
-NEXUS BACKEND (window.NEXUS_API is ALWAYS pre-injected — use these exact patterns):
+NEXUS BACKEND (window.NEXUS_API is ALWAYS pre-injected — paste these helpers verbatim):
   async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }
   async function createRecord(col,data) { return fetch(window.NEXUS_API+'/'+col,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()); }
   async function updateRecord(col,id,d) { return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json()); }
@@ -967,7 +996,11 @@ AUTH (server-side, real bcrypt+JWT — window.NEXUS_AUTH is pre-injected):
 BUTTON PATTERN (always use this structure — never inline onclick):
   document.getElementById('myBtn').addEventListener('click', async () => {
     try { /* do work */ } catch(e) { alert('Error: '+e.message); }
-  });`,
+  });
+WRONG vs RIGHT examples:
+  WRONG: const items = [];  items.push(newItem);   →  RIGHT: await createRecord('items', newItem);
+  WRONG: localStorage.setItem('posts', JSON.stringify(arr))  →  RIGHT: await createRecord('posts', obj)
+  WRONG: fetch('/api/data', ...)  →  RIGHT: fetch(window.NEXUS_API+'/data', ...)`,
         tier: "coding",
         maxTokens: 8_000,
         temperature: 0.7,
