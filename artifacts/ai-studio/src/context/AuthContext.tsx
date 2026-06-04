@@ -1,125 +1,214 @@
-import * as React from "react";
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { getToken, setToken, clearToken, parseToken, type TokenPayload, apiFetch } from "@/lib/auth";
+import * as React from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+  signInWithPassword,
+  signUpWithPassword,
+  signOut,
+  getCurrentUser,
+  onAuthStateChanged,
+} from '@/lib/supabase';
+import type { User } from '@supabase/supabase-js';
 
 interface AuthUser {
   id: string;
-  username: string;
   email: string | null;
-  plan: string;
-  isAdmin: boolean;
-  isVip: boolean;
-  projectCount: number;
-  buildsThisMonth: number;
-  createdAt: string;
+  username?: string;
+  plan?: string;
+  isAdmin?: boolean;
+  isVip?: boolean;
+  projectCount?: number;
+  buildsThisMonth?: number;
+  creditBalance?: number;
+  createdAt?: string;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
-  tokenPayload: TokenPayload | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string, referralCode?: string) => Promise<void>;
-  logout: () => void;
+  login: (emailOrUsername: string, password: string) => Promise<void>;
+  register: (
+    username: string,
+    email: string,
+    password: string,
+    referralCode?: string
+  ) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-async function safeJson(res: Response): Promise<any> {
-  try { return await res.clone().json(); } catch { return null; }
+/**
+ * Map Supabase user metadata to our AuthUser interface
+ */
+function mapSupabaseUserToAuthUser(supabaseUser: User | null): AuthUser | null {
+  if (!supabaseUser) {
+    return null;
+  }
+
+  return {
+    id: supabaseUser.id,
+    email: supabaseUser.email ?? null,
+    username:
+      supabaseUser.user_metadata?.username ??
+      supabaseUser.email?.split('@')[0],
+    plan: supabaseUser.user_metadata?.plan ?? 'free',
+    isAdmin: supabaseUser.user_metadata?.isAdmin ?? false,
+    isVip: supabaseUser.user_metadata?.isVip ?? false,
+    projectCount: supabaseUser.user_metadata?.projectCount ?? 0,
+    buildsThisMonth: supabaseUser.user_metadata?.buildsThisMonth ?? 0,
+    creditBalance: supabaseUser.user_metadata?.creditBalance ?? 0,
+    createdAt: supabaseUser.created_at,
+  };
 }
 
-function friendlyHttpError(res: Response, fallback: string): string {
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    return "The server is starting up — please wait a moment and try again.";
+/**
+ * Convert Supabase auth errors to user-friendly messages
+ */
+function friendlyAuthError(error: string): string {
+  const lowerError = error.toLowerCase();
+
+  if (lowerError.includes('invalid login credentials')) {
+    return 'Invalid email or password.';
   }
-  if (res.status === 401) return "Invalid username or password.";
-  if (res.status === 429) return "Too many attempts — please wait a minute and try again.";
-  if (res.status >= 500) return "The server hit an error. Please try again in a moment.";
-  return `${fallback} (HTTP ${res.status})`;
+  if (lowerError.includes('user already exists')) {
+    return 'This email is already registered.';
+  }
+  if (lowerError.includes('password')) {
+    return 'Password must be at least 6 characters.';
+  }
+  if (lowerError.includes('email')) {
+    return 'Please enter a valid email address.';
+  }
+  if (lowerError.includes('network')) {
+    return 'Network error. Please check your connection and try again.';
+  }
+  if (lowerError.includes('rate_limit')) {
+    return 'Too many login attempts. Please try again later.';
+  }
+
+  return error || 'An unexpected error occurred.';
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const tokenPayload = React.useMemo(() => {
-    const t = getToken();
-    return t ? parseToken(t) : null;
-  }, [user]);
-
-  const fetchMe = useCallback(async () => {
-    const token = getToken();
-    if (!token || !parseToken(token)) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-    try {
-      // Refresh the JWT first so any admin grants (VIP, plan changes) take
-      // effect immediately without requiring the user to log out and back in.
-      const refreshRes = await apiFetch("/auth/refresh", { method: "POST" });
-      if (refreshRes.ok) {
-        const data = await refreshRes.json();
-        setToken(data.token);
-        setUser(data.user);
-        return;
+  // Initialize auth state when component mounts
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        const currentUser = await getCurrentUser();
+        if (currentUser) {
+          setUser(mapSupabaseUserToAuthUser(currentUser));
+        }
+      } catch (error) {
+        console.error('[auth] Error initializing auth:', error);
+      } finally {
+        setLoading(false);
       }
-      // Fallback to /me if refresh fails for any reason
-      const res = await apiFetch("/auth/me");
-      if (res.ok) {
-        setUser(await res.json());
+    };
+
+    initializeAuth();
+  }, []);
+
+  // Listen for auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged((supabaseUser) => {
+      if (supabaseUser) {
+        const mappedUser = mapSupabaseUserToAuthUser(supabaseUser);
+        setUser(mappedUser);
       } else {
-        clearToken();
         setUser(null);
       }
-    } catch {
+    });
+
+    return () => {
+      if (unsubscribe?.unsubscribe) {
+        unsubscribe.unsubscribe();
+      }
+    };
+  }, []);
+
+  const login = useCallback(
+    async (emailOrUsername: string, password: string) => {
+      try {
+        setLoading(true);
+        await signInWithPassword(emailOrUsername, password);
+        // User state will be updated by onAuthStateChanged listener
+      } catch (error: unknown) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Login failed';
+        throw new Error(friendlyAuthError(errorMessage));
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  const register = useCallback(
+    async (
+      username: string,
+      email: string,
+      password: string,
+      referralCode?: string
+    ) => {
+      try {
+        setLoading(true);
+
+        // Validate password length
+        if (password.length < 6) {
+          throw new Error('Password must be at least 6 characters');
+        }
+
+        await signUpWithPassword(email, password, username, referralCode);
+        // User state will be updated by onAuthStateChanged listener
+      } catch (error: unknown) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Registration failed';
+        throw new Error(friendlyAuthError(errorMessage));
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      setLoading(true);
+      await signOut();
       setUser(null);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Logout failed';
+      throw new Error(friendlyAuthError(errorMessage));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchMe();
-  }, [fetchMe]);
-
-  const login = useCallback(async (username: string, password: string) => {
-    const res = await apiFetch("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) throw new Error(data?.error || friendlyHttpError(res, "Login failed"));
-    setToken(data.token);
-    setUser(data.user);
-  }, []);
-
-  const register = useCallback(async (username: string, email: string, password: string, referralCode?: string) => {
-    const res = await apiFetch("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ username, email, password, ...(referralCode ? { referralCode } : {}) }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) throw new Error(data?.error || friendlyHttpError(res, "Registration failed"));
-    setToken(data.token);
-    setUser(data.user);
-  }, []);
-
-  const logout = useCallback(() => {
-    clearToken();
-    setUser(null);
-  }, []);
+  const value: AuthContextValue = {
+    user,
+    loading,
+    login,
+    register,
+    logout,
+  };
 
   return (
-    <AuthContext.Provider value={{ user, tokenPayload, loading, login, register, logout }}>
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
   );
 }
 
+/**
+ * Hook to use auth context
+ * Must be used inside AuthProvider
+ */
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+  if (!ctx) {
+    throw new Error('useAuth must be used inside AuthProvider');
+  }
   return ctx;
 }
