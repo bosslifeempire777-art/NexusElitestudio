@@ -753,7 +753,21 @@ async function validateAndPackage(
     "   async function updateRecord(col,id,d){return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(r=>r.json());}\n" +
     "   async function deleteRecord(col,id){return fetch(window.NEXUS_API+'/'+col+'/'+id,{method:'DELETE'});}\n" +
     "5. Polish the UI: loading spinners, error messages, empty-state CTAs.\n" +
-    "6. Return ONLY the complete, fixed HTML — no fences, no explanation.";
+    "6. CRITICAL — Fix script placement so buttons work:\n" +
+    "   a. Move ALL <script> blocks to just before </body> — NEVER leave them in <head>.\n" +
+    "   b. Wrap ALL code that touches the DOM inside document.addEventListener('DOMContentLoaded', async function() { ... });\n" +
+    "      WRONG: document.getElementById('btn').addEventListener('click', ...)  — element may not exist yet\n" +
+    "      RIGHT: document.addEventListener('DOMContentLoaded', async function() { document.getElementById('btn').addEventListener('click', ...); });\n" +
+    "   c. Replace every onclick=\"fn()\" attribute — remove it from the HTML and add addEventListener inside DOMContentLoaded.\n" +
+    "      WRONG: <button onclick=\"addItem()\">Add</button>\n" +
+    "      RIGHT: <button id=\"addBtn\">Add</button> + document.getElementById('addBtn').addEventListener('click', async()=>{...})\n" +
+    "7. CRITICAL — For AUTH apps (any app using window.NEXUS_AUTH or login/register forms):\n" +
+    "   a. Always show BOTH a Login AND a Sign Up / Register form or tab — never only a login form.\n" +
+    "   b. On the login screen, display this block visibly:\n" +
+    "      <div class='demo-creds'>Demo account: <strong>admin@demo.com</strong> / <strong>NexusDemo123</strong></div>\n" +
+    "   c. On DOMContentLoaded, auto-register the demo account silently (ignore 409 = already exists):\n" +
+    "      fetch(window.NEXUS_AUTH+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'admin',email:'admin@demo.com',password:'NexusDemo123'})}).catch(()=>{})\n" +
+    "8. Return ONLY the complete, fixed HTML — no fences, no explanation.";
 
   const task =
     `BLUEPRINT:\n${JSON.stringify({ project_name: blueprint.project_name, project_type: blueprint.project_type, key_features: blueprint.key_features, stack: blueprint.stack }, null, 2)}\n\n` +
@@ -961,6 +975,9 @@ CRITICAL RULES — follow exactly or the game will not work:
       `    Always check /me on page load to restore session; show login screen if null\n` +
       `- CRITICAL: EVERY button click handler must be async and wrapped in try/catch with visible error feedback\n` +
       `- CRITICAL: Never use onclick="" attributes — always addEventListener so errors surface correctly\n` +
+      `- CRITICAL: Put ALL <script> blocks at the end of <body> (just before </body>), NEVER in <head>\n` +
+      `- CRITICAL: Wrap ALL code that touches the DOM inside document.addEventListener('DOMContentLoaded', async function() { ... })\n` +
+      `- AUTH APPS: Always include BOTH a Login form AND a Sign Up / Register form. Show demo credentials visibly on the login screen: email=admin@demo.com pass=NexusDemo123. On DOMContentLoaded auto-register that demo account silently (ignore 409 if already exists)\n` +
       `- Build every feature end-to-end with no dead ends\n` +
       `- Handle loading, empty, and error states throughout\n` +
       `- Dark cyberpunk aesthetic, polished UI, smooth animations\n` +
@@ -1001,6 +1018,8 @@ CRITICAL RULES:
 8. NEVER call fetch() with a hardcoded path like fetch('/api/...') — always use window.NEXUS_API.
 9. NEVER create in-memory arrays/objects as a database (no const db={}, no let items=[]) — data vanishes on reload.
 10. NEVER use localStorage for app data — localStorage stores ONLY _nexus_token. All records go through NEXUS_API.
+11. SCRIPT PLACEMENT: Put ALL <script> tags at the end of <body> (just before </body>). NEVER put scripts in <head>. Wrap ALL DOM-touching code inside document.addEventListener('DOMContentLoaded', async function() { ... }).
+12. AUTH APPS: Always include BOTH Login AND Register forms. Show demo credentials visibly: "Demo: admin@demo.com / NexusDemo123". Auto-register that account on DOMContentLoaded (ignore 409 if exists).
 
 NEXUS BACKEND (window.NEXUS_API is ALWAYS pre-injected — paste these helpers verbatim):
   async function listRecords(col)       { return fetch(window.NEXUS_API+'/'+col).then(r=>r.json()); }

@@ -447,6 +447,37 @@ router.get("/:id/preview", async (req, res) => {
       } else {
         html = injection + html;
       }
+
+      // For auth-enabled apps (owner-only preview): inject a DOMContentLoaded
+      // script that auto-seeds a demo admin account and shows a credentials
+      // banner so the owner always knows how to log in on first test.
+      // Injected only for the owner so end-users on deployed domains never see it.
+      if (isOwnerRequest && /NEXUS_AUTH/i.test(project.generatedCode ?? "")) {
+        const authSeedScript =
+          `<script>` +
+          `document.addEventListener('DOMContentLoaded',function(){` +
+          `var DEMO_EMAIL='admin@demo.com',DEMO_PASS='NexusDemo123';` +
+          // Auto-register demo account (silent — 409 = already exists, that's fine)
+          `fetch(window.NEXUS_AUTH+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'admin',email:DEMO_EMAIL,password:DEMO_PASS})}).catch(function(){});` +
+          // Show credentials banner (dismissible, not shown again after dismiss)
+          `if(!sessionStorage.getItem('_nexus_creds_seen')){` +
+          `var b=document.createElement('div');` +
+          `b.style.cssText='position:fixed;bottom:0;left:0;right:0;background:#0f1729;border-top:2px solid #00d4ff;color:#e2e8f0;font-family:system-ui,sans-serif;padding:10px 16px;z-index:2147483647;display:flex;align-items:center;gap:14px;font-size:13px;flex-wrap:wrap';` +
+          `b.innerHTML='<span style="color:#00d4ff;font-weight:700;white-space:nowrap">🔑 Demo Login:</span>'+` +
+          `'<span>Email: <code style="color:#fbbf24;background:#1a1a2e;padding:1px 5px;border-radius:3px">admin@demo.com</code></span>'+` +
+          `'<span>Password: <code style="color:#fbbf24;background:#1a1a2e;padding:1px 5px;border-radius:3px">NexusDemo123</code></span>'+` +
+          `'<button id="_nx_creds_close" style="margin-left:auto;background:none;border:1px solid #334155;color:#94a3b8;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px">Dismiss</button>';` +
+          `document.body.appendChild(b);` +
+          `document.getElementById('_nx_creds_close').addEventListener('click',function(){b.remove();sessionStorage.setItem('_nexus_creds_seen','1');});` +
+          `}` +
+          `});` +
+          `</script>`;
+        if (/<\/body>/i.test(html)) {
+          html = html.replace(/<\/body>/i, `${authSeedScript}</body>`);
+        } else {
+          html += authSeedScript;
+        }
+      }
     } catch (err) {
       console.error("Failed to inject runtime globals into preview:", err);
     }
