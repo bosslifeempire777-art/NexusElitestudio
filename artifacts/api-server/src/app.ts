@@ -1,5 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import { existsSync } from "fs";
+import path from "path";
 import router from "./routes";
 import { trafficLogger } from "./lib/traffic-log.js";
 import { deploymentHost } from "./middleware/deployment-host.js";
@@ -24,5 +26,31 @@ app.use(trafficLogger());
 app.use(deploymentHost());
 
 app.use("/api", router);
+
+// 404 JSON handler for unmatched /api/* routes (must come before static middleware)
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "API endpoint not found" });
+});
+
+// In production, serve the built AI Studio frontend so the Express server
+// handles everything on a single port. This eliminates the need for a
+// separate static handler that would block /api/* requests with a catch-all
+// rewrite to index.html.
+const staticDir = path.resolve("artifacts/ai-studio/dist/public");
+if (existsSync(staticDir)) {
+  // Serve hashed static assets (JS, CSS, images) with long-lived cache
+  app.use(express.static(staticDir, { index: false }));
+
+  // SPA fallback: return index.html for every non-API route so React Router
+  // can handle client-side navigation.
+  app.get(/^(?!\/api)/, (_req, res, next) => {
+    const indexPath = path.join(staticDir, "index.html");
+    if (existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      next();
+    }
+  });
+}
 
 export default app;
