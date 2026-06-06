@@ -11,7 +11,11 @@ const __dirname = path.dirname(__filename);
 // packages that are not bundle compatible
 const allowlist = [
   "@google/generative-ai",
+  "adm-zip",
+  "axios",
+  "bcryptjs",
   "connect-pg-simple",
+  "cookie-parser",
   "p-limit",
   "cors",
   "date-fns",
