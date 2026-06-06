@@ -12,28 +12,31 @@ const MAX_RECURSION = 2;    // fractal sub-swarm depth
 // Model tiers — HYDRA-PRIME v4 routing with proven platform fallbacks appended
 const MODEL_TIERS: Record<string, string[]> = {
   reasoning: [
-    // Working reliably (confirmed in logs) ↓
+    // Primary ↓
+    "minimax/minimax-m3",
+    // Reliable fallbacks ↓
     "qwen/qwen3.6-plus",
     "deepseek/deepseek-v4-flash",
     "qwen/qwen3-coder:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    // Paid fallbacks (need OpenRouter credits) ↓
+    // Additional paid fallbacks ↓
     "deepseek/deepseek-v4-pro",
     "google/gemini-3.5-flash",
     "google/gemini-2.5-pro",
     "anthropic/claude-opus-4.8",
     "moonshotai/kimi-k2.6",
-    "minimax/minimax-m3",
     "openai/gpt-5",
     "z-ai/glm-5.1",
   ],
   coding: [
-    // Working reliably ↓
+    // Primary — MiniMax M3 as main coding agent ↓
+    "minimax/minimax-m3",
+    // Reliable fallbacks ↓
     "qwen/qwen3.6-plus",
     "deepseek/deepseek-v4-flash",
     "qwen/qwen3-coder:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    // Paid fallbacks ↓
+    // Additional paid fallbacks ↓
     "openai/gpt-5-codex",
     "z-ai/glm-5.1",
     "x-ai/grok-build-0.1",
@@ -42,57 +45,63 @@ const MODEL_TIERS: Record<string, string[]> = {
     "anthropic/claude-opus-4.8",
   ],
   fast: [
-    // Working reliably ↓
+    // Primary ↓
+    "minimax/minimax-m3",
+    // Reliable fallbacks ↓
     "qwen/qwen3.6-plus",
     "deepseek/deepseek-v4-flash",
     "meta-llama/llama-3.3-70b-instruct:free",
     "qwen/qwen3-coder:free",
-    // Paid fallbacks ↓
+    // Additional paid fallbacks ↓
     "google/gemini-3.5-flash",
     "z-ai/glm-5.1",
     "anthropic/claude-haiku-4.5",
     "inclusionai/ling-2.6-1t",
   ],
   longctx: [
-    // Working reliably ↓
+    // Primary ↓
+    "minimax/minimax-m3",
+    // Reliable fallbacks ↓
     "qwen/qwen3.6-plus",
     "deepseek/deepseek-v4-flash",
     "qwen/qwen3-coder:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    // Paid fallbacks ↓
+    // Additional paid fallbacks ↓
     "google/gemini-3.5-flash",
     "google/gemini-2.5-pro",
     "moonshotai/kimi-k2.6",
     "openai/gpt-5",
     "anthropic/claude-sonnet-4.6",
-    "minimax/minimax-m3",
     "z-ai/glm-5.1",
   ],
   critic: [
-    // Working reliably ↓
+    // Primary ↓
+    "minimax/minimax-m3",
+    // Reliable fallbacks ↓
     "qwen/qwen3.6-plus",
     "deepseek/deepseek-v4-flash",
     "qwen/qwen3-coder:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    // Paid fallbacks ↓
+    // Additional paid fallbacks ↓
     "deepseek/deepseek-v4-pro",
     "z-ai/glm-5.1",
     "google/gemini-3.5-flash",
     "anthropic/claude-sonnet-4.6",
   ],
   creative: [
-    // Working reliably ↓
+    // Primary ↓
+    "minimax/minimax-m3",
+    // Reliable fallbacks ↓
     "qwen/qwen3.6-plus",
     "deepseek/deepseek-v4-flash",
     "qwen/qwen3-coder:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    // Paid fallbacks ↓
+    // Additional paid fallbacks ↓
     "z-ai/glm-5.1",
     "anthropic/claude-opus-4.8",
     "openai/gpt-5",
     "moonshotai/kimi-k2.6",
     "google/gemini-3.5-flash",
-    "minimax/minimax-m3",
   ],
 };
 
