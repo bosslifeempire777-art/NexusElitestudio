@@ -1,12 +1,48 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
-import { existsSync, createReadStream } from "fs";
+import { existsSync, readFileSync } from "fs";
 import path from "path";
 import router from "./routes";
 import { trafficLogger } from "./lib/traffic-log.js";
 import { deploymentHost } from "./middleware/deployment-host.js";
 
 const app: Express = express();
+
+// ── Diagnostic request logger ──────────────────────────────────────────────
+// Logs every inbound request before any middleware touches it.
+// This helps confirm whether the healthcheck probe even reaches Express.
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  console.log(`[req] ${req.method} ${req.url} host=${req.headers.host ?? "-"}`);
+  next();
+});
+
+// ── Root / health route ────────────────────────────────────────────────────
+// Registered FIRST — before cors, trafficLogger, or anything that patches res.
+// Uses raw Node.js writeHead/end (not Express helpers) so no abstraction layer
+// can intercept or change the status code.
+app.get("/", (_req: Request, res: Response) => {
+  console.log("[GET /] handler called");
+  const indexPath = path.resolve("artifacts/ai-studio/dist/public/index.html");
+  const exists = existsSync(indexPath);
+  console.log(`[GET /] indexPath=${indexPath} exists=${exists}`);
+  try {
+    if (exists) {
+      const html = readFileSync(indexPath, "utf-8");
+      (res as any).writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      (res as any).end(html);
+    } else {
+      (res as any).writeHead(200, { "Content-Type": "application/json" });
+      (res as any).end('{"status":"ok"}');
+    }
+    console.log("[GET /] response sent");
+  } catch (e: any) {
+    console.error("[GET /] error:", e?.message);
+    if (!(res as any).headersSent) {
+      (res as any).writeHead(200, { "Content-Type": "application/json" });
+      (res as any).end('{"status":"ok"}');
+    }
+  }
+});
 
 app.use(cors());
 
@@ -19,37 +55,6 @@ app.use(express.urlencoded({ extended: true }));
 // Capture every /api/* request into the in-memory traffic ring buffer
 // so the admin "Live Traffic" panel can show real activity.
 app.use(trafficLogger());
-
-// Root route — registered BEFORE deploymentHost so it NEVER touches the DB.
-// Uses a raw Node.js read stream (not res.sendFile) so any I/O error still
-// results in a 200 response — the Cloud Run healthcheck only checks status code.
-app.get("/", (_req: Request, res: Response) => {
-  const indexPath = path.resolve("artifacts/ai-studio/dist/public/index.html");
-  try {
-    if (!existsSync(indexPath)) {
-      res.setHeader("Content-Type", "application/json");
-      res.status(200).end('{"status":"ok"}');
-      return;
-    }
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.status(200);
-    const stream = createReadStream(indexPath);
-    stream.on("error", () => {
-      if (!res.headersSent) {
-        res.setHeader("Content-Type", "application/json");
-        res.status(200).end('{"status":"ok"}');
-      } else {
-        res.end();
-      }
-    });
-    stream.pipe(res);
-  } catch {
-    if (!res.headersSent) {
-      res.setHeader("Content-Type", "application/json");
-      res.status(200).end('{"status":"ok"}');
-    }
-  }
-});
 
 // Subdomain & custom-domain routing — must run before the API router so
 // requests to <slug>.brand.tld or verified custom domains rewrite to
