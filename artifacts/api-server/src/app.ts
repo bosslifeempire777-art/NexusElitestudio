@@ -53,4 +53,12 @@ if (existsSync(staticDir)) {
   });
 }
 
+// Root-level healthcheck fallback — the deployment platform probes GET /
+// even when the healthcheck path is configured as /api/healthz. If the
+// static frontend hasn't been built yet (or the SPA fallback didn't match),
+// return 200 so the healthcheck passes and the server is considered healthy.
+app.get("/", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 export default app;
