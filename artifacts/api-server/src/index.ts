@@ -148,24 +148,32 @@ async function recoverStuckBuilds(): Promise<void> {
   }
 }
 
-// Apply schema and seed data BEFORE the server opens its port so that no
-// inbound request can race against a missing table.
-void (async () => {
-  await ensureMainSchema();
-  await ensureAdminAccount();
+// Start listening immediately so the deployment healthcheck at GET /
+// gets a 200 response right away. Schema migrations and seeding run in
+// the background — they complete well before any real user traffic
+// reaches the DB-dependent /api/* routes.
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
 
-  app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
+  // Run migrations + seed in background — non-blocking so the HTTP
+  // server is healthy from the very first millisecond.
+  void (async () => {
+    try {
+      await ensureMainSchema();
+      await ensureAdminAccount();
+      console.log("✓ Schema and admin account ready");
+    } catch (err: any) {
+      console.error("[startup] Schema/seed failed:", err?.message ?? err);
+    }
+
     ensureStripeSyncSchema();
     void recoverStuckBuilds();
     startRenderPoller();
-    // Best-effort Stripe sanity check — verifies key mode and that all
-    // configured price IDs exist in the same mode. Logs only; never throws.
     void checkStripeConfig().catch(err =>
       console.warn("[stripe-config] check failed:", err?.message ?? err),
     );
     void checkEmailConfig().catch(err =>
       console.warn("[email-config] check failed:", err?.message ?? err),
     );
-  });
-})();
+  })();
+});
