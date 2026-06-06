@@ -28,6 +28,9 @@ export function deploymentHost() {
       if (rawHost === BRAND_DOMAIN || rawHost === `www.${BRAND_DOMAIN}`) return next();
       if (rawHost.endsWith(".repl.co") || rawHost.endsWith(".replit.dev") || rawHost.endsWith(".replit.app")) return next();
       if (rawHost === "localhost" || rawHost.endsWith(".localhost")) return next();
+      // Skip DB lookup for bare IP addresses (internal healthcheck probes,
+      // load-balancer pings, etc.) — these are never custom domains.
+      if (/^[\d.]+$/.test(rawHost) || /^\[[\da-f:]+\]$/.test(rawHost)) return next();
 
       let projectId: string | null = null;
 
