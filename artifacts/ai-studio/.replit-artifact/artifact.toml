@@ -24,3 +24,8 @@ BASE_PATH = "/"
 [services.production]
 build = ["pnpm", "--filter", "@workspace/ai-studio", "run", "build"]
 publicDir = "artifacts/ai-studio/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
