@@ -20,17 +20,18 @@ app.use(express.urlencoded({ extended: true }));
 // so the admin "Live Traffic" panel can show real activity.
 app.use(trafficLogger());
 
-// Root healthcheck — registered BEFORE deploymentHost so it never touches
-// the database. The deployment platform probes GET / and this guarantees
-// an instant 200 even during cold-start or DB warm-up.
-// When the built frontend is present the static middleware (below) takes
-// over for real browser traffic; this only fires when no other handler ran.
-app.get("/", (_req, res, next) => {
-  // If the built frontend exists, pass through to the static/SPA middleware below.
-  // Otherwise (e.g. healthcheck during cold-start), respond 200 immediately.
-  const idx = path.resolve("artifacts/ai-studio/dist/public/index.html");
-  if (existsSync(idx)) return next();
-  res.status(200).json({ status: "ok" });
+// Root route — registered BEFORE deploymentHost so it NEVER touches the DB.
+// Serves index.html when the frontend is built (normal browser traffic),
+// or returns {"status":"ok"} when it isn't (healthcheck during cold-start).
+// NOTE: does NOT call next() — deploymentHost is only needed for subdomains
+// and custom domains, not for GET / on the main domain.
+app.get("/", (_req, res) => {
+  const indexPath = path.resolve("artifacts/ai-studio/dist/public/index.html");
+  if (existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(200).json({ status: "ok" });
+  }
 });
 
 // Subdomain & custom-domain routing — must run before the API router so
