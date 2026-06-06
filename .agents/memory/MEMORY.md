@@ -1,3 +1,4 @@
+- [Production healthcheck path conflict](healthcheck-path-conflict.md) — two artifacts claiming paths=["/"] causes pid1 to route probes to wrong service; fix: publicDir on ai-studio + paths=["/api"] on api-server
 - [Mobile Build Pipeline](mobile-build-pipeline.md) — EAS Build integration: Expo account Nexuselitestudio, GitHub bosslifeempire777-art, callLLM must be exported from openrouter.ts
 - [OpenRouter model ID audit](openrouter-model-ids.md) — several "next-gen" model IDs in the swarm config were fictional; always verify against live /api/v1/models before adding.
 - [NEXUS_API button fix](nexus-api-url.md) — `x-forwarded-host` not set by Replit proxy; always use `getBaseUrl()` (REPLIT_DOMAINS) not fwdHost fallback
