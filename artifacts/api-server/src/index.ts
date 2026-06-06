@@ -1,3 +1,4 @@
+import http from "http";
 import app from "./app";
 import { ensureMainSchema } from "./ensure-schema.js";
 import { ensureAdminAccount } from "./seed-admin.js";
@@ -177,3 +178,24 @@ app.listen(port, () => {
     );
   })();
 });
+
+// ── Secondary listener for Replit sidecar compatibility ──────────────────────
+// The .replit file maps externalPort=80 → localPort=8081.  Replit's pid1
+// sidecar probes healthcheck GET / through that mapping (8081), not through
+// the artifact.toml localPort (8080).  Binding on 8081 as well ensures the
+// probe reaches Express and gets a 200 back.
+// In development the mockup-sandbox already owns 8081, so we bind only in
+// production and swallow EADDRINUSE silently.
+const SIDECAR_HEALTH_PORT = 8081;
+if (SIDECAR_HEALTH_PORT !== port) {
+  http
+    .createServer(app)
+    .listen(SIDECAR_HEALTH_PORT, () => {
+      console.log(`[sidecar] also listening on port ${SIDECAR_HEALTH_PORT}`);
+    })
+    .on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code !== "EADDRINUSE") {
+        console.warn(`[sidecar] port ${SIDECAR_HEALTH_PORT} error:`, e.message);
+      }
+    });
+}
