@@ -64,19 +64,19 @@ export default function CommandCenter() {
           </div>
         </div>
 
-        <div className="flex gap-1 border-b border-border/40">
+        <div className="flex gap-0.5 border-b border-border/40 overflow-x-auto scrollbar-none">
           {([
-            { id: "console", label: "Console",        icon: Terminal },
-            { id: "models",  label: "Models",         icon: Cpu      },
-            { id: "agents",  label: "Built-in Agents", icon: Bot      },
-            { id: "custom",  label: "My Agents",      icon: Plus     },
-            { id: "telemetry", label: "Telemetry",    icon: Activity },
-            { id: "swarm",     label: "Swarm Config", icon: Layers   },
+            { id: "console",   label: "Console",     icon: Terminal },
+            { id: "models",    label: "Models",      icon: Cpu      },
+            { id: "agents",    label: "Agents",      icon: Bot      },
+            { id: "custom",    label: "Custom",      icon: Plus     },
+            { id: "telemetry", label: "Telemetry",   icon: Activity },
+            { id: "swarm",     label: "Swarm",       icon: Layers   },
           ] as Array<{ id: Tab; label: string; icon: any }>).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
-              className={`px-4 py-2 flex items-center gap-2 text-sm font-mono border-b-2 transition-colors ${
+              className={`px-3 py-2 flex items-center gap-1.5 text-sm font-mono border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 tab === id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
