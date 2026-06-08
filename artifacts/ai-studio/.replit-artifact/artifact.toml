@@ -12,7 +12,7 @@ version = "1.0.0"
 [[services]]
 localPort = 22936
 name = "web"
-paths = ["/"]
+paths = []
 
 [services.development]
 run = "pnpm --filter @workspace/ai-studio run dev"

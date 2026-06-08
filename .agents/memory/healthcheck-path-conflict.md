@@ -16,12 +16,15 @@ Replit's pid1 sidecar registers BOTH services for `/`. It routes healthcheck pro
 - App works perfectly locally (no pid1 routing layer in local test)
 - Successful build (Jun 4) had different artifact config — only api-server claimed "/"
 
-## The Fix
-1. **ai-studio** `artifact.toml`: added `publicDir = "artifacts/ai-studio/dist/public"` to `[services.production]` → pid1 serves it as a static site
-2. **api-server** `artifact.toml`: changed `paths = ["/"]` → `paths = ["/api"]` → zero overlap, healthcheck at `/api/healthz` unambiguously routes to Express
+## The Fix (final, confirmed)
+- **pid1 uses FIRST-MATCH routing** (not longest-match). Any service claiming paths=["/"'] with a wildcard rewrite intercepts ALL requests — including /api/* — before more-specific services see them.
+- **ai-studio** `artifact.toml`: `paths = []` → completely removed from pid1 routing. Build still runs; Express serves the output.
+- **api-server** `artifact.toml`: `paths = ["/"]` → Express is the sole HTTP gateway for everything.
 
-**Why:** `publicDir` tells pid1 the static serving root; changing api-server paths to `/api` eliminates the conflict entirely. The healthcheck path `/api/healthz` now routes unambiguously to port 8080.
+**Why:** Express already handles static serving + SPA fallback + API (from bc852b7's app.ts changes). Making Express the sole gateway eliminates the first-match ambiguity entirely.
 
-## Applied Changes
-- `artifacts/ai-studio/.replit-artifact/artifact.toml` — `[services.production]` gets `publicDir`
-- `artifacts/api-server/.replit-artifact/artifact.toml` — `paths = ["/api"]`
+**Do NOT** put ai-studio at paths=["/"] with a wildcard rewrite AND api-server at paths=["/api"]. pid1 first-match will intercept /api/* via ai-studio.
+
+## Applied Changes (final)
+- `artifacts/ai-studio/.replit-artifact/artifact.toml` — `paths = []` (no routing)
+- `artifacts/api-server/.replit-artifact/artifact.toml` — `paths = ["/"]` (sole gateway)
