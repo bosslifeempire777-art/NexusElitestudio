@@ -16,8 +16,6 @@ We combine **bleeding-edge technology** with obsessive design and performance st
 
 No templates. No generic bullshit. Just elite-tier development.
 
----
-
 ## What We Build
 
 - **High-Performance Websites** – Lightning-fast, conversion-focused digital presences
@@ -25,16 +23,6 @@ No templates. No generic bullshit. Just elite-tier development.
 - **SaaS Platforms** – Scalable software products built for growth
 - **Membership & Community Portals** – Exclusive digital ecosystems
 - **Creative Tech Experiences** – Bold, innovative digital projects that stand out
-
----
-
-## Tech Stack
-
-- **Frontend**: Next.js 14+, React, TypeScript, Tailwind CSS
-- **Backend**: Supabase (PostgreSQL + Auth + Storage + Realtime)
-- **Deployment**: Vercel
-- **Styling**: Tailwind CSS + custom design systems
-- **Tools**: Git, ESLint, Prettier, shadcn/ui, Framer Motion
 
 We build with modern, production-ready tools that prioritize speed, developer experience, and long-term maintainability.
 
