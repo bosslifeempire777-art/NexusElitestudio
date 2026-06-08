@@ -1,3 +1,4 @@
+import "./lib/log-buffer.js";
 import http from "http";
 import app from "./app";
 import { ensureMainSchema } from "./ensure-schema.js";
@@ -42,6 +43,19 @@ process.on("unhandledRejection", (reason: unknown) => {
 // (Render / Replit Deployments) will restart us with a clean process.
 // We delay the exit briefly so the log line actually flushes to stdout.
 process.on("uncaughtException", (err: Error) => {
+  const msg = err?.message ?? "";
+  // Transient Postgres connection drops (Replit managed DB recycling connections)
+  // must NOT crash the server — the pool will reconnect on the next query.
+  const isTransientDb =
+    msg.includes("terminating connection due to administrator command") ||
+    msg.includes("Connection terminated unexpectedly") ||
+    msg.includes("Authentication timed out") ||
+    (err as any).code === "57P01" ||
+    (err as any).code === "08P01";
+  if (isTransientDb) {
+    console.warn("[uncaughtException] Transient DB connection dropped — server continues.", msg);
+    return;
+  }
   console.error(
     "[uncaughtException] FATAL — process will exit and be restarted.",
     err?.message,

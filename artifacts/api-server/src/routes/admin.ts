@@ -8,6 +8,7 @@ import { projectsTable, referralsTable, creditTransactionsTable, usersTable, bui
 import { eq, count, sum, desc, sql, inArray, gte, asc } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth.js";
 import { getRecentTraffic, getTrafficSummary } from "../lib/traffic-log.js";
+import { getRecentLogs, getLogStats } from "../lib/log-buffer.js";
 
 const execAsync = promisify(exec);
 
@@ -34,6 +35,8 @@ const ALLOWED_PATHS = [
   "artifacts/api-server/src",
   "artifacts/ai-studio/src",
   "lib/db/src",
+  "artifacts/api-server/.replit-artifact",
+  "artifacts/ai-studio/.replit-artifact",
 ];
 
 function collectFiles(
@@ -64,7 +67,7 @@ function collectFiles(
       if (!/\.(ts|tsx|json|css|html)$/.test(entry)) continue;
       try {
         const content = readFileSync(fullPath, "utf-8");
-        if (content.length < 40000) {
+        if (content.length < 80000) {
           results.push({ path: relEntry, content });
         }
       } catch {}
@@ -78,7 +81,7 @@ function getPlatformFiles(requestedPaths?: string[]): Array<{ path: string; cont
   const results: Array<{ path: string; content: string }> = [];
   const paths = requestedPaths?.length ? requestedPaths : ALLOWED_PATHS;
   for (const p of paths) {
-    if (results.length >= 25) break;
+    if (results.length >= 60) break;
     const full = join(WORKSPACE_ROOT, p);
     if (!existsSync(full)) continue;
     const stat = statSync(full);
@@ -88,7 +91,7 @@ function getPlatformFiles(requestedPaths?: string[]): Array<{ path: string; cont
         if (content.length < 40000) results.push({ path: p, content });
       } catch {}
     } else {
-      collectFiles(full, p, results, 25);
+      collectFiles(full, p, results, 60);
     }
   }
   return results;
@@ -136,13 +139,23 @@ router.post("/shell", async (req, res) => {
   }
 });
 
+/** GET /admin/logs — recent in-process console output */
+router.get("/logs", (req, res) => {
+  const n     = Math.min(Number(req.query["n"] ?? 300), 600);
+  const level = req.query["level"] as "log" | "warn" | "error" | undefined;
+  const entries = getRecentLogs(n, level);
+  const stats   = getLogStats();
+  res.json({ entries, stats });
+});
+
 /** POST /admin/repair */
 router.post("/repair", async (req, res) => {
-  const { message, mode = "platform", projectId, focusPaths } = req.body as {
+  const { message, mode = "platform", projectId, focusPaths, history } = req.body as {
     message: string;
     mode?: "platform" | "project";
     projectId?: string;
     focusPaths?: string[];
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
   };
 
   const API_KEY = getApiKey();
@@ -230,6 +243,11 @@ CRITICAL RULES:
         ? (process.env.REPAIR_MODEL         || "anthropic/claude-opus-4.7")
         : (process.env.REPAIR_MODEL_PROJECT || "anthropic/claude-opus-4.7");
 
+    const priorTurns = (history ?? []).slice(-12).map(h => ({
+      role: h.role as "user" | "assistant",
+      content: h.content,
+    }));
+
     let aiData: any;
     try {
       aiData = await chatViaSdk({
@@ -238,6 +256,7 @@ CRITICAL RULES:
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt },
+          ...priorTurns,
           {
             role: "user",
             content: `${contextBlock}\n\n---\n\nAdmin instruction: ${message}`,

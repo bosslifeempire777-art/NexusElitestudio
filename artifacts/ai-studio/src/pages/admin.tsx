@@ -11,7 +11,7 @@ import {
 import { useState, useRef, useEffect } from "react";
 import { getToken } from "@/lib/auth";
 
-type RepairMode = "platform" | "project" | "shell";
+type RepairMode = "platform" | "project" | "shell" | "logs";
 
 interface TerminalLine {
   id: string;
@@ -461,6 +461,7 @@ function RepairTerminal() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [shellCwd, setShellCwd] = useState("artifacts/api-server");
+  const [repairHistory, setRepairHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [lines, setLines] = useState<TerminalLine[]>([
     {
       id: "boot",
@@ -497,6 +498,52 @@ function RepairTerminal() {
 
     setInput("");
     setLoading(true);
+
+    if (mode === "logs") {
+      addLine({ type: "user", text: `> ${msg}` });
+      addLine({ type: "system", text: "[Nexus Repair Core] Fetching logs and running AI analysis…" });
+      try {
+        const token = getToken();
+        const logsRes = await fetch("/api/admin/logs?n=300", {
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        const logsData = await logsRes.json();
+        const { entries, stats } = logsData as { entries: Array<{ ts: string; level: string; msg: string }>; stats: { total: number; errors: number; warns: number } };
+        const logText = entries
+          .map((e) => `[${e.level.toUpperCase()}] ${e.ts.slice(11, 23)} ${e.msg}`)
+          .join("\n")
+          .slice(0, 14000);
+        addLine({ type: "system", text: `[Logs] ${stats.total} entries | ${stats.errors} errors | ${stats.warns} warns — sending to AI…` });
+        const res = await fetch("/api/admin/repair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({
+            message: `Analyze these recent server logs and answer the admin's question.\n\nSERVER LOGS (${entries.length} entries):\n\`\`\`\n${logText}\n\`\`\`\n\nAdmin: ${msg}`,
+            mode: "platform",
+            history: repairHistory,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          addLine({ type: "error", text: `ERROR ${res.status}: ${data.error ?? "Unknown"}` });
+          return;
+        }
+        addLine({ type: "ai", text: data.message });
+        if (data.changes?.length) for (const c of data.changes) addLine({ type: "system", text: `  • ${c}` });
+        if (data.applied?.length) for (const a of data.applied) addLine({ type: "file", text: `  ✓ ${a}` });
+        if (data.errors?.length) for (const e of data.errors) addLine({ type: "error", text: `  ✗ ${e}` });
+        setRepairHistory(prev => [...prev,
+          { role: "user" as const, content: msg },
+          { role: "assistant" as const, content: data.message },
+        ]);
+      } catch (err: any) {
+        addLine({ type: "error", text: `NETWORK ERROR: ${err.message}` });
+      } finally {
+        setLoading(false);
+        inputRef.current?.focus();
+      }
+      return;
+    }
 
     if (mode === "shell") {
       addLine({ type: "user", text: `$ ${msg}` });
@@ -545,6 +592,7 @@ function RepairTerminal() {
           message: msg,
           mode,
           projectId: mode === "project" ? projectId.trim() : undefined,
+          history: repairHistory,
         }),
       });
 
@@ -555,6 +603,10 @@ function RepairTerminal() {
         return;
       }
 
+      setRepairHistory(prev => [...prev,
+        { role: "user" as const, content: msg },
+        { role: "assistant" as const, content: data.message ?? "" },
+      ]);
       addLine({ type: "ai", text: data.message });
 
       if (data.changes?.length) {
@@ -602,7 +654,31 @@ function RepairTerminal() {
   }
 
   function clearTerminal() {
-    setLines([{ id: "clear", type: "system", text: "Terminal cleared.", timestamp: now() }]);
+    setLines([{ id: "clear", type: "system", text: "Terminal cleared. Conversation history reset.", timestamp: now() }]);
+    setRepairHistory([]);
+  }
+
+  async function fetchLogs(levelFilter?: "error" | "warn") {
+    setLoading(true);
+    addLine({ type: "system", text: `[Logs] Fetching recent server logs${levelFilter ? ` (${levelFilter} only)` : ""}…` });
+    try {
+      const token = getToken();
+      const url = `/api/admin/logs?n=250${levelFilter ? `&level=${levelFilter}` : ""}`;
+      const res = await fetch(url, { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+      const data = await res.json();
+      const { entries, stats } = data as { entries: Array<{ ts: string; level: string; msg: string }>; stats: { total: number; errors: number; warns: number } };
+      addLine({ type: "system", text: `[Logs] Buffer: ${stats.total} total | ${stats.errors} errors | ${stats.warns} warnings` });
+      for (const entry of entries.slice(-120)) {
+        const t = entry.ts.slice(11, 19);
+        const type = entry.level === "error" ? "error" : entry.level === "warn" ? "warn" : "system";
+        addLine({ type, text: `${t} [${entry.level.toUpperCase()}] ${entry.msg.slice(0, 220)}` });
+      }
+      addLine({ type: "success", text: `✓ Showing ${Math.min(entries.length, 120)} entries. Type a question to diagnose with AI.` });
+    } catch (err: any) {
+      addLine({ type: "error", text: `Failed to fetch logs: ${err.message}` });
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -658,6 +734,22 @@ function RepairTerminal() {
           >
             <Terminal className="w-3 h-3" /> Shell
           </button>
+          <button
+            onClick={() => { setMode("logs"); fetchLogs(); }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border transition-all ${
+              mode === "logs"
+                ? "border-yellow-500/60 bg-yellow-500/10 text-yellow-400"
+                : "border-border/50 text-muted-foreground hover:border-border"
+            }`}
+          >
+            <Activity className="w-3 h-3" /> Logs
+          </button>
+
+          {repairHistory.length > 0 && mode !== "shell" && (
+            <span className="text-xs font-mono text-primary/60 border border-primary/20 px-2 py-0.5 rounded ml-auto">
+              {repairHistory.length / 2} turn{repairHistory.length / 2 !== 1 ? "s" : ""} remembered
+            </span>
+          )}
 
           {mode === "platform" && (
             <span className="text-xs font-mono text-muted-foreground ml-2">
@@ -687,6 +779,32 @@ function RepairTerminal() {
               onChange={(e) => setShellCwd(e.target.value)}
               className="font-mono text-xs h-8 max-w-sm"
             />
+          </div>
+        )}
+
+        {mode === "logs" && (
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => fetchLogs()}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10 transition-all disabled:opacity-50"
+            >
+              <RefreshCw className="w-3 h-3" /> Refresh All Logs
+            </button>
+            <button
+              onClick={() => fetchLogs("error")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50"
+            >
+              <AlertTriangle className="w-3 h-3" /> Errors Only
+            </button>
+            <button
+              onClick={() => fetchLogs("warn")}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded border border-orange-500/40 text-orange-400 hover:bg-orange-500/10 transition-all disabled:opacity-50"
+            >
+              <AlertTriangle className="w-3 h-3" /> Warnings Only
+            </button>
           </div>
         )}
 
@@ -720,6 +838,8 @@ function RepairTerminal() {
               placeholder={
                 mode === "shell"
                   ? "e.g. pnpm add axios  |  pnpm install  |  ls node_modules/.bin  |  node --version"
+                  : mode === "logs"
+                  ? "e.g. Why is the server crashing?  |  Find all errors from the last hour  |  Fix whatever is failing"
                   : mode === "platform"
                   ? "e.g. Fix the rebuild button not working on mobile  |  Add a dark/light mode toggle to the sidebar"
                   : "e.g. Add a high score leaderboard  |  Fix the enemy collision detection  |  Add a pause menu"
@@ -795,7 +915,7 @@ function lineColor(type: TerminalLine["type"]) {
 
 const EXAMPLE_COMMANDS: Record<RepairMode, string[]> = {
   platform: [
-    "Fix the deploy button so it shows a success modal after clicking",
+    "Fix the rebuild button not working on mobile",
     "Add a 'Copy Project ID' button next to the project name",
     "Make the sidebar collapse on mobile screens automatically",
     "Add an error boundary so crashes show a helpful message instead of blank screen",
@@ -811,6 +931,12 @@ const EXAMPLE_COMMANDS: Record<RepairMode, string[]> = {
     "pnpm add eas-cli",
     "node --version && pnpm --version",
     "ls node_modules/.bin | grep eas",
+  ],
+  logs: [
+    "Why is the server crashing? Show me what to fix",
+    "Find and fix all errors in these logs",
+    "What DB errors are happening and how do I stop them?",
+    "Is there anything unusual in these logs I should know about?",
   ],
 };
 
