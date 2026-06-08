@@ -462,6 +462,18 @@ export async function ensureMainSchema(): Promise<void> {
         ON project_app_secrets (project_id)
     `);
 
+    // ----------------------------------------------------------------
+    // swarm_tier_config — editable model fallback chains for Hydra swarm
+    // ----------------------------------------------------------------
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS swarm_tier_config (
+        tier        TEXT PRIMARY KEY,
+        models      JSONB NOT NULL DEFAULT '[]',
+        updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_by  TEXT
+      )
+    `);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);

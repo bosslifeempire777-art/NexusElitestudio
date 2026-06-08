@@ -5,10 +5,10 @@ import { getToken } from "@/lib/auth";
 import {
   Terminal, Cpu, Bot, Plus, Play, Trash2, Save, Search,
   Loader2, AlertTriangle, ChevronRight, Sparkles, X,
-  Activity, RefreshCw, ChevronDown,
+  Activity, RefreshCw, ChevronDown, Layers,
 } from "lucide-react";
 
-type Tab = "console" | "models" | "agents" | "custom" | "telemetry";
+type Tab = "console" | "models" | "agents" | "custom" | "telemetry" | "swarm";
 
 type ModelInfo = {
   id: string; name: string; contextLength: number;
@@ -71,6 +71,7 @@ export default function CommandCenter() {
             { id: "agents",  label: "Built-in Agents", icon: Bot      },
             { id: "custom",  label: "My Agents",      icon: Plus     },
             { id: "telemetry", label: "Telemetry",    icon: Activity },
+            { id: "swarm",     label: "Swarm Config", icon: Layers   },
           ] as Array<{ id: Tab; label: string; icon: any }>).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -89,6 +90,7 @@ export default function CommandCenter() {
         {tab === "agents"  && <BuiltinAgentsTab />}
         {tab === "custom"  && <CustomAgentsTab    />}
         {tab === "telemetry" && <TelemetryTab />}
+        {tab === "swarm"     && <SwarmTab />}
       </div>
     </AppLayout>
   );
@@ -685,6 +687,276 @@ function Meta({ label, value }: { label: string; value: string }) {
     <div className="flex gap-2">
       <span className="text-muted-foreground w-28 shrink-0">{label}</span>
       <span className="font-mono text-foreground/80 break-all">{value}</span>
+    </div>
+  );
+}
+
+/* ─────────────────────── SWARM CONFIG ─────────────────────── */
+
+type SwarmTiers = Record<string, string[]>;
+
+const TIER_META: Record<string, { label: string; desc: string; accent: string }> = {
+  reasoning: { label: "🧠 Reasoning", desc: "Deep thinking, planning, complex analysis",    accent: "border-violet-500/50" },
+  coding:    { label: "💻 Coding",    desc: "Code generation, debugging, refactoring",       accent: "border-blue-500/50"   },
+  fast:      { label: "⚡ Fast",      desc: "Quick tasks, summaries, lightweight drafts",    accent: "border-yellow-500/50" },
+  longctx:   { label: "📜 Long Ctx",  desc: "Large files, full-codebase analysis",           accent: "border-emerald-500/50"},
+  critic:    { label: "🔍 Critic",    desc: "Code review, critique, QA validation",          accent: "border-orange-500/50" },
+  creative:  { label: "🎨 Creative",  desc: "UI copy, game design, creative writing",        accent: "border-pink-500/50"   },
+};
+
+function SwarmTab() {
+  const [tiers, setTiers]       = useState<SwarmTiers>({});
+  const [defaults, setDefaults] = useState<SwarmTiers>({});
+  const [models, setModels]     = useState<ModelInfo[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [savedAt, setSavedAt]   = useState<number | null>(null);
+  const [search, setSearch]     = useState<Record<string, string>>({});
+  const [open, setOpen]         = useState<string | null>(null);
+  const dropRef                 = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [td, m] = await Promise.all([
+        fetchJson("/api/command-center/swarm-tiers"),
+        fetchJson("/api/command-center/openrouter/models"),
+      ]);
+      setTiers(td.tiers  || {});
+      setDefaults(td.defaults || {});
+      setModels(m.data   || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { reload().catch(console.error); }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (open && dropRef.current[open] && !dropRef.current[open]!.contains(e.target as Node)) {
+        setOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const effectiveTiers = (tier: string): string[] =>
+    tiers[tier] ?? defaults[tier] ?? [];
+
+  const isCustomized = (tier: string): boolean =>
+    !!tiers[tier];
+
+  const removeModel = (tier: string, idx: number) =>
+    setTiers(prev => {
+      const current = effectiveTiers(tier);
+      return { ...prev, [tier]: current.filter((_, i) => i !== idx) };
+    });
+
+  const moveModel = (tier: string, idx: number, dir: -1 | 1) =>
+    setTiers(prev => {
+      const arr = [...effectiveTiers(tier)];
+      const target = idx + dir;
+      if (target < 0 || target >= arr.length) return prev;
+      [arr[idx], arr[target]] = [arr[target], arr[idx]];
+      return { ...prev, [tier]: arr };
+    });
+
+  const addModel = (tier: string, modelId: string) => {
+    const id = modelId.trim();
+    if (!id) return;
+    setTiers(prev => {
+      const current = effectiveTiers(tier);
+      if (current.includes(id)) return prev;
+      return { ...prev, [tier]: [...current, id] };
+    });
+    setSearch(prev => ({ ...prev, [tier]: "" }));
+    setOpen(null);
+  };
+
+  const resetTier = async (tier: string) => {
+    await fetchJson(`/api/command-center/swarm-tiers/${tier}`, { method: "DELETE" });
+    setTiers(prev => { const n = { ...prev }; delete n[tier]; return n; });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await fetchJson("/api/command-center/swarm-tiers", {
+        method: "PUT",
+        body: JSON.stringify({ tiers }),
+      });
+      setSavedAt(Date.now());
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const filteredModels = (tier: string) => {
+    const q = (search[tier] || "").toLowerCase();
+    const base = q ? models.filter(m => m.id.toLowerCase().includes(q) || (m.name || "").toLowerCase().includes(q)) : models;
+    return base.slice(0, 80);
+  };
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground">
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading swarm config…
+    </div>
+  );
+
+  const justSaved = savedAt && Date.now() - savedAt < 4000;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="font-bold text-base">AI Swarm Tier Configuration</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Models are tried in order — top wins. Changes save to the database and take effect immediately (no restart needed).
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" onClick={reload} disabled={loading} className="h-8 px-3 text-xs gap-1.5">
+            <RefreshCw className="w-3 h-3" /> Refresh
+          </Button>
+          <Button onClick={save} disabled={saving} className="h-8 px-3 text-xs gap-1.5">
+            {saving
+              ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
+              : justSaved
+              ? <><span className="text-green-400">✓</span> Saved</>
+              : <><Save className="w-3 h-3" /> Save All</>}
+          </Button>
+        </div>
+      </div>
+
+      {/* Tier grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {Object.entries(TIER_META).map(([tier, meta]) => {
+          const tierModels = effectiveTiers(tier);
+          const customized = isCustomized(tier);
+          const q = search[tier] || "";
+
+          return (
+            <Card key={tier} className={`border ${meta.accent}`}>
+              <CardHeader className="pb-2 pt-3 px-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-sm font-bold">{meta.label}</CardTitle>
+                    <p className="text-[11px] text-muted-foreground">{meta.desc}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {customized && (
+                      <Badge variant="outline" className="text-[9px] font-mono text-primary border-primary/40">custom</Badge>
+                    )}
+                    <button
+                      onClick={() => resetTier(tier)}
+                      title="Reset to built-in defaults"
+                      className="text-[10px] text-muted-foreground hover:text-foreground border border-border/40 rounded px-1.5 py-0.5 transition-colors"
+                    >
+                      reset
+                    </button>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="px-4 pb-4 space-y-2">
+                {/* Model list */}
+                <div className="space-y-1">
+                  {tierModels.length === 0 && (
+                    <div className="text-xs text-muted-foreground italic py-1">
+                      No models saved — using built-in defaults
+                    </div>
+                  )}
+                  {tierModels.map((model, idx) => (
+                    <div
+                      key={`${model}-${idx}`}
+                      className="flex items-center gap-2 bg-black/40 border border-border/30 rounded px-2 py-1.5 group"
+                    >
+                      <span className="text-[10px] text-muted-foreground font-mono w-4 text-right shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="text-xs font-mono flex-1 truncate" title={model}>{model}</span>
+                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => moveModel(tier, idx, -1)}
+                          disabled={idx === 0}
+                          className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                          title="Move up"
+                        >▲</button>
+                        <button
+                          onClick={() => moveModel(tier, idx, 1)}
+                          disabled={idx === tierModels.length - 1}
+                          className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                          title="Move down"
+                        >▼</button>
+                        <button
+                          onClick={() => removeModel(tier, idx)}
+                          className="p-0.5 text-muted-foreground hover:text-red-400 transition-colors"
+                          title="Remove"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add model dropdown */}
+                <div
+                  className="relative"
+                  ref={el => { dropRef.current[tier] = el; }}
+                >
+                  <div className="flex gap-1.5">
+                    <input
+                      value={q}
+                      onChange={e => {
+                        setSearch(prev => ({ ...prev, [tier]: e.target.value }));
+                        setOpen(tier);
+                      }}
+                      onFocus={() => setOpen(tier)}
+                      placeholder="Search & add model…"
+                      className="flex-1 bg-black/60 border border-border/60 rounded px-2 py-1 text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => addModel(tier, q)}
+                      disabled={!q.trim()}
+                      className="h-7 w-7 p-0 shrink-0"
+                      title="Add model ID"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </Button>
+                  </div>
+
+                  {open === tier && filteredModels(tier).length > 0 && (
+                    <div className="absolute z-50 top-full left-0 right-8 mt-1 bg-[#0a0a12] border border-border rounded shadow-2xl max-h-52 overflow-y-auto">
+                      {filteredModels(tier).map(m => (
+                        <button
+                          key={m.id}
+                          onMouseDown={e => { e.preventDefault(); addModel(tier, m.id); }}
+                          className="w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-primary/10 transition-colors border-b border-border/20 last:border-0"
+                        >
+                          <div className="truncate text-foreground/90">{m.id}</div>
+                          {m.name && m.name !== m.id && (
+                            <div className="text-[10px] text-muted-foreground truncate">{m.name}</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <p className="text-[11px] text-muted-foreground text-center">
+        Tip: The swarm tries model #1 first — if it fails or times out it moves to #2, then #3, etc. Put your cheapest/fastest models at the top for cost savings.
+      </p>
     </div>
   );
 }

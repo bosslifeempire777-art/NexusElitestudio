@@ -45,6 +45,19 @@ export const consoleHistoryTable = pgTable("console_history", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/**
+ * Stores the per-tier model fallback chains for the Hydra swarm.
+ * One row per tier name (reasoning, coding, fast, longctx, critic, creative).
+ * When empty the server falls back to hardcoded defaults in hydraSwarm.ts.
+ */
+export const swarmTierConfigTable = pgTable("swarm_tier_config", {
+  tier:      text("tier").primaryKey(),
+  models:    jsonb("models").notNull().default([]).$type<string[]>(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
 export type CustomAgent          = typeof customAgentsTable.$inferSelect;
 export type AgentModelAssignment = typeof agentModelAssignmentsTable.$inferSelect;
 export type ConsoleHistory       = typeof consoleHistoryTable.$inferSelect;
+export type SwarmTierConfig      = typeof swarmTierConfigTable.$inferSelect;

@@ -9,6 +9,8 @@
  */
 
 import { chatViaSdk } from "./openrouterSdk.js";
+import { db } from "@workspace/db";
+import { sql } from "drizzle-orm";
 
 // ============================================================
 // CONFIG
@@ -83,6 +85,36 @@ export const MODEL_TIERS: Record<string, string[]> = {
     "qwen/qwen3-coder:free",
   ],
 };
+
+// ============================================================
+// DYNAMIC TIER LOADING — reads from DB, falls back to defaults
+// Cache invalidated when admin saves via Command Center.
+// ============================================================
+
+let _tierCache: { ts: number; tiers: Record<string, string[]> } | null = null;
+const TIER_CACHE_MS = 60_000;
+
+export function invalidateTierCache(): void {
+  _tierCache = null;
+}
+
+async function getActiveTiers(): Promise<Record<string, string[]>> {
+  if (_tierCache && Date.now() - _tierCache.ts < TIER_CACHE_MS) {
+    return _tierCache.tiers;
+  }
+  try {
+    const result = await db.execute(sql`SELECT tier, models FROM swarm_tier_config`);
+    const tiers: Record<string, string[]> = { ...MODEL_TIERS };
+    for (const row of (result as any).rows ?? []) {
+      const models = Array.isArray(row.models) ? (row.models as string[]) : [];
+      if (models.length > 0) tiers[String(row.tier)] = models;
+    }
+    _tierCache = { ts: Date.now(), tiers };
+    return tiers;
+  } catch {
+    return MODEL_TIERS;
+  }
+}
 
 // ============================================================
 // SEMAPHORE — cap concurrent API calls in Node.js
@@ -163,7 +195,8 @@ export async function callLlm(
   mem?:      SharedMemory,
   onLog?:    (msg: string) => void,
 ): Promise<string> {
-  const chain   = MODEL_TIERS[tier] ?? MODEL_TIERS.coding;
+  const _tiers  = await getActiveTiers();
+  const chain   = _tiers[tier] ?? _tiers.coding ?? MODEL_TIERS.coding;
   let lastErr: any = null;
 
   await _semaphore.acquire();

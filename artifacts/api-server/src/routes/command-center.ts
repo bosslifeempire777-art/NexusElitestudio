@@ -8,7 +8,8 @@ import {
   agentModelAssignmentsTable,
   consoleHistoryTable,
 } from "@workspace/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
+import { MODEL_TIERS, invalidateTierCache } from "../lib/hydraSwarm.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
@@ -439,5 +440,65 @@ router.delete("/telemetry", async (_req, res) => {
 function empty() {
   return { totalRuns: 0, success: 0, errors: 0, totalTokens: 0 };
 }
+
+/* ── Swarm tier configuration ─────────────────────────────── */
+const VALID_TIERS = ["reasoning", "coding", "fast", "longctx", "critic", "creative"];
+
+router.get("/swarm-tiers", async (_req, res) => {
+  try {
+    const result = await db.execute(sql`SELECT tier, models, updated_at, updated_by FROM swarm_tier_config`);
+    const saved: Record<string, string[]> = {};
+    for (const row of (result as any).rows ?? []) {
+      saved[String(row.tier)] = Array.isArray(row.models) ? row.models as string[] : [];
+    }
+    res.json({ tiers: saved, defaults: MODEL_TIERS });
+  } catch (err: any) {
+    res.status(500).json({ error: "fetch_failed", message: err.message });
+  }
+});
+
+router.put("/swarm-tiers", async (req, res) => {
+  const userId = req.auth!.userId;
+  const { tiers } = req.body ?? {};
+  if (!tiers || typeof tiers !== "object") {
+    res.status(400).json({ error: "tiers object required" }); return;
+  }
+  try {
+    for (const [tier, models] of Object.entries(tiers)) {
+      if (!VALID_TIERS.includes(tier)) continue;
+      if (!Array.isArray(models)) continue;
+      const clean = (models as string[])
+        .filter(m => typeof m === "string" && m.trim().length > 0)
+        .map(m => m.trim())
+        .slice(0, 20);
+      await db.execute(sql`
+        INSERT INTO swarm_tier_config (tier, models, updated_at, updated_by)
+        VALUES (${tier}, ${JSON.stringify(clean)}::jsonb, NOW(), ${userId})
+        ON CONFLICT (tier) DO UPDATE SET
+          models     = EXCLUDED.models,
+          updated_at = NOW(),
+          updated_by = ${userId}
+      `);
+    }
+    invalidateTierCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "save_failed", message: err.message });
+  }
+});
+
+router.delete("/swarm-tiers/:tier", async (req, res) => {
+  const { tier } = req.params;
+  if (!VALID_TIERS.includes(tier)) {
+    res.status(400).json({ error: "invalid tier" }); return;
+  }
+  try {
+    await db.execute(sql`DELETE FROM swarm_tier_config WHERE tier = ${tier}`);
+    invalidateTierCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "delete_failed", message: err.message });
+  }
+});
 
 export default router;
