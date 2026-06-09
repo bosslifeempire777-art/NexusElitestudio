@@ -1,5 +1,6 @@
 import { useParams } from "wouter";
 import { AppLayout } from "@/components/layout/AppLayout";
+import GenesisSwarmDiagram from "@/components/GenesisSwarmDiagram";
 import {
   useGetProject,
   useGetProjectBuildLogs,
@@ -1306,7 +1307,7 @@ export default function ProjectDetail() {
               {/* Preview canvas */}
               <div className={`flex-1 flex flex-col items-center overflow-auto bg-[#0a0a0f] ${splitView ? 'min-h-0' : ''}`} style={splitView ? { flex: '1 1 55%' } : undefined}>
                 {project.status === 'building' ? (
-                  <BuildingState logs={logs} />
+                  <BuildingState logs={logs} projectId={projectId} prompt={project.prompt ?? ""} />
                 ) : (
                   <>
                     {project.type === 'game' && (
@@ -2742,30 +2743,14 @@ function OrchestratorPanel({
 }
 
 /* ── Building state ── */
-function BuildingState({ logs }: { logs: any[] | undefined }) {
+function BuildingState({ logs: _logs, projectId, prompt }: { logs?: any; projectId?: string; prompt?: string }) {
   return (
-    <div className="flex-1 flex items-center justify-center flex-col gap-6 text-muted-foreground font-mono p-8 w-full">
-      <div className="relative">
-        <div className="w-20 h-20 rounded-full border-2 border-primary/20 flex items-center justify-center">
-          <Loader2 className="w-10 h-10 animate-spin text-primary" />
-        </div>
-        <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-ping" style={{ animationDuration: '2s' }} />
-      </div>
-      <div className="text-center space-y-2">
-        <p className="text-primary text-sm font-semibold tracking-widest uppercase">Agent Swarm Active</p>
-        <p className="text-xs text-muted-foreground">Building your application — preview will appear automatically when complete</p>
-      </div>
-      <div className="w-full max-w-sm space-y-2 bg-secondary/20 rounded p-3 border border-border/30">
-        {(logs || []).slice(-5).map((log, i) => (
-          <div key={i} className="text-xs font-mono text-muted-foreground/70 truncate">
-            <span className="text-primary/60">&gt;</span> {log.message}
-          </div>
-        ))}
-        <div className="flex items-center gap-2 text-xs text-primary/80 mt-1">
-          <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
-          <span className="animate-pulse">Processing...</span>
-        </div>
-      </div>
+    <div className="flex-1 flex flex-col w-full h-full overflow-hidden">
+      <GenesisSwarmDiagram
+        projectId={projectId}
+        isBuilding
+        prompt={prompt}
+      />
     </div>
   );
 }
