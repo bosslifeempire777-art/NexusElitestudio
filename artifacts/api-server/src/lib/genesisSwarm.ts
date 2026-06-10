@@ -761,24 +761,33 @@ async function runGuardianPass(
   const reviewChain    = [reviewerRole.primary.slug, ...reviewerRole.fallbacks.map(f => f.slug)];
   const repairChain    = [repairRole.primary.slug,   ...repairRole.fallbacks.map(f => f.slug)];
 
-  for (const [filePath, code] of fileEntries) {
-    const sysBase  = `Review code. JSON: {"verdict":"pass"|"fix","severity":"low"|"med"|"high","issues":[]}`;
-    const ctx      = `FILE: ${filePath}\n\n${code.slice(0, 6000)}`;
+  const sysBase = `Review code. JSON: {"verdict":"pass"|"fix","severity":"low"|"med"|"high","issues":[]}`;
 
-    const outs = await Promise.allSettled(
-      CRITICS.map(([n, r]) =>
-        _callChain(reviewChain, ctx, `You are ${n}, a ${r}. ${sysBase}`, 1500, 0.2, true, n, mem)
-      )
-    );
+  const fileResults = await Promise.allSettled(
+    fileEntries.map(async ([filePath, code]) => {
+      const ctx  = `FILE: ${filePath}\n\n${code.slice(0, 6000)}`;
+      const outs = await Promise.allSettled(
+        CRITICS.map(([n, r]) =>
+          _callChain(reviewChain, ctx, `You are ${n}, a ${r}. ${sysBase}`, 1500, 0.2, true, n, mem)
+        )
+      );
 
-    const issues: string[] = [];
-    let needsFix = false;
-    for (const o of outs) {
-      if (o.status !== "fulfilled") continue;
-      const d = extractJson(o.value);
-      if (Array.isArray(d?.issues)) issues.push(...(d.issues as string[]));
-      if (d?.verdict === "fix" && ["med", "high"].includes(d?.severity)) needsFix = true;
-    }
+      const issues: string[] = [];
+      let needsFix = false;
+      for (const o of outs) {
+        if (o.status !== "fulfilled") continue;
+        const d = extractJson(o.value);
+        if (Array.isArray(d?.issues)) issues.push(...(d.issues as string[]));
+        if (d?.verdict === "fix" && ["med", "high"].includes(d?.severity)) needsFix = true;
+      }
+
+      return { filePath, code, issues, needsFix };
+    })
+  );
+
+  for (const r of fileResults) {
+    if (r.status === "rejected") { escalated++; continue; }
+    const { filePath, code, issues, needsFix } = r.value;
 
     if (!needsFix || issues.length === 0) {
       passed++;
