@@ -1690,6 +1690,96 @@ function AgentTerminal({
       }
     });
 
+  const sendMessage = useCallback(async (text: string, action?: string) => {
+    const userText = (text.trim() || action || "").trim();
+    if (!userText) return;
+
+    setIsLoading(true);
+    setInput("");
+
+    // Reset the swarm grid for a fresh run (clear prior ✓ marks, live ticker,
+    // build logs, and any still-pending fade timers from a previous build so
+    // they can't fire mid-run and pollute the new state).
+    clearAgentTimers();
+    setBuildLogs([]);
+    setCompletedKeys(new Set());
+    setActiveKeys(new Set());
+    setCurrentAgentKey(null);
+    setCurrentTask("Dispatching swarm…");
+
+    // Open a new work-block folder for this exchange. Set pendingBuildRef
+    // BEFORE the fetch so an early SSE __DONE__ can never be lost (race fix).
+    pendingBuildRef.current = true;
+    const blockId = `wb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    currentBlockIdRef.current = blockId;
+    setWorkBlocks(prev => [...prev, {
+      id: blockId,
+      userMessage: userText,
+      startedAt: Date.now(),
+      completedAt: null,
+      steps: [],
+      buildLogs: [],
+      agents: [],
+      reply: null,
+    }]);
+
+    // Stream simulated narration steps into the block (cosmetic — adds rhythm)
+    const steps = getStepsForMessage(userText);
+    const STEP_MS = 600;
+    let stepIdx = 0;
+    intervalRef.current = setInterval(() => {
+      stepIdx += 1;
+      const partial = steps.slice(0, stepIdx);
+      setWorkBlocks(prev => prev.map(b => b.id === blockId ? { ...b, steps: partial } : b));
+      if (stepIdx >= steps.length) {
+        clearInterval(intervalRef.current!);
+      }
+    }, STEP_MS);
+
+    let apiReply = "Task received — agents are processing your request.";
+    let didTriggerBuild = false;
+    try {
+      const token = typeof localStorage !== "undefined" ? localStorage.getItem("nexus-token") : null;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`/api/projects/${projectId}/chat`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ message: text.trim() || undefined, action }),
+      });
+      const data = await res.json();
+      apiReply = data.reply || apiReply;
+      if (data.updating) {
+        // Build is in flight; pendingBuildRef stays true; SSE will close the block.
+        didTriggerBuild = true;
+        onUpdateStarted?.();
+      } else {
+        // No build triggered; clear the optimistic flag.
+        pendingBuildRef.current = false;
+      }
+    } catch {
+      apiReply = "Request queued — the swarm will process this when connectivity is restored.";
+      pendingBuildRef.current = false;
+    }
+
+    // Always attach the reply to the block (visible when expanded)
+    setWorkBlocks(prev => prev.map(b => b.id === blockId ? { ...b, reply: apiReply } : b));
+
+    if (!didTriggerBuild) {
+      // No real build — close the block once narration finishes.
+      const totalStepTime = steps.length * STEP_MS + 400;
+      await new Promise(r => setTimeout(r, totalStepTime));
+      clearInterval(intervalRef.current!);
+      setWorkBlocks(prev => prev.map(b => b.id === blockId && b.completedAt === null
+        ? { ...b, completedAt: Date.now(), steps } : b));
+      if (currentBlockIdRef.current === blockId) currentBlockIdRef.current = null;
+    }
+    // If a build WAS triggered, the SSE __DONE__ handler will close the block.
+
+    setIsLoading(false);
+    inputRef.current?.focus();
+  }, [projectId, onUpdateStarted]);
+
   const handleSend = useCallback(async () => {
     let text = input;
     if (attachedFiles.length > 0) {
@@ -1855,96 +1945,6 @@ function AgentTerminal({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, workBlocks, buildLogs]);
-
-  const sendMessage = useCallback(async (text: string, action?: string) => {
-    const userText = (text.trim() || action || "").trim();
-    if (!userText) return;
-
-    setIsLoading(true);
-    setInput("");
-
-    // Reset the swarm grid for a fresh run (clear prior ✓ marks, live ticker,
-    // build logs, and any still-pending fade timers from a previous build so
-    // they can't fire mid-run and pollute the new state).
-    clearAgentTimers();
-    setBuildLogs([]);
-    setCompletedKeys(new Set());
-    setActiveKeys(new Set());
-    setCurrentAgentKey(null);
-    setCurrentTask("Dispatching swarm…");
-
-    // Open a new work-block folder for this exchange. Set pendingBuildRef
-    // BEFORE the fetch so an early SSE __DONE__ can never be lost (race fix).
-    pendingBuildRef.current = true;
-    const blockId = `wb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    currentBlockIdRef.current = blockId;
-    setWorkBlocks(prev => [...prev, {
-      id: blockId,
-      userMessage: userText,
-      startedAt: Date.now(),
-      completedAt: null,
-      steps: [],
-      buildLogs: [],
-      agents: [],
-      reply: null,
-    }]);
-
-    // Stream simulated narration steps into the block (cosmetic — adds rhythm)
-    const steps = getStepsForMessage(userText);
-    const STEP_MS = 600;
-    let stepIdx = 0;
-    intervalRef.current = setInterval(() => {
-      stepIdx += 1;
-      const partial = steps.slice(0, stepIdx);
-      setWorkBlocks(prev => prev.map(b => b.id === blockId ? { ...b, steps: partial } : b));
-      if (stepIdx >= steps.length) {
-        clearInterval(intervalRef.current!);
-      }
-    }, STEP_MS);
-
-    let apiReply = "Task received — agents are processing your request.";
-    let didTriggerBuild = false;
-    try {
-      const token = typeof localStorage !== "undefined" ? localStorage.getItem("nexus-token") : null;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(`/api/projects/${projectId}/chat`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ message: text.trim() || undefined, action }),
-      });
-      const data = await res.json();
-      apiReply = data.reply || apiReply;
-      if (data.updating) {
-        // Build is in flight; pendingBuildRef stays true; SSE will close the block.
-        didTriggerBuild = true;
-        onUpdateStarted?.();
-      } else {
-        // No build triggered; clear the optimistic flag.
-        pendingBuildRef.current = false;
-      }
-    } catch {
-      apiReply = "Request queued — the swarm will process this when connectivity is restored.";
-      pendingBuildRef.current = false;
-    }
-
-    // Always attach the reply to the block (visible when expanded)
-    setWorkBlocks(prev => prev.map(b => b.id === blockId ? { ...b, reply: apiReply } : b));
-
-    if (!didTriggerBuild) {
-      // No real build — close the block once narration finishes.
-      const totalStepTime = steps.length * STEP_MS + 400;
-      await new Promise(r => setTimeout(r, totalStepTime));
-      clearInterval(intervalRef.current!);
-      setWorkBlocks(prev => prev.map(b => b.id === blockId && b.completedAt === null
-        ? { ...b, completedAt: Date.now(), steps } : b));
-      if (currentBlockIdRef.current === blockId) currentBlockIdRef.current = null;
-    }
-    // If a build WAS triggered, the SSE __DONE__ handler will close the block.
-
-    setIsLoading(false);
-    inputRef.current?.focus();
-  }, [projectId, onUpdateStarted]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

@@ -21,7 +21,7 @@ Replit's pid1 sidecar registers BOTH services for `/`. It routes healthcheck pro
 - **ai-studio** `artifact.toml`: `paths = []` → completely removed from pid1 routing. Build still runs; Express serves the output.
 - **api-server** `artifact.toml`: `paths = ["/"]` → Express is the sole HTTP gateway for everything.
 
-**Why:** Express already handles static serving + SPA fallback + API (from bc852b7's app.ts changes). Making Express the sole gateway eliminates the first-match ambiguity entirely.
+**Why:** Express already handles static serving + SPA fallback + API. Making Express the sole gateway eliminates the first-match ambiguity entirely.
 
 **Do NOT** put ai-studio at paths=["/"] with a wildcard rewrite AND api-server at paths=["/api"]. pid1 first-match will intercept /api/* via ai-studio.
 
