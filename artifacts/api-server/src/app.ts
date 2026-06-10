@@ -2,19 +2,22 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import cors from "cors";
 import { existsSync, readFileSync } from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import router from "./routes";
 import { trafficLogger } from "./lib/traffic-log.js";
 import { deploymentHost } from "./middleware/deployment-host.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Resolve the built frontend directory.
+// Dev (tsx):  process.cwd() = .../artifacts/api-server   → go up one to artifacts/
+// Prod (CJS): process.cwd() = workspace root              → go into artifacts/
+// esbuild hard-codes NODE_ENV="production" in the bundle so this branch is
+// resolved at build time and the correct literal path is inlined.
+const staticDir = process.env.NODE_ENV === "production"
+  ? path.resolve(process.cwd(), "artifacts/ai-studio/dist/public")
+  : path.resolve(process.cwd(), "../ai-studio/dist/public");
 
 const app: Express = express();
 
 // ── Diagnostic request logger ──────────────────────────────────────────────
-// Logs every inbound request before any middleware touches it.
-// This helps confirm whether the healthcheck probe even reaches Express.
 app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`[req] ${req.method} ${req.url} host=${req.headers.host ?? "-"}`);
   next();
@@ -22,13 +25,11 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 
 // ── Root / health route ────────────────────────────────────────────────────
 // Registered FIRST — before cors, trafficLogger, or anything that patches res.
-// Uses raw Node.js writeHead/end (not Express helpers) so no abstraction layer
-// can intercept or change the status code.
+// Uses raw Node.js writeHead/end so no abstraction layer can change the status.
 app.get("/", (_req: Request, res: Response) => {
-  console.log("[GET /] handler called");
-  const indexPath = path.resolve(__dirname, "../../ai-studio/dist/public/index.html");
+  const indexPath = path.join(staticDir, "index.html");
   const exists = existsSync(indexPath);
-  console.log(`[GET /] indexPath=${indexPath} exists=${exists}`);
+  console.log(`[GET /] staticDir=${staticDir} indexExists=${exists}`);
   try {
     if (exists) {
       const html = readFileSync(indexPath, "utf-8");
@@ -38,7 +39,6 @@ app.get("/", (_req: Request, res: Response) => {
       (res as any).writeHead(200, { "Content-Type": "application/json" });
       (res as any).end('{"status":"ok"}');
     }
-    console.log("[GET /] response sent");
   } catch (e: any) {
     console.error("[GET /] error:", e?.message);
     if (!(res as any).headersSent) {
@@ -72,9 +72,7 @@ app.use("/api", (_req: Request, res: Response) => {
   res.status(404).json({ error: "API endpoint not found" });
 });
 
-// In production, serve the built AI Studio frontend so the Express server
-// handles everything on a single port.
-const staticDir = path.resolve(__dirname, "../../ai-studio/dist/public");
+// Serve the built AI Studio frontend and handle client-side SPA routing.
 if (existsSync(staticDir)) {
   app.use(express.static(staticDir, { index: false }));
 
@@ -91,8 +89,6 @@ if (existsSync(staticDir)) {
 }
 
 // Global Express error handler — MUST be last, 4-argument signature required.
-// Logs the error and returns 500 JSON. Without this, Express uses its default
-// handler which returns HTML — this makes errors visible in production logs.
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("[express-error]", err?.name, err?.message);
   if (err?.stack) console.error(err.stack.split("\n").slice(0, 3).join("\n"));
