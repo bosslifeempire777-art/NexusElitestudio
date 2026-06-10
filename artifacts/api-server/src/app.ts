@@ -2,9 +2,13 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import cors from "cors";
 import { existsSync, readFileSync } from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import router from "./routes";
 import { trafficLogger } from "./lib/traffic-log.js";
 import { deploymentHost } from "./middleware/deployment-host.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app: Express = express();
 
@@ -22,7 +26,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 // can intercept or change the status code.
 app.get("/", (_req: Request, res: Response) => {
   console.log("[GET /] handler called");
-  const indexPath = path.resolve("artifacts/ai-studio/dist/public/index.html");
+  const indexPath = path.resolve(__dirname, "../../ai-studio/dist/public/index.html");
   const exists = existsSync(indexPath);
   console.log(`[GET /] indexPath=${indexPath} exists=${exists}`);
   try {
@@ -70,7 +74,7 @@ app.use("/api", (_req: Request, res: Response) => {
 
 // In production, serve the built AI Studio frontend so the Express server
 // handles everything on a single port.
-const staticDir = path.resolve("artifacts/ai-studio/dist/public");
+const staticDir = path.resolve(__dirname, "../../ai-studio/dist/public");
 if (existsSync(staticDir)) {
   app.use(express.static(staticDir, { index: false }));
 
