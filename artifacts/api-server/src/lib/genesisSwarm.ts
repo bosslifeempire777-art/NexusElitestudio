@@ -151,8 +151,60 @@ export const ROLE_REGISTRY: Record<"cost" | "premium" | "guardian", Partial<Reco
 };
 
 // Concierge uses fast/capable models for routing
-const CONCIERGE_MODEL  = "google/gemini-2.5-flash";
+const CONCIERGE_MODEL     = "google/gemini-2.5-flash";
 const CONCIERGE_FALLBACKS = ["openai/gpt-4o-mini", "deepseek/deepseek-chat"];
+
+// ─────────────────────────────────────────────────────────────
+// LIVE REGISTRY — DB overrides applied before each build
+// ─────────────────────────────────────────────────────────────
+
+let _activeRegistry: typeof ROLE_REGISTRY = ROLE_REGISTRY;
+let _conciergeModel                        = CONCIERGE_MODEL;
+let _conciergeChain                        = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+
+async function loadLiveRegistry(): Promise<void> {
+  try {
+    const result = await db.execute(sql`
+      SELECT tier, role, primary_slug, fallbacks FROM swarm_role_config
+    `);
+    const rows = (result as any).rows ?? [];
+    if (rows.length === 0) {
+      _activeRegistry = ROLE_REGISTRY;
+      _conciergeModel = CONCIERGE_MODEL;
+      _conciergeChain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+      return;
+    }
+    const live = JSON.parse(JSON.stringify(ROLE_REGISTRY)) as typeof ROLE_REGISTRY;
+    let conciergeRow: { primary: string; fallbacks: string[] } | null = null;
+    for (const row of rows) {
+      const tier    = String(row.tier);
+      const role    = String(row.role) as RoleName;
+      const primary = String(row.primary_slug);
+      const fb: string[] = Array.isArray(row.fallbacks) ? row.fallbacks.map(String) : [];
+      if (tier === "concierge" && role === ("main" as RoleName)) {
+        conciergeRow = { primary, fallbacks: fb };
+        continue;
+      }
+      const t = tier as "cost" | "premium" | "guardian";
+      if (live[t]?.[role]) {
+        live[t][role]!.primary   = { slug: primary };
+        live[t][role]!.fallbacks = fb.map(s => ({ slug: s }));
+      }
+    }
+    _activeRegistry = live;
+    if (conciergeRow) {
+      _conciergeModel = conciergeRow.primary || CONCIERGE_MODEL;
+      _conciergeChain = [_conciergeModel, ...(conciergeRow.fallbacks.length ? conciergeRow.fallbacks : CONCIERGE_FALLBACKS)];
+    } else {
+      _conciergeModel = CONCIERGE_MODEL;
+      _conciergeChain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+    }
+  } catch {
+    _activeRegistry = ROLE_REGISTRY;
+    _conciergeModel = CONCIERGE_MODEL;
+    _conciergeChain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // MODEL_TIERS — backward compat for Command Center / DB config
@@ -352,7 +404,7 @@ export async function callByRole(
   mem?:        SharedMemory,
   onLog?:      (msg: string) => void,
 ): Promise<{ text: string; modelUsed: string }> {
-  const roleConf = ROLE_REGISTRY[swarmTier]?.[role] ?? ROLE_REGISTRY.cost.BACKEND_CODER!;
+  const roleConf = _activeRegistry[swarmTier]?.[role] ?? _activeRegistry.cost.BACKEND_CODER!;
   const chain    = [roleConf.primary.slug, ...roleConf.fallbacks.map(f => f.slug)];
   const text     = await _callChain(chain, prompt, system, maxTokens, temperature, jsonMode, agentName, mem, onLog);
   return { text, modelUsed: chain[0] };
@@ -499,14 +551,14 @@ async function runConcierge(
 ): Promise<{ tier: "cost" | "premium"; spec: string }> {
   swarmLog(onLog,
     `🎩 [Concierge] Analysing project request...`,
-    { type: "concierge", model: CONCIERGE_MODEL, tier: "cost" },
+    { type: "concierge", model: _conciergeModel, tier: "cost" },
   );
 
   const system = `You are the Genesis Swarm Concierge. Classify the request and choose a build tier.
 Return ONLY JSON: {"tier":"cost"|"premium","spec":"detailed build specification starting from the user prompt","action":"spawn_swarm"}
 Use "premium" only when the user says "best quality", "no compromises", or it's a mission-critical system.`;
 
-  const chain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+  const chain = _conciergeChain;
   let raw = "";
   try {
     raw = await _callChain(chain, userPrompt, system, 2000, 0.3, true, "Concierge", mem, onLog);
@@ -520,7 +572,7 @@ Use "premium" only when the user says "best quality", "no compromises", or it's 
 
   swarmLog(onLog,
     `🎩 [Concierge] Routing to ${tier.toUpperCase()} swarm`,
-    { type: "concierge", model: CONCIERGE_MODEL, tier },
+    { type: "concierge", model: _conciergeModel, tier },
   );
 
   return { tier, spec };
@@ -536,7 +588,7 @@ async function runOrchestration(
   mem:       SharedMemory,
   onLog:     (msg: string) => void,
 ): Promise<{ blueprint: Record<string, any>; tdd: Record<string, any>; departments: string[] }> {
-  const plannerRole = ROLE_REGISTRY[swarmTier]?.PLANNER ?? ROLE_REGISTRY.cost.PLANNER!;
+  const plannerRole = _activeRegistry[swarmTier]?.PLANNER ?? _activeRegistry.cost.PLANNER!;
   const plannerModel = plannerRole.primary.slug;
 
   swarmLog(onLog,
@@ -676,7 +728,7 @@ async function departmentHeadDecompose(
     `Output JSON: {"tasks":[{"id":"...","title":"...","file_hint":"path","description":"...","depends_on":[]}]}`
   );
   const genesisRole = deptToRole(dept);
-  const roleConf = ROLE_REGISTRY[swarmTier]?.[genesisRole] ?? ROLE_REGISTRY.cost.BACKEND_CODER!;
+  const roleConf = _activeRegistry[swarmTier]?.[genesisRole] ?? _activeRegistry.cost.BACKEND_CODER!;
 
   const raw = await _callChain(
     [roleConf.primary.slug, ...roleConf.fallbacks.map(f => f.slug)],
@@ -739,8 +791,8 @@ async function runGuardianPass(
   const fileEntries = Object.entries(mem.files);
   if (fileEntries.length === 0) return { passed: 0, repaired: 0, escalated: 0 };
 
-  const reviewerRole  = ROLE_REGISTRY.guardian?.REVIEWER ?? ROLE_REGISTRY.cost.REVIEWER!;
-  const repairRole    = ROLE_REGISTRY.guardian?.REPAIR   ?? ROLE_REGISTRY.cost.ESCALATION!;
+  const reviewerRole  = _activeRegistry.guardian?.REVIEWER ?? _activeRegistry.cost.REVIEWER!;
+  const repairRole    = _activeRegistry.guardian?.REPAIR   ?? _activeRegistry.cost.ESCALATION!;
   const reviewerModel = reviewerRole.primary.slug;
 
   swarmLog(onLog,
@@ -866,6 +918,7 @@ export async function buildProject(
   userPrompt: string,
   onLog:      (msg: string) => void = console.log,
 ): Promise<HydraBuildResult> {
+  await loadLiveRegistry();
   const mem = new SharedMemory();
 
   onLog("━".repeat(58));
@@ -966,7 +1019,7 @@ export const criticReview = async (
   mem:      SharedMemory,
   onLog:    (msg: string) => void,
 ): Promise<{ verdict: "pass" | "fix"; issues: string[] }> => {
-  const reviewerRole = ROLE_REGISTRY.guardian?.REVIEWER ?? ROLE_REGISTRY.cost.REVIEWER!;
+  const reviewerRole = _activeRegistry.guardian?.REVIEWER ?? _activeRegistry.cost.REVIEWER!;
   const chain = [reviewerRole.primary.slug, ...reviewerRole.fallbacks.map(f => f.slug)];
   const ctx   = `FILE: ${filePath}\n\n${code.slice(0, 6000)}`;
   const sysBase = `Review code. JSON: {"verdict":"pass"|"fix","severity":"low"|"med"|"high","issues":[]}`;

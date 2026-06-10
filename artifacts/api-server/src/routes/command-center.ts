@@ -10,6 +10,7 @@ import {
 } from "@workspace/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { MODEL_TIERS, invalidateTierCache } from "../lib/hydraSwarm.js";
+import { ROLE_REGISTRY } from "../lib/genesisSwarm.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
@@ -495,6 +496,106 @@ router.delete("/swarm-tiers/:tier", async (req, res) => {
   try {
     await db.execute(sql`DELETE FROM swarm_tier_config WHERE tier = ${tier}`);
     invalidateTierCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "delete_failed", message: err.message });
+  }
+});
+
+/* ── Role Registry — per-role model config ────────────────── */
+
+router.get("/role-registry", async (_req, res) => {
+  try {
+    const result = await db.execute(sql`
+      SELECT tier, role, primary_slug, fallbacks FROM swarm_role_config
+    `);
+    const rows = (result as any).rows ?? [];
+
+    // Build flat registry: { cost: { PLANNER: { primary, fallbacks, specialty } } }
+    type FlatEntry = { primary: string; fallbacks: string[]; specialty: string };
+    const flat: Record<string, Record<string, FlatEntry>> = {};
+    for (const [tier, roles] of Object.entries(ROLE_REGISTRY)) {
+      flat[tier] = {};
+      for (const [role, conf] of Object.entries(roles as Record<string, any>)) {
+        flat[tier][role] = {
+          primary:   conf.primary.slug,
+          fallbacks: conf.fallbacks.map((f: any) => f.slug),
+          specialty: conf.specialty ?? "",
+        };
+      }
+    }
+
+    // Apply DB overrides
+    const concierge = { primary: "google/gemini-2.5-flash", fallbacks: ["openai/gpt-4o-mini", "deepseek/deepseek-chat"] };
+    for (const row of rows) {
+      const tier = String(row.tier);
+      const role = String(row.role);
+      const primary = String(row.primary_slug);
+      const fb: string[] = Array.isArray(row.fallbacks) ? row.fallbacks.map(String) : [];
+      if (tier === "concierge" && role === "main") {
+        concierge.primary = primary;
+        concierge.fallbacks = fb;
+      } else if (flat[tier]?.[role]) {
+        flat[tier][role].primary   = primary;
+        flat[tier][role].fallbacks = fb;
+      }
+    }
+
+    res.json({ registry: flat, concierge });
+  } catch (err: any) {
+    res.status(500).json({ error: "fetch_failed", message: err.message });
+  }
+});
+
+router.put("/role-registry", async (req, res) => {
+  const userId = (req as any).auth?.userId ?? "admin";
+  const { registry, concierge } = req.body ?? {};
+  try {
+    if (registry && typeof registry === "object") {
+      for (const [tier, roles] of Object.entries(registry)) {
+        if (!["cost", "premium", "guardian"].includes(tier)) continue;
+        for (const [role, conf] of Object.entries(roles as Record<string, any>)) {
+          const primary = String(conf.primary ?? "").trim();
+          if (!primary) continue;
+          const fallbacks = (Array.isArray(conf.fallbacks) ? conf.fallbacks : [])
+            .filter((s: any) => typeof s === "string" && s.trim())
+            .map((s: string) => s.trim());
+          await db.execute(sql`
+            INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, updated_at, updated_by)
+            VALUES (${tier}, ${role}, ${primary}, ${JSON.stringify(fallbacks)}::jsonb, NOW(), ${userId})
+            ON CONFLICT (tier, role) DO UPDATE SET
+              primary_slug = EXCLUDED.primary_slug,
+              fallbacks    = EXCLUDED.fallbacks,
+              updated_at   = NOW(),
+              updated_by   = ${userId}
+          `);
+        }
+      }
+    }
+    if (concierge?.primary) {
+      const primary = String(concierge.primary).trim();
+      const fallbacks = (Array.isArray(concierge.fallbacks) ? concierge.fallbacks : [])
+        .filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim());
+      await db.execute(sql`
+        INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, updated_at, updated_by)
+        VALUES ('concierge', 'main', ${primary}, ${JSON.stringify(fallbacks)}::jsonb, NOW(), ${userId})
+        ON CONFLICT (tier, role) DO UPDATE SET
+          primary_slug = EXCLUDED.primary_slug,
+          fallbacks    = EXCLUDED.fallbacks,
+          updated_at   = NOW(),
+          updated_by   = ${userId}
+      `);
+    }
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "save_failed", message: err.message });
+  }
+});
+
+router.delete("/role-registry/:tier/:role", async (req, res) => {
+  const { tier, role } = req.params;
+  try {
+    await db.execute(sql`DELETE FROM swarm_role_config WHERE tier = ${tier} AND role = ${role}`);
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: "delete_failed", message: err.message });

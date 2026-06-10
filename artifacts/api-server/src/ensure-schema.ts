@@ -482,6 +482,21 @@ export async function ensureMainSchema(): Promise<void> {
       )
     `);
 
+    // ----------------------------------------------------------------
+    // swarm_role_config — per-role model overrides for ROLE_REGISTRY
+    // ----------------------------------------------------------------
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS swarm_role_config (
+        tier         TEXT NOT NULL,
+        role         TEXT NOT NULL,
+        primary_slug TEXT NOT NULL,
+        fallbacks    JSONB NOT NULL DEFAULT '[]',
+        updated_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_by   TEXT,
+        PRIMARY KEY (tier, role)
+      )
+    `);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);

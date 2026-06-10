@@ -1,0 +1,207 @@
+// src/config/modelRegistry.ts
+
+export type SwarmTier = 'cost' | 'premium' | 'guardian';
+
+export interface ModelSpec {
+  slug: string;
+  maxTokens?: number;
+  temperature?: number;
+  costHint?: 'low' | 'mid' | 'high';
+}
+
+export interface RoleConfig {
+  primary: ModelSpec;
+  fallbacks: ModelSpec[];
+  specialty: string;
+  taskTypes: TaskType[];
+}
+
+/**
+ * ============================================================
+ *  COMMAND CENTER - EDIT THIS FILE TO CONFIGURE MODELS
+ * ============================================================
+ * 
+ * Replace each `slug` with the EXACT model ID from
+ * https://openrouter.ai/models
+ * 
+ * When you star a model in the OpenRouter portal, it will be
+ * automatically fetched and prioritized on next startup.
+ */
+
+export const ROLE_REGISTRY: Record<SwarmTier, Record<string, RoleConfig>> = {
+  
+  cost: {
+    PLANNER: {
+      specialty: 'Decompose features into granular, dependency-ordered sub-tasks',
+      taskTypes: [TaskType.TASK_DECOMPOSITION, TaskType.ARCHITECTURE],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low', temperature: 0.3 },
+      fallbacks: [
+        { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+        { slug: 'minimax/minimax-text-01', costHint: 'low' },
+      ],
+    },
+    BACKEND_CODER: {
+      specialty: 'APIs, database schemas, authentication, business logic, microservices',
+      taskTypes: [TaskType.BACKEND_API, TaskType.DATABASE_SCHEMA],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'qwen/qwen-2.5-coder-32b-instruct', costHint: 'low' },
+        { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+      ],
+    },
+    FRONTEND_CODER: {
+      specialty: 'React/Next.js/Vue components, state management, responsive design',
+      taskTypes: [TaskType.FRONTEND_CODE],
+      primary: { slug: 'qwen/qwen-2.5-coder-32b-instruct', costHint: 'low' },
+      fallbacks: [
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+        { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+      ],
+    },
+    UI_UX_DESIGNER: {
+      specialty: 'Layout, design systems, Tailwind CSS, accessibility, responsive UI',
+      taskTypes: [TaskType.UI_UX_DESIGN],
+      primary: { slug: 'google/gemini-2.5-flash', costHint: 'low' },
+      fallbacks: [
+        { slug: 'google/gemini-flash-1.5-8b', costHint: 'low' },
+        { slug: 'anthropic/claude-3.5-haiku', costHint: 'mid' },
+      ],
+    },
+    GAME_LOGIC: {
+      specialty: 'Unity/C#/Godot/GDScript game mechanics, physics, ECS patterns',
+      taskTypes: [TaskType.GAME_LOGIC],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'qwen/qwen-2.5-coder-32b-instruct', costHint: 'low' },
+        { slug: 'moonshot/kimi-1.5-chat', costHint: 'mid' },
+      ],
+    },
+    REVIEWER: {
+      specialty: 'Code review, lint checks, security audits, best-practice verification',
+      taskTypes: [TaskType.CODE_REVIEW, TaskType.TESTING],
+      primary: { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      ],
+    },
+    TROUBLESHOOTER: {
+      specialty: 'Debugging, error analysis, auto-repair, root-cause identification',
+      taskTypes: [TaskType.TROUBLESHOOTING, TaskType.DEBUGGING],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'moonshot/kimi-1.5-chat', costHint: 'mid' },
+        { slug: 'anthropic/claude-3.5-haiku', costHint: 'mid' },
+      ],
+    },
+    ESCALATION: {
+      specialty: 'Hard problems that cheaper models cannot solve',
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+  },
+
+  premium: {
+    PLANNER: {
+      specialty: 'Architect full systems with deep reasoning, scalability planning',
+      taskTypes: [TaskType.TASK_DECOMPOSITION, TaskType.ARCHITECTURE],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high', temperature: 0.4 },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    BACKEND_CODER: {
+      specialty: 'Production-grade backend with security, scalability, observability',
+      taskTypes: [TaskType.BACKEND_API, TaskType.DATABASE_SCHEMA],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    FRONTEND_CODER: {
+      specialty: 'Pixel-perfect, accessible, performant frontend UIs',
+      taskTypes: [TaskType.FRONTEND_CODE, TaskType.UI_UX_DESIGN],
+      primary: { slug: 'openai/gpt-4o', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    UI_UX_DESIGNER: {
+      specialty: 'Award-winning UI/UX with micro-interactions, design systems',
+      taskTypes: [TaskType.UI_UX_DESIGN],
+      primary: { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+    GAME_LOGIC: {
+      specialty: 'AAA-grade gameplay systems, AI, physics optimization',
+      taskTypes: [TaskType.GAME_LOGIC],
+      primary: { slug: 'openai/gpt-4o', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      ],
+    },
+    REVIEWER: {
+      specialty: 'Adversarial review, formal verification, security hardening',
+      taskTypes: [TaskType.CODE_REVIEW, TaskType.TESTING],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+    TROUBLESHOOTER: {
+      specialty: 'Deep debugging, complex integration issues, auto-healing',
+      taskTypes: [TaskType.TROUBLESHOOTING, TaskType.DEBUGGING],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    ESCALATION: {
+      specialty: 'Mission-critical fixes requiring multi-model consensus',
+      primary: { slug: 'anthropic/claude-opus-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+  },
+
+  guardian: {
+    REVIEWER: {
+      specialty: 'Comprehensive code quality assurance and validation',
+      taskTypes: [TaskType.CODE_REVIEW, TaskType.TESTING, TaskType.DEBUGGING],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      ],
+    },
+    REPAIR: {
+      specialty: 'Auto-repair identified issues with minimal, targeted fixes',
+      taskTypes: [TaskType.TROUBLESHOOTING],
+      primary: { slug: 'openai/gpt-4o', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      ],
+    },
+  },
+};
+
+// Concierge (chat portal) — fast reasoning, runs outside swarms
+export const CONCIERGE_MODEL: ModelSpec = {
+  slug: 'anthropic/claude-sonnet-4',
+  temperature: 0.5,
+};
+
+export const CONCIERGE_FALLBACKS: ModelSpec[] = [
+  { slug: 'google/gemini-2.5-flash' },
+  { slug: 'openai/gpt-4o-mini' },
+];
