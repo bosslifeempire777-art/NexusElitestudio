@@ -18,7 +18,7 @@ import {
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
   Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
   ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity, ArrowRight,
-  Plus, Users, Key, Eye, EyeOff,
+  Plus, Users, Key, Eye, EyeOff, Paperclip,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { getToken, apiFetch } from "@/lib/auth";
@@ -1675,7 +1675,33 @@ function AgentTerminal({
   );
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [input, setInput] = useState("");
+  const [input, setInput]               = useState("");
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const readFileContent = (file: File): Promise<string> =>
+    new Promise(resolve => {
+      const reader = new FileReader();
+      if (file.type.startsWith("image/")) {
+        reader.onload = () => resolve(`[Attached image: ${file.name}]\n${reader.result as string}`);
+        reader.readAsDataURL(file);
+      } else {
+        reader.onload = () => resolve(`[Attached file: ${file.name}]\n${reader.result as string}`);
+        reader.readAsText(file);
+      }
+    });
+
+  const handleSend = useCallback(async () => {
+    let text = input;
+    if (attachedFiles.length > 0) {
+      const contents = await Promise.all(attachedFiles.map(readFileContent));
+      text = [text, ...contents].filter(Boolean).join("\n\n");
+      setAttachedFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+    sendMessage(text);
+    setInput("");
+  }, [input, attachedFiles, sendMessage]);
   const [isLoading, setIsLoading] = useState(false);
   // Live swarm-grid state: which of the 21 agents are currently working, which
   // have finished, and what the latest agent is doing (for the top-bar ticker).
@@ -1924,7 +1950,7 @@ function AgentTerminal({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage(input);
+      handleSend();
     }
   };
 
@@ -2359,7 +2385,46 @@ function AgentTerminal({
 
       {/* Input area */}
       <div className="shrink-0 border-t border-border/40 p-3 bg-secondary/10">
+        {/* Attached file chips */}
+        {attachedFiles.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {attachedFiles.map((f, i) => (
+              <span key={i} className="flex items-center gap-1 text-[10px] font-mono bg-primary/10 border border-primary/30 text-primary rounded px-2 py-0.5">
+                <Paperclip className="w-2.5 h-2.5 shrink-0" />
+                <span className="max-w-[140px] truncate">{f.name}</span>
+                <button
+                  onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                  className="ml-0.5 text-primary/60 hover:text-primary transition-colors"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="flex gap-2 items-end">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) setAttachedFiles(prev => [...prev, ...files]);
+            }}
+          />
+          {/* Attach button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading}
+            title="Attach file or image"
+            className="shrink-0 w-8 h-8 flex items-center justify-center rounded border border-border/50 bg-background/60 text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors disabled:opacity-40"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+
           <textarea
             ref={inputRef}
             value={input}
@@ -2372,8 +2437,8 @@ function AgentTerminal({
           />
           <Button
             size="sm"
-            onClick={() => sendMessage(input)}
-            disabled={isLoading || !input.trim()}
+            onClick={handleSend}
+            disabled={isLoading || (!input.trim() && attachedFiles.length === 0)}
             className="h-[52px] px-3 glow-primary-hover"
           >
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

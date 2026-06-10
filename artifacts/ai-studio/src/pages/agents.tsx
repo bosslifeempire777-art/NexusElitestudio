@@ -16,7 +16,7 @@ import {
   Crown, GitBranch, Layers, Zap, Bug, Shield, Eye,
   Dna, CheckCircle2, Send, Loader2, Terminal, Activity,
   Cpu, BarChart3, FileCode, Clock, ChevronDown, ChevronUp,
-  Flame, Radio,
+  Flame, Radio, Paperclip, X as XIcon,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────
@@ -505,7 +505,21 @@ const LAYER_META = [
            MAIN PAGE
            ───────────────────────────────────────────────────────────── */
         export default function Agents() {
-          const [prompt, setPrompt]         = useState("");
+          const [prompt, setPrompt]               = useState("");
+          const [attachedFiles, setAttachedFiles]   = useState<File[]>([]);
+          const fileInputRef = useRef<HTMLInputElement>(null);
+
+          const readFileContent = (file: File): Promise<string> =>
+            new Promise(resolve => {
+              const reader = new FileReader();
+              if (file.type.startsWith("image/")) {
+                reader.onload = () => resolve(`[Attached image: ${file.name}]\n${reader.result as string}`);
+                reader.readAsDataURL(file);
+              } else {
+                reader.onload = () => resolve(`[Attached file: ${file.name}]\n${reader.result as string}`);
+                reader.readAsText(file);
+              }
+            });
           const [buildStatus, setBuildStatus] = useState<"idle" | "running" | "done" | "error">("idle");
           const [activeAgents, setActiveAgents]     = useState<Set<string>>(new Set());
           const [doneAgents, setDoneAgents]         = useState<Set<string>>(new Set());
@@ -704,8 +718,24 @@ const LAYER_META = [
                 }, [buildStatus, prompt, runDemo, runRealBuild]);
 
                 const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmitWithFiles(); }
                 };
+
+                const handleSubmitWithFiles = useCallback(async () => {
+                  let finalPrompt = prompt;
+                  if (attachedFiles.length > 0) {
+                    const contents = await Promise.all(attachedFiles.map(readFileContent));
+                    finalPrompt = [prompt, ...contents].filter(Boolean).join("\n\n");
+                    setAttachedFiles([]);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }
+                  if (buildStatus === "running") return;
+                  if (finalPrompt.trim()) {
+                    runRealBuild(finalPrompt.trim());
+                  } else {
+                    runDemo();
+                  }
+                }, [prompt, attachedFiles, buildStatus, runDemo, runRealBuild]);
 
                 // Cleanup on unmount
                 useEffect(() => () => {
@@ -775,28 +805,69 @@ const LAYER_META = [
                       </div>
 
                       {/* ── BUILD PROMPT BAR ────────────────────────────────── */}
-                      <div className="flex gap-2">
-                        <div className="flex-1 relative">
-                          <textarea
-                            value={prompt}
-                            onChange={e => setPrompt(e.target.value)}
-                            onKeyDown={handleKey}
-                            placeholder="Describe your project — or leave blank to run a live demo build…"
-                            rows={1}
-                            disabled={buildStatus === "running"}
-                            className="w-full bg-background/60 border border-violet-500/20 rounded-xl px-4 py-3 pr-4 text-sm font-mono text-foreground placeholder:text-muted-foreground/40 resize-none outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-all disabled:opacity-50 max-h-28"
+                      <div className="space-y-2">
+                        {/* Attached file chips */}
+                        {attachedFiles.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {attachedFiles.map((f, i) => (
+                              <span key={i} className="flex items-center gap-1 text-[10px] font-mono bg-violet-500/10 border border-violet-500/30 text-violet-300 rounded px-2 py-0.5">
+                                <Paperclip className="w-2.5 h-2.5 shrink-0" />
+                                <span className="max-w-[160px] truncate">{f.name}</span>
+                                <button
+                                  onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                                  className="ml-0.5 text-violet-400/60 hover:text-violet-300 transition-colors"
+                                >
+                                  <XIcon className="w-2.5 h-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          {/* Hidden file input */}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={e => {
+                              const files = Array.from(e.target.files ?? []);
+                              if (files.length) setAttachedFiles(prev => [...prev, ...files]);
+                            }}
                           />
+                          {/* Attach button */}
+                          <button
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={buildStatus === "running"}
+                            title="Attach file or image"
+                            className="shrink-0 flex items-center justify-center w-[46px] rounded-xl border border-violet-500/20 bg-background/60 text-violet-400/60 hover:text-violet-300 hover:border-violet-500/50 transition-colors disabled:opacity-40"
+                          >
+                            <Paperclip className="w-4 h-4" />
+                          </button>
+
+                          <div className="flex-1 relative">
+                            <textarea
+                              value={prompt}
+                              onChange={e => setPrompt(e.target.value)}
+                              onKeyDown={handleKey}
+                              placeholder="Describe your project — or leave blank to run a live demo build…"
+                              rows={1}
+                              disabled={buildStatus === "running"}
+                              className="w-full bg-background/60 border border-violet-500/20 rounded-xl px-4 py-3 text-sm font-mono text-foreground placeholder:text-muted-foreground/40 resize-none outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20 transition-all disabled:opacity-50 max-h-28"
+                            />
+                          </div>
+                          <button
+                            onClick={handleSubmitWithFiles}
+                            disabled={buildStatus === "running"}
+                            className="flex items-center gap-2 px-5 py-3 rounded-xl font-mono font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white shadow-[0_0_20px_rgba(139,92,246,0.4)] hover:shadow-[0_0_30px_rgba(139,92,246,0.6)] shrink-0"
+                          >
+                            {buildStatus === "running"
+                              ? <><Loader2 className="w-4 h-4 animate-spin" /> BUILDING…</>
+                              : <><Send    className="w-4 h-4" /> ENGAGE SWARM</>
+                            }
+                          </button>
                         </div>
-                        <button
-                          onClick={handleSubmit}
-                          disabled={buildStatus === "running"}
-                          className="flex items-center gap-2 px-5 py-3 rounded-xl font-mono font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white shadow-[0_0_20px_rgba(139,92,246,0.4)] hover:shadow-[0_0_30px_rgba(139,92,246,0.6)] shrink-0"
-                        >
-                          {buildStatus === "running"
-                            ? <><Loader2 className="w-4 h-4 animate-spin" /> BUILDING…</>
-                            : <><Send    className="w-4 h-4" /> ENGAGE SWARM</>
-                          }
-                        </button>
                       </div>
 
                       {/* ── MAIN CONTENT: Swarm diagram + Log ───────────────── */}
