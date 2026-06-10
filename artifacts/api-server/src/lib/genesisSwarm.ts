@@ -747,7 +747,7 @@ async function workerExecute(
   onLog:     (msg: string) => void,
 ): Promise<AgentResult> {
   const genesisRole  = deptToRole(dept);
-  const roleConf     = ROLE_REGISTRY[swarmTier]?.[genesisRole] ?? ROLE_REGISTRY.cost.BACKEND_CODER!;
+  const roleConf     = _activeRegistry[swarmTier]?.[genesisRole] ?? _activeRegistry.cost.BACKEND_CODER!;
   const primaryModel = roleConf.primary.slug;
   const workerName   = `${dept}-${genesisRole}`;
 
