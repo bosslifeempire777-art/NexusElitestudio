@@ -1071,6 +1071,7 @@ export default function ProjectDetail() {
                 {project.status === 'building' && <Loader2 className="w-2.5 h-2.5 mr-1 animate-spin" />}
                 {project.status.toUpperCase()}
               </Badge>
+              <SwarmModeBadge projectId={project.id} currentMode={(project as any).swarmMode ?? 'genesis'} disabled={project.status === 'building'} />
             </div>
 
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -2736,6 +2737,84 @@ function OrchestratorPanel({
             ))}
             <div ref={logEndRef} />
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Swarm mode badge + inline picker ── */
+const SWARM_MODE_META: Record<string, { label: string; color: string; emoji: string }> = {
+  genesis:   { label: "Genesis",    color: "text-primary",    emoji: "⚡" },
+  cost:      { label: "Cost",       color: "text-green-400",  emoji: "💰" },
+  premium:   { label: "Premium",    color: "text-yellow-400", emoji: "👑" },
+  guardian:  { label: "Guardian",   color: "text-blue-400",   emoji: "🛡" },
+  concierge: { label: "Concierge",  color: "text-cyan-400",   emoji: "✦" },
+  hydra:     { label: "Hydra",      color: "text-purple-400", emoji: "🔱" },
+};
+
+function SwarmModeBadge({ projectId, currentMode, disabled }: { projectId: string; currentMode: string; disabled: boolean }) {
+  const [mode, setMode]   = useState(currentMode);
+  const [open, setOpen]   = useState(false);
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const meta = SWARM_MODE_META[mode] ?? SWARM_MODE_META.genesis!;
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const changeMode = async (newMode: string) => {
+    if (newMode === mode || disabled) return;
+    setSaving(true); setOpen(false);
+    try {
+      await apiFetch(`/projects/${projectId}/swarm-mode`, {
+        method: "PATCH",
+        body: JSON.stringify({ swarm_mode: newMode }),
+      });
+      setMode(newMode);
+    } catch { /* silent — badge stays on current mode */ }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        onClick={() => !disabled && !saving && setOpen(o => !o)}
+        disabled={disabled || saving}
+        title="Change swarm mode"
+        className={`flex items-center gap-1 text-[10px] font-mono border rounded px-1.5 py-0.5 transition-colors border-border/50 bg-secondary/30 ${meta.color} ${
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-secondary/60 cursor-pointer'
+        }`}
+      >
+        {saving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <span className="text-[11px]">{meta.emoji}</span>}
+        <span>{meta.label}</span>
+        <ChevronDown className="w-2.5 h-2.5 opacity-50" />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 bg-[#0a0a12] border border-border/60 rounded-lg shadow-2xl w-52 py-1 overflow-hidden">
+          <div className="px-3 py-1.5 text-[10px] font-mono text-muted-foreground/60 border-b border-border/30 uppercase tracking-wider">
+            Swarm Mode
+          </div>
+          {Object.entries(SWARM_MODE_META).map(([id, m]) => (
+            <button
+              key={id}
+              onClick={() => changeMode(id)}
+              className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors hover:bg-secondary/60 ${
+                id === mode ? m.color + ' font-bold bg-secondary/30' : 'text-muted-foreground'
+              }`}
+            >
+              <span className="text-sm w-4 text-center">{m.emoji}</span>
+              <span>{m.label}</span>
+              {id === mode && <Check className="w-3 h-3 ml-auto shrink-0" />}
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -463,6 +463,14 @@ export async function ensureMainSchema(): Promise<void> {
     `);
 
     // ----------------------------------------------------------------
+    // swarm_mode column on projects (added after initial schema)
+    // ----------------------------------------------------------------
+    await db.execute(sql`
+      ALTER TABLE projects
+        ADD COLUMN IF NOT EXISTS swarm_mode TEXT DEFAULT 'genesis'
+    `);
+
+    // ----------------------------------------------------------------
     // swarm_tier_config — editable model fallback chains for Hydra swarm
     // ----------------------------------------------------------------
     await db.execute(sql`

@@ -18,6 +18,7 @@ export const projectsTable = pgTable("projects", {
   chatHistory: jsonb("chat_history").notNull().default([]),
   memory: jsonb("memory").notNull().default({}),
   generatedCode: text("generated_code"),
+  swarmMode: text("swarm_mode").default("genesis"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

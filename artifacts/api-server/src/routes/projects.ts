@@ -181,12 +181,15 @@ router.post("/", requireAuth, async (req, res) => {
   const isAdmin  = req.auth!.isAdmin;
   const isVip    = req.auth!.isVip;
   const userPlan = req.auth!.plan;
-  const { prompt, type, name } = req.body;
+  const { prompt, type, name, swarm_mode } = req.body;
 
   if (!prompt || !type || !name) {
     res.status(400).json({ error: "bad_request", message: "prompt, type, name are required" });
     return;
   }
+
+  const VALID_SWARM_MODES = ["concierge", "cost", "premium", "guardian", "genesis", "hydra"];
+  const resolvedSwarmMode = VALID_SWARM_MODES.includes(swarm_mode) ? swarm_mode : "genesis";
 
   // ── Enforce plan limits (skip for admins & VIP) ──
   if (!isAdmin && !isVip) {
@@ -237,6 +240,7 @@ router.post("/", requireAuth, async (req, res) => {
     gameEngine: type === "game" ? framework : null,
     userId,
     agentLogs,
+    swarmMode: resolvedSwarmMode,
   }).returning();
 
   // Increment project count immediately
@@ -320,6 +324,29 @@ router.delete("/:id", requireAuth, async (req, res) => {
     and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId))
   );
   res.status(204).send();
+});
+
+// Change swarm mode for a project
+router.patch("/:id/swarm-mode", requireAuth, async (req, res) => {
+  const userId = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const { swarm_mode } = req.body;
+  const VALID = ["concierge", "cost", "premium", "guardian", "genesis", "hydra"];
+  if (!VALID.includes(swarm_mode)) {
+    res.status(400).json({ error: "invalid_swarm_mode", message: `Must be one of: ${VALID.join(", ")}` });
+    return;
+  }
+  const project = await db.query.projectsTable.findFirst({
+    where: eq(projectsTable.id, String(req.params.id)),
+  });
+  if (!project || (!isAdmin && project.userId !== userId)) {
+    res.status(404).json({ error: "not_found" }); return;
+  }
+  const [updated] = await db.update(projectsTable)
+    .set({ swarmMode: swarm_mode, updatedAt: new Date() })
+    .where(eq(projectsTable.id, project.id))
+    .returning();
+  res.json(projectResponse(updated!));
 });
 
 // Build logs

@@ -808,14 +808,52 @@ function SwarmTab() {
 
   const justSaved = savedAt && Date.now() - savedAt < 4000;
 
+  const SWARM_MODES_INFO = [
+    { id: "genesis",   emoji: "⚡", label: "Genesis",   accent: "border-primary/40 bg-primary/5",       desc: "Full 5-layer auto-pilot. Concierge routes cost vs premium automatically.", models: "Gemini Flash → DeepSeek / Claude Sonnet 4" },
+    { id: "cost",      emoji: "💰", label: "Cost",      accent: "border-green-500/40 bg-green-500/5",   desc: "DeepSeek-first. Full swarm pipeline, budget-optimized.", models: "DeepSeek Chat → Qwen Coder → Llama 3.3 70B" },
+    { id: "premium",   emoji: "👑", label: "Premium",   accent: "border-yellow-500/40 bg-yellow-500/5", desc: "Claude Sonnet 4 + GPT-4o throughout. Two Guardian review passes.", models: "Claude Sonnet 4 → GPT-4o → Gemini 2.5 Pro" },
+    { id: "guardian",  emoji: "🛡", label: "Guardian",  accent: "border-blue-500/40 bg-blue-500/5",     desc: "Adversarial review & repair only. Best for bug-fixing existing builds.", models: "GPT-4o (review) → Claude Sonnet 4 (repair)" },
+    { id: "concierge", emoji: "✦",  label: "Concierge", accent: "border-cyan-500/40 bg-cyan-500/5",     desc: "Single fast model, no swarm spawn. Ideal for quick edits.", models: "Gemini 2.5 Flash only" },
+    { id: "hydra",     emoji: "🔱", label: "Hydra",     accent: "border-purple-500/40 bg-purple-500/5", desc: "Legacy parallel 3-tier execution. All model tiers fire simultaneously.", models: "DeepSeek + Claude Sonnet 4 + GPT-4o parallel" },
+  ];
+
   return (
-    <div className="space-y-4">
-      {/* Header */}
+    <div className="space-y-6">
+
+      {/* ── Swarm Modes Reference ── */}
+      <div>
+        <div className="mb-3">
+          <h3 className="font-bold text-base">Swarm Modes</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            One mode is active per project. Select the mode when creating a project, or change it from the project header. Only the active mode runs — others are fully idle.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {SWARM_MODES_INFO.map(m => (
+            <div key={m.id} className={`border rounded-lg p-3 ${m.accent}`}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-base">{m.emoji}</span>
+                <span className="text-sm font-bold">{m.label}</span>
+                <span className="ml-auto text-[9px] font-mono text-muted-foreground/50 border border-border/30 rounded px-1">{m.id}</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">{m.desc}</p>
+              <p className="text-[10px] font-mono text-muted-foreground/50 mt-1.5 truncate">{m.models}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground/60 mt-2">
+          To change a project's active swarm: open the project → click the mode badge next to its name in the header.
+        </p>
+      </div>
+
+      <div className="border-t border-border/30 pt-6">
+
+      {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="font-bold text-base">AI Swarm Tier Configuration</h3>
+          <h3 className="font-bold text-base">Model Fallback Chains</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Models are tried in order — top wins. Changes save to the database and take effect immediately (no restart needed).
+            Models are tried in order — top wins. Changes take effect immediately (no restart needed).
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -957,6 +995,7 @@ function SwarmTab() {
       <p className="text-[11px] text-muted-foreground text-center">
         Tip: The swarm tries model #1 first — if it fails or times out it moves to #2, then #3, etc. Put your cheapest/fastest models at the top for cost savings.
       </p>
+      </div>{/* closes border-t section */}
     </div>
   );
 }
