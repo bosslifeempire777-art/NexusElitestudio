@@ -693,38 +693,44 @@ function Meta({ label, value }: { label: string; value: string }) {
 
 /* ─────────────────────── SWARM CONFIG ─────────────────────── */
 
-type SwarmTiers = Record<string, string[]>;
+type RoleEntry    = { primary: string; fallbacks: string[]; specialty: string };
+type RoleReg      = Record<string, Record<string, RoleEntry>>;
+type ConciergeConf = { primary: string; fallbacks: string[] };
 
-const TIER_META: Record<string, { label: string; desc: string; accent: string }> = {
-  reasoning: { label: "🧠 Reasoning", desc: "Deep thinking, planning, complex analysis",    accent: "border-violet-500/50" },
-  coding:    { label: "💻 Coding",    desc: "Code generation, debugging, refactoring",       accent: "border-blue-500/50"   },
-  fast:      { label: "⚡ Fast",      desc: "Quick tasks, summaries, lightweight drafts",    accent: "border-yellow-500/50" },
-  longctx:   { label: "📜 Long Ctx",  desc: "Large files, full-codebase analysis",           accent: "border-emerald-500/50"},
-  critic:    { label: "🔍 Critic",    desc: "Code review, critique, QA validation",          accent: "border-orange-500/50" },
-  creative:  { label: "🎨 Creative",  desc: "UI copy, game design, creative writing",        accent: "border-pink-500/50"   },
+const ROLE_LABELS: Record<string, string> = {
+  PLANNER:        "📐 Planner",
+  BACKEND_CODER:  "⚙️ Backend Coder",
+  FRONTEND_CODER: "🖼 Frontend Coder",
+  UI_UX_DESIGNER: "🎨 UI/UX Designer",
+  GAME_LOGIC:     "🎮 Game Logic",
+  REVIEWER:       "🔍 Reviewer",
+  TROUBLESHOOTER: "🔧 Debug",
+  ESCALATION:     "🚨 Escalation",
+  REPAIR:         "🩹 Repair",
 };
 
 function SwarmTab() {
-  const [tiers, setTiers]       = useState<SwarmTiers>({});
-  const [defaults, setDefaults] = useState<SwarmTiers>({});
-  const [models, setModels]     = useState<ModelInfo[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [savedAt, setSavedAt]   = useState<number | null>(null);
-  const [search, setSearch]     = useState<Record<string, string>>({});
-  const [open, setOpen]         = useState<string | null>(null);
-  const dropRef                 = useRef<Record<string, HTMLDivElement | null>>({});
+  const [registry, setRegistry]   = useState<RoleReg>({});
+  const [concierge, setConcierge] = useState<ConciergeConf>({ primary: "", fallbacks: [] });
+  const [models, setModels]       = useState<ModelInfo[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [savedAt, setSavedAt]     = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState("cost");
+  const [search, setSearch]       = useState<Record<string, string>>({});
+  const [openDrop, setOpenDrop]   = useState<string | null>(null);
+  const dropRef                   = useRef<Record<string, HTMLDivElement | null>>({});
 
   const reload = async () => {
     setLoading(true);
     try {
-      const [td, m] = await Promise.all([
-        fetchJson("/api/command-center/swarm-tiers"),
+      const [rd, m] = await Promise.all([
+        fetchJson("/api/command-center/role-registry"),
         fetchJson("/api/command-center/openrouter/models"),
       ]);
-      setTiers(td.tiers  || {});
-      setDefaults(td.defaults || {});
-      setModels(m.data   || []);
+      setRegistry(rd.registry || {});
+      setConcierge(rd.concierge || { primary: "", fallbacks: [] });
+      setModels(m.data || []);
     } finally {
       setLoading(false);
     }
@@ -732,61 +738,21 @@ function SwarmTab() {
 
   useEffect(() => { reload().catch(console.error); }, []);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (open && dropRef.current[open] && !dropRef.current[open]!.contains(e.target as Node)) {
-        setOpen(null);
-      }
+      if (openDrop && dropRef.current[openDrop] && !dropRef.current[openDrop]!.contains(e.target as Node))
+        setOpenDrop(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  const effectiveTiers = (tier: string): string[] =>
-    tiers[tier] ?? defaults[tier] ?? [];
-
-  const isCustomized = (tier: string): boolean =>
-    !!tiers[tier];
-
-  const removeModel = (tier: string, idx: number) =>
-    setTiers(prev => {
-      const current = effectiveTiers(tier);
-      return { ...prev, [tier]: current.filter((_, i) => i !== idx) };
-    });
-
-  const moveModel = (tier: string, idx: number, dir: -1 | 1) =>
-    setTiers(prev => {
-      const arr = [...effectiveTiers(tier)];
-      const target = idx + dir;
-      if (target < 0 || target >= arr.length) return prev;
-      [arr[idx], arr[target]] = [arr[target], arr[idx]];
-      return { ...prev, [tier]: arr };
-    });
-
-  const addModel = (tier: string, modelId: string) => {
-    const id = modelId.trim();
-    if (!id) return;
-    setTiers(prev => {
-      const current = effectiveTiers(tier);
-      if (current.includes(id)) return prev;
-      return { ...prev, [tier]: [...current, id] };
-    });
-    setSearch(prev => ({ ...prev, [tier]: "" }));
-    setOpen(null);
-  };
-
-  const resetTier = async (tier: string) => {
-    await fetchJson(`/api/command-center/swarm-tiers/${tier}`, { method: "DELETE" });
-    setTiers(prev => { const n = { ...prev }; delete n[tier]; return n; });
-  };
+  }, [openDrop]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await fetchJson("/api/command-center/swarm-tiers", {
+      await fetchJson("/api/command-center/role-registry", {
         method: "PUT",
-        body: JSON.stringify({ tiers }),
+        body: JSON.stringify({ registry, concierge }),
       });
       setSavedAt(Date.now());
     } finally {
@@ -794,66 +760,179 @@ function SwarmTab() {
     }
   };
 
-  const filteredModels = (tier: string) => {
-    const q = (search[tier] || "").toLowerCase();
-    const base = q ? models.filter(m => m.id.toLowerCase().includes(q) || (m.name || "").toLowerCase().includes(q)) : models;
-    return base.slice(0, 80);
+  const resetRole = async (tier: string, role: string) => {
+    await fetchJson(`/api/command-center/role-registry/${tier}/${role}`, { method: "DELETE" });
+    await reload();
+  };
+
+  const filteredMods = (key: string) => {
+    const q = (search[key] || "").toLowerCase();
+    const base = q
+      ? models.filter(m => m.id.toLowerCase().includes(q) || (m.name || "").toLowerCase().includes(q))
+      : models;
+    return base.slice(0, 60);
+  };
+
+  const setFallbacks = (tier: string, role: string, fb: string[]) =>
+    setRegistry(p => ({ ...p, [tier]: { ...p[tier], [role]: { ...p[tier]?.[role], fallbacks: fb } } }));
+
+  const setPrimary = (tier: string, role: string, v: string) =>
+    setRegistry(p => ({ ...p, [tier]: { ...p[tier], [role]: { ...p[tier]?.[role], primary: v } } }));
+
+  const addFallback = (tier: string, role: string) => {
+    const key  = `${tier}.${role}.fb`;
+    const slug = (search[key] || "").trim();
+    if (!slug) return;
+    const fb = registry[tier]?.[role]?.fallbacks ?? [];
+    if (!fb.includes(slug)) setFallbacks(tier, role, [...fb, slug]);
+    setSearch(p => ({ ...p, [key]: "" }));
+    setOpenDrop(null);
+  };
+
+  const addFallbackSlug = (tier: string, role: string, slug: string) => {
+    const fb = registry[tier]?.[role]?.fallbacks ?? [];
+    if (!fb.includes(slug)) setFallbacks(tier, role, [...fb, slug]);
+    setSearch(p => ({ ...p, [`${tier}.${role}.fb`]: "" }));
+    setOpenDrop(null);
+  };
+
+  const moveFallback = (tier: string, role: string, idx: number, dir: -1 | 1) => {
+    const arr = [...(registry[tier]?.[role]?.fallbacks ?? [])];
+    const t   = idx + dir;
+    if (t < 0 || t >= arr.length) return;
+    [arr[idx], arr[t]] = [arr[t], arr[idx]];
+    setFallbacks(tier, role, arr);
+  };
+
+  const removeFallback = (tier: string, role: string, idx: number) =>
+    setFallbacks(tier, role, (registry[tier]?.[role]?.fallbacks ?? []).filter((_, i) => i !== idx));
+
+  const addConcFallback = (slug: string) => {
+    if (!slug.trim() || concierge.fallbacks.includes(slug)) return;
+    setConcierge(p => ({ ...p, fallbacks: [...p.fallbacks, slug] }));
+    setSearch(p => ({ ...p, "conc.fb": "" }));
+    setOpenDrop(null);
+  };
+
+  const moveConcFallback = (idx: number, dir: -1 | 1) => {
+    const arr = [...concierge.fallbacks];
+    const t   = idx + dir;
+    if (t < 0 || t >= arr.length) return;
+    [arr[idx], arr[t]] = [arr[t], arr[idx]];
+    setConcierge(p => ({ ...p, fallbacks: arr }));
+  };
+
+  const removeConcFallback = (idx: number) =>
+    setConcierge(p => ({ ...p, fallbacks: p.fallbacks.filter((_, i) => i !== idx) }));
+
+  const renderModelPicker = (
+    dropKey: string,
+    value: string,
+    onChange: (s: string) => void,
+    label: string,
+  ) => (
+    <div ref={el => { dropRef.current[dropKey] = el; }} className="relative mb-2">
+      <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground/50 mb-0.5">{label}</div>
+      <input
+        value={value}
+        onChange={e => { onChange(e.target.value); setSearch(p => ({ ...p, [dropKey]: e.target.value })); setOpenDrop(dropKey); }}
+        onFocus={() => setOpenDrop(dropKey)}
+        placeholder="provider/model-id…"
+        className="w-full bg-black/50 border border-border/40 rounded px-2 py-1 text-[11px] font-mono focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/30"
+      />
+      {openDrop === dropKey && filteredMods(dropKey).length > 0 && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-[#0a0a12] border border-border rounded shadow-2xl max-h-48 overflow-y-auto">
+          {filteredMods(dropKey).map(m => (
+            <button
+              key={m.id}
+              onMouseDown={e => { e.preventDefault(); onChange(m.id); setOpenDrop(null); }}
+              className="w-full text-left px-2 py-1.5 text-[10px] font-mono hover:bg-primary/10 border-b border-border/20 last:border-0"
+            >
+              <div className="truncate text-foreground/90">{m.id}</div>
+              {m.name && m.name !== m.id && <div className="text-[9px] text-muted-foreground truncate">{m.name}</div>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderFallbackList = (tier: string, role: string, fallbacks: string[]) => {
+    const addKey = `${tier}.${role}.fb`;
+    return (
+      <div>
+        <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground/50 mb-1">Fallbacks</div>
+        <div className="space-y-0.5 mb-1.5">
+          {fallbacks.length === 0 && (
+            <div className="text-[10px] text-muted-foreground/40 italic py-0.5">None — uses primary only</div>
+          )}
+          {fallbacks.map((slug, idx) => (
+            <div key={idx} className="flex items-center gap-1 bg-black/30 border border-border/20 rounded px-2 py-1 group">
+              <span className="text-[9px] text-muted-foreground/40 w-3 shrink-0 text-right">{idx + 1}</span>
+              <span className="text-[10px] font-mono flex-1 truncate" title={slug}>{slug}</span>
+              <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                <button onClick={() => moveFallback(tier, role, idx, -1)} disabled={idx === 0} className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20">▲</button>
+                <button onClick={() => moveFallback(tier, role, idx, 1)} disabled={idx === fallbacks.length - 1} className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20">▼</button>
+                <button onClick={() => removeFallback(tier, role, idx)} className="p-0.5 text-muted-foreground hover:text-red-400 transition-colors"><X className="w-3 h-3" /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div ref={el => { dropRef.current[addKey] = el; }} className="relative">
+          <div className="flex gap-1">
+            <input
+              value={search[addKey] || ""}
+              onChange={e => { setSearch(p => ({ ...p, [addKey]: e.target.value })); setOpenDrop(addKey); }}
+              onFocus={() => setOpenDrop(addKey)}
+              placeholder="Add fallback…"
+              className="flex-1 bg-black/40 border border-border/30 rounded px-2 py-1 text-[10px] font-mono focus:outline-none focus:border-primary/40 placeholder:text-muted-foreground/30"
+            />
+            <Button variant="outline" onClick={() => addFallback(tier, role)} disabled={!(search[addKey] || "").trim()} className="h-6 w-6 p-0 shrink-0" title="Add fallback">
+              <Plus className="w-3 h-3" />
+            </Button>
+          </div>
+          {openDrop === addKey && filteredMods(addKey).length > 0 && (
+            <div className="absolute z-50 top-full left-0 right-8 mt-0.5 bg-[#0a0a12] border border-border rounded shadow-2xl max-h-40 overflow-y-auto">
+              {filteredMods(addKey).map(m => (
+                <button
+                  key={m.id}
+                  onMouseDown={e => { e.preventDefault(); addFallbackSlug(tier, role, m.id); }}
+                  className="w-full text-left px-2 py-1 text-[10px] font-mono hover:bg-primary/10 border-b border-border/20 last:border-0 truncate"
+                >
+                  {m.id}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   if (loading) return (
     <div className="flex items-center justify-center py-16 text-muted-foreground">
-      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading swarm config…
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading role registry…
     </div>
   );
 
   const justSaved = savedAt && Date.now() - savedAt < 4000;
 
-  const SWARM_MODES_INFO = [
-    { id: "genesis",   emoji: "⚡", label: "Genesis",   accent: "border-primary/40 bg-primary/5",       desc: "Full 5-layer auto-pilot. Concierge routes cost vs premium automatically.", models: "Gemini Flash → DeepSeek / Claude Sonnet 4" },
-    { id: "cost",      emoji: "💰", label: "Cost",      accent: "border-green-500/40 bg-green-500/5",   desc: "DeepSeek-first. Full swarm pipeline, budget-optimized.", models: "DeepSeek Chat → Qwen Coder → Llama 3.3 70B" },
-    { id: "premium",   emoji: "👑", label: "Premium",   accent: "border-yellow-500/40 bg-yellow-500/5", desc: "Claude Sonnet 4 + GPT-4o throughout. Two Guardian review passes.", models: "Claude Sonnet 4 → GPT-4o → Gemini 2.5 Pro" },
-    { id: "guardian",  emoji: "🛡", label: "Guardian",  accent: "border-blue-500/40 bg-blue-500/5",     desc: "Adversarial review & repair only. Best for bug-fixing existing builds.", models: "GPT-4o (review) → Claude Sonnet 4 (repair)" },
-    { id: "concierge", emoji: "✦",  label: "Concierge", accent: "border-cyan-500/40 bg-cyan-500/5",     desc: "Single fast model, no swarm spawn. Ideal for quick edits.", models: "Gemini 2.5 Flash only" },
-    { id: "hydra",     emoji: "🔱", label: "Hydra",     accent: "border-purple-500/40 bg-purple-500/5", desc: "Legacy parallel 3-tier execution. All model tiers fire simultaneously.", models: "DeepSeek + Claude Sonnet 4 + GPT-4o parallel" },
-  ];
+  const tierAccent = (t: string) => t === "cost" ? "border-green-500/25" : t === "premium" ? "border-yellow-500/25" : "border-blue-500/25";
+  const tierBadge  = (t: string) => t === "cost"
+    ? "border-green-500/40 text-green-400 bg-green-500/5"
+    : t === "premium"
+    ? "border-yellow-500/40 text-yellow-400 bg-yellow-500/5"
+    : "border-blue-500/40 text-blue-400 bg-blue-500/5";
 
   return (
-    <div className="space-y-6">
-
-      {/* ── Swarm Modes Reference ── */}
-      <div>
-        <div className="mb-3">
-          <h3 className="font-bold text-base">Swarm Modes</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            One mode is active per project. Select the mode when creating a project, or change it from the project header. Only the active mode runs — others are fully idle.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {SWARM_MODES_INFO.map(m => (
-            <div key={m.id} className={`border rounded-lg p-3 ${m.accent}`}>
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-base">{m.emoji}</span>
-                <span className="text-sm font-bold">{m.label}</span>
-                <span className="ml-auto text-[9px] font-mono text-muted-foreground/50 border border-border/30 rounded px-1">{m.id}</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">{m.desc}</p>
-              <p className="text-[10px] font-mono text-muted-foreground/50 mt-1.5 truncate">{m.models}</p>
-            </div>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted-foreground/60 mt-2">
-          To change a project's active swarm: open the project → click the mode badge next to its name in the header.
-        </p>
-      </div>
-
-      <div className="border-t border-border/30 pt-6">
+    <div className="space-y-4">
 
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="font-bold text-base">Model Fallback Chains</h3>
+          <h3 className="font-bold text-base">Role Registry</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Models are tried in order — top wins. Changes take effect immediately (no restart needed).
+            Assign a primary model + ordered fallbacks to each swarm role. Applies on the next build.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -870,132 +949,125 @@ function SwarmTab() {
         </div>
       </div>
 
-      {/* Tier grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {Object.entries(TIER_META).map(([tier, meta]) => {
-          const tierModels = effectiveTiers(tier);
-          const customized = isCustomized(tier);
-          const q = search[tier] || "";
-
-          return (
-            <Card key={tier} className={`border ${meta.accent}`}>
-              <CardHeader className="pb-2 pt-3 px-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-sm font-bold">{meta.label}</CardTitle>
-                    <p className="text-[11px] text-muted-foreground">{meta.desc}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {customized && (
-                      <Badge variant="outline" className="text-[9px] font-mono text-primary border-primary/40">custom</Badge>
-                    )}
-                    <button
-                      onClick={() => resetTier(tier)}
-                      title="Reset to built-in defaults"
-                      className="text-[10px] text-muted-foreground hover:text-foreground border border-border/40 rounded px-1.5 py-0.5 transition-colors"
-                    >
-                      reset
-                    </button>
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardContent className="px-4 pb-4 space-y-2">
-                {/* Model list */}
-                <div className="space-y-1">
-                  {tierModels.length === 0 && (
-                    <div className="text-xs text-muted-foreground italic py-1">
-                      No models saved — using built-in defaults
-                    </div>
-                  )}
-                  {tierModels.map((model, idx) => (
-                    <div
-                      key={`${model}-${idx}`}
-                      className="flex items-center gap-2 bg-black/40 border border-border/30 rounded px-2 py-1.5 group"
-                    >
-                      <span className="text-[10px] text-muted-foreground font-mono w-4 text-right shrink-0">
-                        {idx + 1}
-                      </span>
-                      <span className="text-xs font-mono flex-1 truncate" title={model}>{model}</span>
-                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => moveModel(tier, idx, -1)}
-                          disabled={idx === 0}
-                          className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
-                          title="Move up"
-                        >▲</button>
-                        <button
-                          onClick={() => moveModel(tier, idx, 1)}
-                          disabled={idx === tierModels.length - 1}
-                          className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
-                          title="Move down"
-                        >▼</button>
-                        <button
-                          onClick={() => removeModel(tier, idx)}
-                          className="p-0.5 text-muted-foreground hover:text-red-400 transition-colors"
-                          title="Remove"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Add model dropdown */}
-                <div
-                  className="relative"
-                  ref={el => { dropRef.current[tier] = el; }}
-                >
-                  <div className="flex gap-1.5">
-                    <input
-                      value={q}
-                      onChange={e => {
-                        setSearch(prev => ({ ...prev, [tier]: e.target.value }));
-                        setOpen(tier);
-                      }}
-                      onFocus={() => setOpen(tier)}
-                      placeholder="Search & add model…"
-                      className="flex-1 bg-black/60 border border-border/60 rounded px-2 py-1 text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60"
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={() => addModel(tier, q)}
-                      disabled={!q.trim()}
-                      className="h-7 w-7 p-0 shrink-0"
-                      title="Add model ID"
-                    >
-                      <Plus className="w-3 h-3" />
-                    </Button>
-                  </div>
-
-                  {open === tier && filteredModels(tier).length > 0 && (
-                    <div className="absolute z-50 top-full left-0 right-8 mt-1 bg-[#0a0a12] border border-border rounded shadow-2xl max-h-52 overflow-y-auto">
-                      {filteredModels(tier).map(m => (
-                        <button
-                          key={m.id}
-                          onMouseDown={e => { e.preventDefault(); addModel(tier, m.id); }}
-                          className="w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-primary/10 transition-colors border-b border-border/20 last:border-0"
-                        >
-                          <div className="truncate text-foreground/90">{m.id}</div>
-                          {m.name && m.name !== m.id && (
-                            <div className="text-[10px] text-muted-foreground truncate">{m.name}</div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+      {/* ── Tab bar ── */}
+      <div className="flex gap-0.5 border-b border-border/30 overflow-x-auto">
+        {[
+          { id: "concierge", label: "✦ Concierge" },
+          { id: "cost",      label: "💰 Cost"      },
+          { id: "premium",   label: "👑 Premium"    },
+          { id: "guardian",  label: "🛡 Guardian"   },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`px-3 py-1.5 text-xs rounded-t-sm shrink-0 transition-colors font-mono whitespace-nowrap ${
+              activeTab === t.id
+                ? "bg-primary/10 border-l border-t border-r border-primary/30 text-primary relative -mb-px pb-2"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <p className="text-[11px] text-muted-foreground text-center">
-        Tip: The swarm tries model #1 first — if it fails or times out it moves to #2, then #3, etc. Put your cheapest/fastest models at the top for cost savings.
+      {/* ── Concierge panel ── */}
+      {activeTab === "concierge" && (
+        <div className="max-w-lg">
+          <div className="border border-cyan-500/30 rounded-lg p-4 bg-cyan-500/5">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-sm font-bold text-cyan-400">✦ Concierge Router</span>
+              <span className="text-[10px] text-muted-foreground/60 flex-1">
+                Routes each build to cost vs premium tier
+              </span>
+            </div>
+            {renderModelPicker(
+              "conc.primary",
+              concierge.primary,
+              v => setConcierge(p => ({ ...p, primary: v })),
+              "Primary",
+            )}
+            <div>
+              <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground/50 mb-1">Fallbacks</div>
+              <div className="space-y-0.5 mb-1.5">
+                {concierge.fallbacks.length === 0 && (
+                  <div className="text-[10px] text-muted-foreground/40 italic py-0.5">None — uses primary only</div>
+                )}
+                {concierge.fallbacks.map((slug, idx) => (
+                  <div key={idx} className="flex items-center gap-1 bg-black/30 border border-border/20 rounded px-2 py-1 group">
+                    <span className="text-[9px] text-muted-foreground/40 w-3 shrink-0 text-right">{idx + 1}</span>
+                    <span className="text-[10px] font-mono flex-1 truncate">{slug}</span>
+                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => moveConcFallback(idx, -1)} disabled={idx === 0} className="p-0.5 text-muted-foreground disabled:opacity-20">▲</button>
+                      <button onClick={() => moveConcFallback(idx, 1)} disabled={idx === concierge.fallbacks.length - 1} className="p-0.5 text-muted-foreground disabled:opacity-20">▼</button>
+                      <button onClick={() => removeConcFallback(idx)} className="p-0.5 text-muted-foreground hover:text-red-400"><X className="w-3 h-3" /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div ref={el => { dropRef.current["conc.fb"] = el; }} className="relative">
+                <div className="flex gap-1">
+                  <input
+                    value={search["conc.fb"] || ""}
+                    onChange={e => { setSearch(p => ({ ...p, "conc.fb": e.target.value })); setOpenDrop("conc.fb"); }}
+                    onFocus={() => setOpenDrop("conc.fb")}
+                    placeholder="Add fallback…"
+                    className="flex-1 bg-black/40 border border-border/30 rounded px-2 py-1 text-[10px] font-mono focus:outline-none focus:border-primary/40 placeholder:text-muted-foreground/30"
+                  />
+                  <Button variant="outline" onClick={() => addConcFallback((search["conc.fb"] || "").trim())} disabled={!(search["conc.fb"] || "").trim()} className="h-6 w-6 p-0 shrink-0">
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+                {openDrop === "conc.fb" && filteredMods("conc.fb").length > 0 && (
+                  <div className="absolute z-50 top-full left-0 right-8 mt-0.5 bg-[#0a0a12] border border-border rounded shadow-2xl max-h-40 overflow-y-auto">
+                    {filteredMods("conc.fb").map(m => (
+                      <button key={m.id} onMouseDown={e => { e.preventDefault(); addConcFallback(m.id); }} className="w-full text-left px-2 py-1 text-[10px] font-mono hover:bg-primary/10 border-b border-border/20 last:border-0 truncate">
+                        {m.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cost / Premium / Guardian role grids ── */}
+      {["cost", "premium", "guardian"].includes(activeTab) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {Object.entries(registry[activeTab] ?? {}).map(([role, entry]) => (
+            <div key={role} className={`border rounded-lg p-3 ${tierAccent(activeTab)}`}>
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className={`text-[10px] font-mono font-bold border rounded px-1.5 py-0.5 shrink-0 ${tierBadge(activeTab)}`}>
+                  {ROLE_LABELS[role] || role}
+                </span>
+                <span className="text-[10px] text-muted-foreground/60 flex-1 truncate min-w-0" title={entry.specialty}>
+                  {entry.specialty}
+                </span>
+                <button
+                  onClick={() => resetRole(activeTab, role)}
+                  className="text-[9px] text-muted-foreground hover:text-foreground border border-border/30 rounded px-1.5 py-0.5 shrink-0 transition-colors"
+                  title="Reset to built-in default"
+                >
+                  reset
+                </button>
+              </div>
+              {renderModelPicker(`${activeTab}.${role}.primary`, entry.primary, v => setPrimary(activeTab, role, v), "Primary")}
+              {renderFallbackList(activeTab, role, entry.fallbacks)}
+            </div>
+          ))}
+          {Object.keys(registry[activeTab] ?? {}).length === 0 && (
+            <div className="col-span-2 flex items-center justify-center py-10 text-muted-foreground text-sm">
+              <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading roles…
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="text-[11px] text-muted-foreground/50 text-center pt-2">
+        Primary fires first — fallbacks activate on error or timeout. Use ▲▼ to reorder priority.
       </p>
-      </div>{/* closes border-t section */}
     </div>
   );
 }
