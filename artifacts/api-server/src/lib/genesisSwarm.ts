@@ -725,6 +725,8 @@ async function departmentHeadDecompose(
     `You are the ${dept} Department Head (${role}). ` +
     "Decompose your domain into 5-15 ATOMIC implementation tasks. " +
     "Each task = one file or one tightly-scoped unit. " +
+    "IMPORTANT: All data persistence uses window.NEXUS_API (a REST URL injected at runtime). " +
+    "Never plan tasks that create a backend server — the platform provides the backend. " +
     `Output JSON: {"tasks":[{"id":"...","title":"...","file_hint":"path","description":"...","depends_on":[]}]}`
   );
   const genesisRole = deptToRole(dept);
@@ -759,7 +761,13 @@ async function workerExecute(
   const system = (
     `You are an elite ${dept} engineer (Genesis role: ${genesisRole}). ` +
     "Produce PRODUCTION-READY, fully-typed, complete code. No placeholders, no TODOs. " +
-    "When emitting files: ===FILE: relative/path.ext===\n```lang\n<code>\n```"
+    "When emitting files use: ===FILE: relative/path.ext===\n```lang\n<code>\n```\n\n" +
+    "CRITICAL — NEXUS PLATFORM RULES:\n" +
+    "• ALL data persistence uses window.NEXUS_API (injected at runtime). NEVER use localhost or /api/... URLs.\n" +
+    "• Button handlers MUST call fetch(window.NEXUS_API + '/collection', ...) — this is how data gets saved.\n" +
+    "• Load existing data on page load: fetch(window.NEXUS_API + '/collection') then render results.\n" +
+    "• Auth uses window.NEXUS_AUTH + '/register' or '/login'. No custom backend needed.\n" +
+    "• Output is pure frontend HTML/CSS/JS only — NO Node.js server files, NO package.json."
   );
   const prompt = (
     `Task: ${task.title}\nFile: ${task.file_hint}\nDescription: ${task.description}\n\n` +
@@ -903,6 +911,55 @@ function packageProject(mem: SharedMemory, onLog: (msg: string) => void): Projec
 }
 
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// NEXUS PLATFORM SPEC — injected into every agent's context
+// ─────────────────────────────────────────────────────────────
+const NEXUS_PLATFORM_SPEC = `
+## NEXUS PLATFORM — BACKEND API (READ THIS FIRST — CRITICAL)
+
+This app runs inside NexusElite Studio. At runtime the platform injects these
+globals into the page BEFORE any of your code runs:
+
+  window.NEXUS_API        → base URL for your REST database
+                            e.g. "https://nexuselitestudio.com/api/projects/abc/appdata"
+  window.NEXUS_AUTH       → base URL for user auth  (register / login / me)
+  window.NEXUS_PROJECT_ID → unique project ID string
+
+### REST database (window.NEXUS_API) — full CRUD:
+  GET    fetch(window.NEXUS_API + '/users')
+           → JSON array of records  e.g. [{ id, name, email, _created }, ...]
+  POST   fetch(window.NEXUS_API + '/users', { method:'POST',
+           headers:{'Content-Type':'application/json'},
+           body: JSON.stringify({ name, email }) })
+           → { id: "abc123", name, email }
+  PUT    fetch(window.NEXUS_API + '/users/' + id, { method:'PUT',
+           headers:{'Content-Type':'application/json'},
+           body: JSON.stringify(updates) })
+           → updated record
+  DELETE fetch(window.NEXUS_API + '/users/' + id, { method:'DELETE' })
+           → 204 No Content
+
+  Collections are created automatically on first write.
+  Any collection name works: 'todos', 'products', 'scores', 'messages', etc.
+
+### Auth (window.NEXUS_AUTH):
+  POST window.NEXUS_AUTH + '/register'  → { token, user }
+  POST window.NEXUS_AUTH + '/login'     → { token, user }
+  GET  window.NEXUS_AUTH + '/me'        → { user }  (Authorization: Bearer <token>)
+
+### STRICT RULES — violating these breaks the app:
+  1. Use window.NEXUS_API for ALL data persistence. Never use localStorage as primary store.
+  2. NEVER create a Node/Express server, package.json scripts, or backend files.
+     The platform IS the backend — your job is frontend only (HTML + CSS + JS).
+  3. NEVER hardcode localhost:3000, /api/..., or any absolute URL.
+     Always use window.NEXUS_API and window.NEXUS_AUTH as prefixes.
+  4. Guard every fetch: always check window.NEXUS_API exists before calling it.
+  5. Button onclick handlers MUST call fetch(window.NEXUS_API + ...) to persist data.
+  6. Load data on DOMContentLoaded by calling fetch(window.NEXUS_API + '/collection').
+  7. The deliverable is ONE self-contained index.html (inline CSS + JS) unless the
+     brief explicitly requires multiple files. No build step, no npm install.
+`.trim();
+
 // ORCHESTRATOR — MAIN ENTRY POINT (replaces old buildProject)
 // ─────────────────────────────────────────────────────────────
 
@@ -933,7 +990,7 @@ export async function buildProject(
   const { blueprint, tdd, departments } = await runOrchestration(spec, tier, mem, onLog);
   onLog(`__SWARM__:${JSON.stringify({ type: "progress", pct: 20 })}`);
 
-  const ctx = JSON.stringify({ blueprint, tdd }, null, 2).slice(0, 12_000);
+  const ctx = NEXUS_PLATFORM_SPEC + "\n\n" + JSON.stringify({ blueprint, tdd }, null, 2).slice(0, 10_000);
 
   // ── Layer 3: Department head decomposition ──
   onLog(`\n🏢 [Swarm Manager] Launching ${departments.length} department heads...`);
