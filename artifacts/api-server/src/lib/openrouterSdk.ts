@@ -1,6 +1,16 @@
 import { OpenRouter } from "@openrouter/sdk";
 import { SDKHooks } from "@openrouter/sdk/hooks/hooks.js";
 import { createOpenRouterDevtools } from "@openrouter/devtools";
+import {
+  callModel,
+  tool       as _agentTool,
+  serverTool as _agentServerTool,
+  stepCountIs,
+  maxCost,
+  maxTokensUsed,
+  hasToolCall as stopOnToolCall,
+} from "@openrouter/agent";
+import type { Tool as AgentTool, StopWhen, ParsedToolCall, TurnContext, ConversationState } from "@openrouter/agent";
 
 const OR_BASE = "https://openrouter.ai/api/v1";
 
@@ -256,5 +266,145 @@ export async function* chatStreamViaSdk(
     }
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// AGENT — multi-turn loops & tool orchestration (@openrouter/agent)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Re-exports from @openrouter/agent for defining tools in command-center routes.
+ *
+ * `agentTool`        — define a client-side tool with a Zod input schema
+ * `agentServerTool`  — define a server-executed tool (runs inside the agent loop)
+ * `stepCountIs`      — stop after N turns
+ * `maxCost`          — stop after spending $N in API cost
+ * `maxTokensUsed`    — stop after N total tokens consumed
+ * `stopOnToolCall`   — stop as soon as a specific tool is invoked
+ */
+export {
+  _agentTool       as agentTool,
+  _agentServerTool as agentServerTool,
+  stepCountIs,
+  maxCost,
+  maxTokensUsed,
+  stopOnToolCall,
+};
+export type { AgentTool, StopWhen, ParsedToolCall, TurnContext, ConversationState };
+
+/**
+ * Run a multi-turn agent loop with automatic tool orchestration.
+ *
+ * The loop calls the model, executes every tool call it returns, feeds
+ * results back, and repeats until either:
+ *  - the model produces a turn with no tool calls, OR
+ *  - a `stopWhen` condition fires (stepCountIs / maxCost / etc.)
+ *
+ * @example
+ * ```ts
+ * const { text, toolCallCount } = await callModelWithTools({
+ *   model:      "openai/gpt-4o",
+ *   input:      "Summarise the last 10 builds for project 42",
+ *   tools:      [fetchBuildsTool, summariseTool],
+ *   stopWhen:   stepCountIs(5),
+ *   systemPrompt: "You are a build-status assistant.",
+ * });
+ * ```
+ */
+export async function callModelWithTools(opts: {
+  model:         string;
+  input:         string | Array<{ role: string; content: string }>;
+  tools?:        readonly AgentTool[];
+  stopWhen?:     StopWhen;
+  systemPrompt?: string;
+  maxTokens?:    number;
+  temperature?:  number;
+}): Promise<{
+  text:          string;
+  inputTokens:   number;
+  outputTokens:  number;
+  toolCallCount: number;
+}> {
+  const client = getOpenRouterClient();
+
+  const messages: Array<{ role: string; content: string }> = [];
+  if (opts.systemPrompt) messages.push({ role: "developer", content: opts.systemPrompt });
+  if (typeof opts.input === "string") {
+    messages.push({ role: "user", content: opts.input });
+  } else {
+    messages.push(...opts.input);
+  }
+
+  const result = callModel(client as any, {
+    model:  opts.model,
+    input:  messages as any,
+    tools:  (opts.tools ?? []) as any,
+    ...(opts.stopWhen ? { stopWhen: opts.stopWhen } : {}),
+    params: {
+      ...(opts.maxTokens    !== undefined ? { max_tokens:  opts.maxTokens }  : {}),
+      ...(opts.temperature  !== undefined ? { temperature: opts.temperature } : {}),
+    },
+  });
+
+  // All three consume the same underlying ReusableReadableStream — safe to call concurrently
+  const [text, response, toolCalls] = await Promise.all([
+    result.getText(),
+    result.getResponse(),
+    result.getToolCalls(),
+  ]);
+
+  return {
+    text,
+    inputTokens:   (response as any)?.usage?.inputTokens  ?? 0,
+    outputTokens:  (response as any)?.usage?.outputTokens ?? 0,
+    toolCallCount: toolCalls.length,
+  };
+}
+
+/**
+ * Streaming variant of `callModelWithTools`.
+ * Yields text deltas in real-time while tools still execute automatically between turns.
+ *
+ * @example
+ * ```ts
+ * for await (const delta of streamAgentText({ model, input, tools })) {
+ *   res.write(delta);
+ * }
+ * res.end();
+ * ```
+ */
+export async function* streamAgentText(opts: {
+  model:         string;
+  input:         string | Array<{ role: string; content: string }>;
+  tools?:        readonly AgentTool[];
+  stopWhen?:     StopWhen;
+  systemPrompt?: string;
+  maxTokens?:    number;
+  temperature?:  number;
+}): AsyncGenerator<string> {
+  const client = getOpenRouterClient();
+
+  const messages: Array<{ role: string; content: string }> = [];
+  if (opts.systemPrompt) messages.push({ role: "developer", content: opts.systemPrompt });
+  if (typeof opts.input === "string") {
+    messages.push({ role: "user", content: opts.input });
+  } else {
+    messages.push(...opts.input);
+  }
+
+  const result = callModel(client as any, {
+    model:  opts.model,
+    input:  messages as any,
+    tools:  (opts.tools ?? []) as any,
+    ...(opts.stopWhen ? { stopWhen: opts.stopWhen } : {}),
+    params: {
+      ...(opts.maxTokens    !== undefined ? { max_tokens:  opts.maxTokens }  : {}),
+      ...(opts.temperature  !== undefined ? { temperature: opts.temperature } : {}),
+    },
+  });
+
+  for await (const delta of result.getTextStream()) {
+    yield delta;
   }
 }
