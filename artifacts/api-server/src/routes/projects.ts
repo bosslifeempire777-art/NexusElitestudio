@@ -1192,6 +1192,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     const chatReplyPromise: Promise<string> = generateChatResponse(
       project.type, project.name, userMessage, project.prompt,
       userSecretNames, priorChat, priorMemory,
+      project.generatedCode ?? null,
     ).catch(() => quickReply);
 
     // Helper — persist chat history once we have the real reply
