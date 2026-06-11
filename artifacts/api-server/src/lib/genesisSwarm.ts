@@ -410,6 +410,8 @@ export async function callByRole(
   return { text, modelUsed: chain[0] };
 }
 
+const MAX_RETRIES_PER_MODEL = 3;
+
 async function _callChain(
   chain:       string[],
   prompt:      string,
@@ -427,50 +429,91 @@ async function _callChain(
   try {
     for (const model of chain) {
       if ((_circuit[model] ?? 0) > Date.now()) continue;
-      try {
-        const body: Record<string, any> = {
-          model,
-          messages: [
-            { role: "system", content: system },
-            { role: "user",   content: prompt  },
-          ],
-          max_tokens:  maxTokens,
-          temperature,
-        };
-        if (jsonMode) body.response_format = { type: "json_object" };
 
-        const data    = await chatViaSdk(body, { timeoutMs: timeoutForModel(model) });
-        const content = data.choices?.[0]?.message?.content ?? "";
+      for (let attempt = 0; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
+        try {
+          const body: Record<string, any> = {
+            model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user",   content: prompt  },
+            ],
+            max_tokens:  maxTokens,
+            temperature,
+            provider: { allow_fallbacks: true },
+          };
+          if (jsonMode) body.response_format = { type: "json_object" };
 
-        if (!content) {
-          _circuit[model] = Date.now() + 15_000;
-          continue;
+          const data    = await chatViaSdk(body, { timeoutMs: timeoutForModel(model) });
+          const content = data.choices?.[0]?.message?.content ?? "";
+
+          if (!content) {
+            _circuit[model] = Date.now() + 15_000;
+            break; // no content — skip to next model
+          }
+
+          if (mem) {
+            mem.metrics.calls++;
+            mem.metrics.tokensIn  += data.usage?.prompt_tokens     ?? 0;
+            mem.metrics.tokensOut += data.usage?.completion_tokens ?? 0;
+          }
+
+          onLog?.(`  ✓ [${agentName}] ${model} attempt ${attempt + 1} (${content.length} chars)`);
+          return content;
+        } catch (err: any) {
+          lastErr = err;
+          const status: number | undefined = err?.statusCode ?? err?.status ?? err?.response?.status;
+          const isTimeout  = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
+          const retryable  = isTimeout || status === 429 || (status !== undefined && status >= 500);
+
+          if (!retryable || attempt === MAX_RETRIES_PER_MODEL) {
+            // Non-retryable error OR exhausted retries — open circuit, move to next model
+            _circuit[model] = Date.now() + (status === 429 ? 30_000 : 15_000);
+            break;
+          }
+
+          // Exponential backoff with jitter: 500ms → 1s → 2s → 4s (capped at 8s)
+          const backoff = Math.min(500 * Math.pow(2, attempt), 8_000) + Math.random() * 500;
+          onLog?.(`  ⟳ [${agentName}] ${model} retry ${attempt + 1}/${MAX_RETRIES_PER_MODEL} after ${Math.round(backoff)}ms`);
+          await new Promise(r => setTimeout(r, backoff));
         }
-
-        if (mem) {
-          mem.metrics.calls++;
-          mem.metrics.tokensIn  += data.usage?.prompt_tokens     ?? 0;
-          mem.metrics.tokensOut += data.usage?.completion_tokens ?? 0;
-        }
-
-        onLog?.(`  ✓ [${agentName}] ${model} (${content.length} chars)`);
-        return content;
-      } catch (err: any) {
-        lastErr = err;
-        const status: number | undefined = err?.statusCode ?? err?.status ?? err?.response?.status;
-        const isTimeout  = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
-        const retryable  = isTimeout || status === 429 || (status !== undefined && status >= 500);
-        _circuit[model]  = Date.now() + (status === 429 ? 30_000 : 15_000);
-        if (!retryable && status !== undefined) continue;
-        continue;
       }
     }
   } finally {
     _semaphore.release();
   }
 
-  throw lastErr ?? new Error(`All models failed`);
+  throw lastErr ?? new Error(`All models in chain failed`);
 }
+
+// ─────────────────────────────────────────────────────────────
+// PROMPT SANITIZER — prevent injection from user input
+// ─────────────────────────────────────────────────────────────
+
+function sanitizePrompt(input: string): string {
+  return input
+    .replace(/```/g, "``` ")          // break code-fence injection
+    .replace(/<script/gi, "< script") // break script tags
+    .replace(/javascript:/gi, "java script:")
+    .replace(/on\w+\s*=/gi, "on=")   // break event handlers
+    .slice(0, 10_000);               // hard length cap
+}
+
+// ─────────────────────────────────────────────────────────────
+// GLOBAL QUALITY STANDARDS — injected into every worker prompt
+// ─────────────────────────────────────────────────────────────
+
+const QUALITY_STANDARDS = `
+Quality Standards (always apply):
+- Follow SOLID principles and clean, modular architecture
+- Include proper error handling — loading, empty, and error states
+- Handle all edge cases; no silent failures
+- Follow security best practices (OWASP Top 10, input validation)
+- Ensure accessibility compliance (WCAG 2.1 AA, semantic HTML, ARIA)
+- Optimize for performance (Core Web Vitals, avoid layout thrash)
+- Write complete, runnable code — no TODOs, no stubs, no "implement later"
+- Use modern widely-adopted patterns; no deprecated APIs
+`.trim();
 
 // ─────────────────────────────────────────────────────────────
 // UTILITY HELPERS — unchanged from hydraSwarm
@@ -759,8 +802,9 @@ async function workerExecute(
   );
 
   const system = (
-    `You are an elite ${dept} engineer (Genesis role: ${genesisRole}). ` +
-    "Produce PRODUCTION-READY, fully-typed, complete code. No placeholders, no TODOs. " +
+    `You are an elite ${dept} engineer (Genesis role: ${genesisRole}) for a no-code app builder platform. ` +
+    "Produce PRODUCTION-READY, fully-typed, complete code.\n\n" +
+    `${QUALITY_STANDARDS}\n\n` +
     "When emitting files use: ===FILE: relative/path.ext===\n```lang\n<code>\n```\n\n" +
     "CRITICAL — NEXUS PLATFORM RULES:\n" +
     "• ALL data persistence uses window.NEXUS_API (injected at runtime). NEVER use localhost or /api/... URLs.\n" +
@@ -983,7 +1027,7 @@ export async function buildProject(
   onLog("━".repeat(58));
 
   // ── Layer 1: Concierge routing ──
-  const { tier, spec } = await runConcierge(userPrompt, mem, onLog);
+  const { tier, spec } = await runConcierge(sanitizePrompt(userPrompt), mem, onLog);
   onLog(`__SWARM__:${JSON.stringify({ type: "progress", pct: 5 })}`);
 
   // ── Layer 2: Orchestration ──
@@ -1002,24 +1046,50 @@ export async function buildProject(
   onLog(`📋 [Swarm Manager] ${total} atomic tasks across ${departments.length} departments`);
   onLog(`__SWARM__:${JSON.stringify({ type: "progress", pct: 30 })}`);
 
-  // ── Layer 3: Worker execution (capped by semaphore) ──
-  const coros: Promise<AgentResult>[] = [];
+  // ── Layer 3: Worker execution — dependency-ordered waves ──
+  const allTasks: Array<{ task: AtomicTask; dept: string }> = [];
   for (const { dept, tasks } of deptWork) {
-    for (const t of tasks) {
-      coros.push(workerExecute(t, dept, ctx, tier, mem, onLog));
-    }
+    for (const t of tasks) allTasks.push({ task: t, dept });
   }
-  onLog(`\n⚙️  [Swarm Manager] Spawning ${coros.length} workers (${MAX_PARALLEL} concurrent max)...`);
+  const totalTasks = allTasks.length;
+  onLog(`\n⚙️  [Swarm Manager] ${totalTasks} workers — dependency-ordered waves (${MAX_PARALLEL} concurrent max)...`);
 
-  const results = await Promise.allSettled(coros);
-  let doneCount = 0;
-  for (const r of results) {
-    if (r.status === "rejected") { mem.errors.push(String(r.reason)); continue; }
-    for (const [p, c] of Object.entries(r.value.files)) mem.writeFile(p, c);
-    doneCount++;
-    if (doneCount % 5 === 0) {
-      const pct = 30 + Math.round((doneCount / coros.length) * 40);
-      onLog(`__SWARM__:${JSON.stringify({ type: "progress", pct })}`);
+  const completedIds = new Set<string>();
+  const pendingList  = [...allTasks];
+  let doneCount      = 0;
+
+  while (pendingList.length > 0) {
+    // Find tasks whose all depends_on are satisfied
+    const readyIdxs: number[] = [];
+    for (let i = 0; i < pendingList.length; i++) {
+      const deps = pendingList[i].task.depends_on ?? [];
+      if (deps.every(d => completedIds.has(d))) readyIdxs.push(i);
+    }
+
+    if (readyIdxs.length === 0) {
+      // Deadlock guard — unresolvable deps, run all remaining so we always make progress
+      onLog(`⚠️ [Swarm Manager] Dependency deadlock — running ${pendingList.length} remaining tasks`);
+      for (let i = 0; i < pendingList.length; i++) readyIdxs.push(i);
+    }
+
+    const wave = readyIdxs.map(i => pendingList[i]);
+    for (const i of [...readyIdxs].sort((a, b) => b - a)) pendingList.splice(i, 1);
+
+    const waveResults = await Promise.allSettled(
+      wave.map(({ task, dept }) => workerExecute(task, dept, ctx, tier, mem, onLog))
+    );
+
+    for (let i = 0; i < waveResults.length; i++) {
+      const r      = waveResults[i];
+      const taskId = wave[i].task.id;
+      if (r.status === "rejected") { mem.errors.push(String(r.reason)); }
+      else { for (const [p, c] of Object.entries(r.value.files)) mem.writeFile(p, c); }
+      completedIds.add(taskId);
+      doneCount++;
+      if (doneCount % 5 === 0) {
+        const pct = 30 + Math.round((doneCount / totalTasks) * 40);
+        onLog(`__SWARM__:${JSON.stringify({ type: "progress", pct })}`);
+      }
     }
   }
   onLog(`__SWARM__:${JSON.stringify({ type: "progress", pct: 70 })}`);

@@ -7,3 +7,4 @@
 - [Per-app secrets](per-app-secrets.md) — project_app_secrets table; window.APP_SECRETS injected owner-only in preview; AppSecretsPanel UI in agent tab of project-detail
 - [AI prompt auth pattern](ai-prompt-auth.md) — old btoa/localStorage auth replaced in 3 prompt locations; now uses fetch(NEXUS_AUTH/register|login|me) with real JWTs
 - [Repair Core capabilities](repair-core-capabilities.md) — Logs mode, conversation history, crash-fix for transient DB drops, 60-file limit, log-buffer intercept
+- [Genesis Swarm full integration status](genesis-swarm-integration.md) — what's implemented vs design doc; dependency-ordered waves, per-model retry, provider hints, NEXUS_PLATFORM_SPEC, QUALITY_STANDARDS, sanitizePrompt

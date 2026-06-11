@@ -1,0 +1,2767 @@
+# Genesis Swarm Architecture: A Production-Ready Multi-Model Orchestration System
+
+This architecture represents the culmination of state-of-the-art swarm design principles, integrating the best patterns from distributed agent systems, sophisticated OpenRouter routing, and self-improving AI pipelines. The result is a scalable, cost-efficient, and extensible system capable of producing production-grade software across mobile apps, SaaS platforms, business software, and complex video games.
+
+---
+
+## 1. Architectural Overview
+
+The Genesis Swarm Architecture consists of five core layers working in concert:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     USER INTERFACE LAYER                         │
+│                (Chat Portal / SDK Command Center)                │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                     CONCIERGE AGENT                              │
+│     (Lightweight chat agent for reasoning & quick edits)         │
+│     - Handles simple requests without invoking full swarm        │
+│     - Classifies requests: chat | quick_edit | spawn_swarm       │
+│     - Maintains conversation context and project state           │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                   ORCHESTRATION LAYER                            │
+│        ┌────────────────┴────────────────┐                      │
+│        │      TASK DECOMPOSER            │                      │
+│        │  Breaks requirements into 200+  │                      │
+│        │  granular, dependency-ordered   │                      │
+│        │  micro-tasks                    │                      │
+│        └─────────────────────────────────┘                      │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+        ▼                   ▼                   ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│  COST-        │  │   PREMIUM     │  │   GUARDIAN    │
+│  EFFICIENT    │  │    SWARM      │  │    SWARM      │
+│  SWARM        │  │               │  │               │
+│               │  │               │  │ (Self-healing │
+│ ≤200 agents   │  │ 200+ agents   │  │  & QA layer)  │
+│ Budget-first  │  │ Best models   │  │               │
+│ Escalate as   │  │ No cost       │  │ Reviews every │
+│ needed        │  │ ceiling       │  │ artifact, auto│
+│               │  │               │  │ repairs,      │
+│               │  │               │  │ escalates to  │
+│               │  │               │  │ premium if    │
+│               │  │               │  │ needed        │
+└───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   OPENROUTER GATEWAY                            │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+│  │   Routing    │  │   Fallback   │  │   Metrics    │        │
+│  │   Engine     │  │   Chains     │  │   Collector  │        │
+│  └──────────────┘  └──────────────┘  └──────────────┘        │
+│                                                              │
+│  Model Registry Command Center (starred models auto-priority) │
+└───────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Core Type System and Configuration
+
+```typescript
+// src/types/index.ts
+
+export enum TaskType {
+  TASK_DECOMPOSITION = 'task_decomposition',
+  UI_UX_DESIGN = 'ui_ux_design',
+  FRONTEND_CODE = 'frontend_code',
+  BACKEND_API = 'backend_api',
+  DATABASE_SCHEMA = 'database_schema',
+  GAME_LOGIC = 'game_logic',
+  MULTIMEDIA_PROCESSING = 'multimedia_processing',
+  CODE_REVIEW = 'code_review',
+  DEBUGGING = 'debugging',
+  TESTING = 'testing',
+  DOCUMENTATION = 'documentation',
+  ARCHITECTURE = 'architecture',
+  TROUBLESHOOTING = 'troubleshooting',
+  CHAT_REASONING = 'chat_reasoning',
+  DEVOPS = 'devops'
+}
+
+export enum ProductType {
+  MOBILE_APP_IOS = 'mobile_app_ios',
+  MOBILE_APP_ANDROID = 'mobile_app_android',
+  CROSS_PLATFORM_MOBILE = 'cross_platform_mobile',
+  FULLSTACK_SAAS = 'fullstack_saas',
+  WEB_APP = 'web_app',
+  WEBSITE = 'website',
+  BUSINESS_SOFTWARE = 'business_software',
+  GAME_2D = 'game_2d',
+  GAME_3D = 'game_3d'
+}
+
+export enum ModelTier {
+  BUDGET = 'budget',
+  MID_TIER = 'mid_tier',
+  PREMIUM = 'premium',
+  FLAGSHIP = 'flagship'
+}
+
+export enum SwarmType {
+  COST_EFFICIENT = 'cost_efficient',
+  PREMIUM = 'premium',
+  GUARDIAN = 'guardian'
+}
+
+export const ModelConfigSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  costPer1kTokens: z.number(),
+  contextWindow: z.number(),
+  strengths: z.array(z.nativeEnum(TaskType)),
+  tier: z.nativeEnum(ModelTier),
+  isStarred: z.boolean().default(false),
+  maxConcurrentCalls: z.number().default(10),
+  avgLatencyMs: z.number().default(200)
+});
+
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+
+export const SubTaskSchema = z.object({
+  id: z.string(),
+  parentTaskId: z.string(),
+  description: z.string(),
+  taskType: z.nativeEnum(TaskType),
+  targetPath: z.string().optional(),
+  acceptanceCriteria: z.array(z.string()),
+  dependencies: z.array(z.string()).default([]),
+  priority: z.number().default(1),
+  complexity: z.number().min(1).max(5).default(1),
+  context: z.record(z.any()).default({})
+});
+
+export type SubTask = z.infer<typeof SubTaskSchema>;
+
+export const SwarmConfigSchema = z.object({
+  type: z.nativeEnum(SwarmType),
+  maxSubAgents: z.number(),
+  maxConcurrency: z.number().default(50),
+  fallbackEnabled: z.boolean(),
+  costCap: z.number().default(0),
+  modelOverrides: z.record(z.nativeEnum(TaskType), z.string()).default({}),
+  enableSelfImprovement: z.boolean().default(true),
+  enableAutoTroubleshooting: z.boolean().default(true),
+  stayWithinBudget: z.boolean().default(true)
+});
+
+export type SwarmConfig = z.infer<typeof SwarmConfigSchema>;
+```
+
+### 2.1 Environment Configuration
+
+```typescript
+// src/config/env.ts
+import { z } from 'zod';
+
+const envSchema = z.object({
+  OPENROUTER_API_KEY: z.string().min(1),
+  REDIS_URL: z.string().optional(),
+  REDIS_HOST: z.string().default('localhost'),
+  REDIS_PORT: z.number().default(6379),
+  ACTIVE_SWARM: z.enum(['cost_efficient', 'premium']).default('cost_efficient'),
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  PORT: z.number().default(3000),
+  APP_URL: z.string().default('https://yourapp.com'),
+  COST_CAP_USD: z.number().default(5.0),
+  MAX_TASKS_PER_BUILD: z.number().default(200),
+  CONCURRENCY_LIMIT: z.number().default(50),
+  OPENROUTER_SITE_URL: z.string().optional()
+});
+
+export const env = envSchema.parse(process.env);
+```
+
+---
+
+## 3. The Model Registry Command Center
+
+The Model Registry serves as the central configuration hub where you control every model's assignment. This design allows you to swap models without code changes—just update the registry and redeploy (or hot-reload in production).
+
+```typescript
+// src/config/modelRegistry.ts
+
+export type SwarmTier = 'cost' | 'premium' | 'guardian';
+
+export interface ModelSpec {
+  slug: string;
+  maxTokens?: number;
+  temperature?: number;
+  costHint?: 'low' | 'mid' | 'high';
+}
+
+export interface RoleConfig {
+  primary: ModelSpec;
+  fallbacks: ModelSpec[];
+  specialty: string;
+  taskTypes: TaskType[];
+}
+
+/**
+ * ============================================================
+ *  COMMAND CENTER - EDIT THIS FILE TO CONFIGURE MODELS
+ * ============================================================
+ * 
+ * Replace each `slug` with the EXACT model ID from
+ * https://openrouter.ai/models
+ * 
+ * When you star a model in the OpenRouter portal, it will be
+ * automatically fetched and prioritized on next startup.
+ */
+
+export const ROLE_REGISTRY: Record<SwarmTier, Record<string, RoleConfig>> = {
+  
+  cost: {
+    PLANNER: {
+      specialty: 'Decompose features into granular, dependency-ordered sub-tasks',
+      taskTypes: [TaskType.TASK_DECOMPOSITION, TaskType.ARCHITECTURE],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low', temperature: 0.3 },
+      fallbacks: [
+        { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+        { slug: 'minimax/minimax-text-01', costHint: 'low' },
+      ],
+    },
+    BACKEND_CODER: {
+      specialty: 'APIs, database schemas, authentication, business logic, microservices',
+      taskTypes: [TaskType.BACKEND_API, TaskType.DATABASE_SCHEMA],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'qwen/qwen-2.5-coder-32b-instruct', costHint: 'low' },
+        { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+      ],
+    },
+    FRONTEND_CODER: {
+      specialty: 'React/Next.js/Vue components, state management, responsive design',
+      taskTypes: [TaskType.FRONTEND_CODE],
+      primary: { slug: 'qwen/qwen-2.5-coder-32b-instruct', costHint: 'low' },
+      fallbacks: [
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+        { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+      ],
+    },
+    UI_UX_DESIGNER: {
+      specialty: 'Layout, design systems, Tailwind CSS, accessibility, responsive UI',
+      taskTypes: [TaskType.UI_UX_DESIGN],
+      primary: { slug: 'google/gemini-2.5-flash', costHint: 'low' },
+      fallbacks: [
+        { slug: 'google/gemini-flash-1.5-8b', costHint: 'low' },
+        { slug: 'anthropic/claude-3.5-haiku', costHint: 'mid' },
+      ],
+    },
+    GAME_LOGIC: {
+      specialty: 'Unity/C#/Godot/GDScript game mechanics, physics, ECS patterns',
+      taskTypes: [TaskType.GAME_LOGIC],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'qwen/qwen-2.5-coder-32b-instruct', costHint: 'low' },
+        { slug: 'moonshot/kimi-1.5-chat', costHint: 'mid' },
+      ],
+    },
+    REVIEWER: {
+      specialty: 'Code review, lint checks, security audits, best-practice verification',
+      taskTypes: [TaskType.CODE_REVIEW, TaskType.TESTING],
+      primary: { slug: 'z-ai/z-ai-1-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      ],
+    },
+    TROUBLESHOOTER: {
+      specialty: 'Debugging, error analysis, auto-repair, root-cause identification',
+      taskTypes: [TaskType.TROUBLESHOOTING, TaskType.DEBUGGING],
+      primary: { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      fallbacks: [
+        { slug: 'moonshot/kimi-1.5-chat', costHint: 'mid' },
+        { slug: 'anthropic/claude-3.5-haiku', costHint: 'mid' },
+      ],
+    },
+    ESCALATION: {
+      specialty: 'Hard problems that cheaper models cannot solve',
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+  },
+
+  premium: {
+    PLANNER: {
+      specialty: 'Architect full systems with deep reasoning, scalability planning',
+      taskTypes: [TaskType.TASK_DECOMPOSITION, TaskType.ARCHITECTURE],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high', temperature: 0.4 },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    BACKEND_CODER: {
+      specialty: 'Production-grade backend with security, scalability, observability',
+      taskTypes: [TaskType.BACKEND_API, TaskType.DATABASE_SCHEMA],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    FRONTEND_CODER: {
+      specialty: 'Pixel-perfect, accessible, performant frontend UIs',
+      taskTypes: [TaskType.FRONTEND_CODE, TaskType.UI_UX_DESIGN],
+      primary: { slug: 'openai/gpt-4o', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    UI_UX_DESIGNER: {
+      specialty: 'Award-winning UI/UX with micro-interactions, design systems',
+      taskTypes: [TaskType.UI_UX_DESIGN],
+      primary: { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+    GAME_LOGIC: {
+      specialty: 'AAA-grade gameplay systems, AI, physics optimization',
+      taskTypes: [TaskType.GAME_LOGIC],
+      primary: { slug: 'openai/gpt-4o', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      ],
+    },
+    REVIEWER: {
+      specialty: 'Adversarial review, formal verification, security hardening',
+      taskTypes: [TaskType.CODE_REVIEW, TaskType.TESTING],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+    TROUBLESHOOTER: {
+      specialty: 'Deep debugging, complex integration issues, auto-healing',
+      taskTypes: [TaskType.TROUBLESHOOTING, TaskType.DEBUGGING],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'google/gemini-2.5-pro', costHint: 'high' },
+      ],
+    },
+    ESCALATION: {
+      specialty: 'Mission-critical fixes requiring multi-model consensus',
+      primary: { slug: 'anthropic/claude-opus-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+      ],
+    },
+  },
+
+  guardian: {
+    REVIEWER: {
+      specialty: 'Comprehensive code quality assurance and validation',
+      taskTypes: [TaskType.CODE_REVIEW, TaskType.TESTING, TaskType.DEBUGGING],
+      primary: { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      fallbacks: [
+        { slug: 'openai/gpt-4o', costHint: 'high' },
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+      ],
+    },
+    REPAIR: {
+      specialty: 'Auto-repair identified issues with minimal, targeted fixes',
+      taskTypes: [TaskType.TROUBLESHOOTING],
+      primary: { slug: 'openai/gpt-4o', costHint: 'high' },
+      fallbacks: [
+        { slug: 'anthropic/claude-sonnet-4', costHint: 'high' },
+      ],
+    },
+  },
+};
+
+// Concierge (chat portal) — fast reasoning, runs outside swarms
+export const CONCIERGE_MODEL: ModelSpec = {
+  slug: 'anthropic/claude-sonnet-4',
+  temperature: 0.5,
+};
+
+export const CONCIERGE_FALLBACKS: ModelSpec[] = [
+  { slug: 'google/gemini-2.5-flash' },
+  { slug: 'openai/gpt-4o-mini' },
+];
+```
+
+---
+
+## 4. The OpenRouter Gateway with Fallback and Routing
+
+This is the core networking layer that handles all communication with OpenRouter. It implements sophisticated retry logic, exponential backoff, and automatic fallback chains.
+
+```typescript
+// src/core/OpenRouterClient.ts
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface CallResult {
+  text: string;
+  modelUsed: string;
+  attempts: number;
+  costUsd?: number;
+  latencyMs: number;
+  finishReason: string;
+}
+
+interface CallOptions {
+  messages: ChatMessage[];
+  modelChain: ModelSpec[];
+  maxRetriesPerModel?: number;
+  timeoutMs?: number;
+  jsonMode?: boolean;
+  temperature?: number;
+  maxTokens?: number;
+  extra?: Record<string, unknown>;
+}
+
+interface OpenRouterCompletion {
+  id: string;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: ChatMessage;
+    finish_reason: string;
+  }>;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  provider?: {
+    order: string[];
+    selected_provider: string;
+  };
+}
+
+interface HttpError extends Error {
+  status: number;
+  body: string;
+}
+
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+export class OpenRouterClient {
+  private rateLimitState = new Map<string, { until: number; consecutiveFailures: number }>();
+
+  constructor(
+    private apiKey: string,
+    private appName = 'GenesisSwarm',
+    private siteUrl = 'https://yourapp.com'
+  ) {}
+
+  /**
+   * Execute a call through a model chain with automatic fallback.
+   * Tries primary → each fallback. Per model retries on transient errors
+   * (429/5xx/timeout) with exponential backoff + jitter.
+   */
+  async call(opts: CallOptions): Promise<CallResult> {
+    const {
+      messages,
+      modelChain,
+      maxRetriesPerModel = 3,
+      timeoutMs = 120_000,
+      jsonMode = false,
+      temperature,
+      maxTokens,
+    } = opts;
+
+    let lastError: unknown;
+    let attempts = 0;
+    const start = Date.now();
+    let totalCost = 0;
+
+    for (const model of modelChain) {
+      // Check if model is rate-limited
+      const rateLimitState = this.rateLimitState.get(model.slug);
+      if (rateLimitState && Date.now() < rateLimitState.until) {
+        continue;
+      }
+
+      for (let retry = 0; retry <= maxRetriesPerModel; retry++) {
+        attempts++;
+
+        try {
+          const response = await this.singleCall(
+            model,
+            messages,
+            timeoutMs,
+            jsonMode,
+            temperature ?? model.temperature ?? 0.3,
+            maxTokens ?? model.maxTokens ?? 8000
+          );
+
+          // Calculate cost
+          const cost = (response.usage.total_tokens / 1000) * this.estimateCostPer1kTokens(model.slug);
+          totalCost += cost;
+
+          return {
+            text: response.choices[0].message.content,
+            modelUsed: model.slug,
+            attempts,
+            costUsd: totalCost,
+            latencyMs: Date.now() - start,
+            finishReason: response.choices[0].finish_reason,
+          };
+        } catch (err: any) {
+          lastError = err;
+          const status = err.status ?? 0;
+
+          // Update rate limit state on 429
+          if (status === 429) {
+            const retryAfter = err.headers?.['retry-after'];
+            const backoffMs = retryAfter ? parseInt(retryAfter) * 1000 : Math.min(2 ** retry * 2000, 30000);
+            this.rateLimitState.set(model.slug, {
+              until: Date.now() + backoffMs,
+              consecutiveFailures: (rateLimitState?.consecutiveFailures ?? 0) + 1,
+            });
+          }
+
+          // Classify error
+          const transient = status === 429 || status >= 500 || err.name === 'AbortError';
+          
+          if (!transient) {
+            // Non-transient (400, 401, 403) — skip to next model immediately
+            break;
+          }
+
+          // Exponential backoff with jitter for transient errors
+          const backoff = Math.min(2 ** retry * 500, 10000) + Math.random() * 500;
+          await this.sleep(backoff);
+        }
+      }
+      // Move to next model in chain
+    }
+
+    throw new SwarmCallError(
+      `All models in chain failed: ${modelChain.map((m) => m.slug).join(' → ')}`,
+      lastError
+    );
+  }
+
+  private async singleCall(
+    model: ModelSpec,
+    messages: ChatMessage[],
+    timeoutMs: number,
+    jsonMode: boolean,
+    temperature: number,
+    maxTokens: number
+  ): Promise<OpenRouterCompletion> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const body: Record<string, unknown> = {
+        model: model.slug,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        // OpenRouter provider-level controls
+        provider: {
+          allow_fallbacks: true,
+          // Use 'price' for cost swarm, 'throughput' for premium
+          sort: 'price',
+        },
+      };
+
+      if (jsonMode) {
+        body.response_format = { type: 'json_object' };
+      }
+
+      const res = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': this.siteUrl,
+          'X-Title': this.appName,
+        },
+        body: JSON.stringify({ ...body, ...model.extra }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        const error: HttpError = new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`) as HttpError;
+        error.status = res.status;
+        error.body = body;
+        (error as any).headers = res.headers;
+        throw error;
+      }
+
+      const data: OpenRouterCompletion = await res.json();
+      const content = data?.choices?.[0]?.message?.content;
+      
+      if (!content) {
+        const error: HttpError = new Error('Empty completion from model') as HttpError;
+        error.status = 502;
+        throw error;
+      }
+
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private estimateCostPer1kTokens(slug: string): number {
+    // Estimated costs per model tier (update with actual pricing)
+    const premiumSlugs = ['claude-opus', 'claude-sonnet', 'gpt-4o', 'gemini-2.5-pro'];
+    const midSlugs = ['gemini-2.5-flash', 'claude-3.5-haiku', 'gpt-4o-mini'];
+    
+    if (premiumSlugs.some(s => slug.includes(s))) return 0.015;
+    if (midSlugs.some(s => slug.includes(s))) return 0.003;
+    return 0.0005; // Budget models
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Fetch starred models from OpenRouter API for automatic prioritization.
+   */
+  async fetchStarredModels(): Promise<ModelSpec[]> {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+      });
+      
+      if (!res.ok) return [];
+      
+      const data = await res.json();
+      const starred = (data.data || []).filter((m: any) => m.id === m.starred);
+      
+      return starred.map((m: any) => ({
+        slug: m.id,
+        costHint: m.pricing?.prompt > 0.01 ? 'high' : m.pricing?.prompt > 0.001 ? 'mid' : 'low',
+      }));
+    } catch {
+      return [];
+    }
+  }
+}
+
+export class SwarmCallError extends Error {
+  constructor(msg: string, public cause: unknown) {
+    super(msg);
+  }
+}
+
+export class HttpError extends Error {
+  constructor(public status: number, public body: string) {
+    super(`HTTP ${status}: ${body.slice(0, 300)}`);
+  }
+}
+```
+
+### 4.1 Fallback Router
+
+```typescript
+// src/core/FallbackRouter.ts
+
+export interface TaskRequest {
+  taskType: TaskType;
+  messages: ChatMessage[];
+  temperature?: number;
+  maxTokens?: number;
+  jsonMode?: boolean;
+}
+
+export class FallbackRouter {
+  private costCapReached = false;
+
+  constructor(
+    private swarm: SwarmConfig,
+    private orClient: OpenRouterClient,
+    private metrics: MetricsCollector
+  ) {}
+
+  async execute(request: TaskRequest, costCap?: number): Promise<CallResult> {
+    // Get model chain for this task type
+    const chain = this.getModelChainForTask(request.taskType);
+    
+    let lastError: Error | undefined;
+    const startTime = Date.now();
+
+    for (const model of chain) {
+      // Cost guard
+      if (costCap && costCap > 0) {
+        const currentCost = this.metrics.totalCost;
+        if (currentCost >= costCap) {
+          this.costCapReached = true;
+          throw new Error(`Cost cap ($${costCap}) reached. Aborting build.`);
+        }
+      }
+
+      try {
+        const result = await this.orClient.call({
+          messages: request.messages,
+          modelChain: [model],
+          jsonMode: request.jsonMode,
+          temperature: request.temperature,
+          maxTokens: request.maxTokens,
+        });
+
+        // Record success
+        this.metrics.recordSuccess(model.slug, request.taskType, result.costUsd ?? 0, result.latencyMs);
+        
+        return result;
+      } catch (err) {
+        lastError = err as Error;
+        
+        if (err instanceof SwarmCallError) {
+          // All models in this chain failed — try next
+          this.metrics.recordFailure(model.slug, request.taskType, lastError.message);
+          continue;
+        }
+        
+        // Non-fallback error — propagate
+        throw err;
+      }
+    }
+
+    throw new Error(
+      `All models exhausted for task type ${request.taskType}. Last error: ${lastError?.message}`
+    );
+  }
+
+  private getModelChainForTask(taskType: TaskType): ModelSpec[] {
+    // Map task types to roles, then get chain from registry
+    const roleMapping: Partial<Record<TaskType, string>> = {
+      [TaskType.TASK_DECOMPOSITION]: 'PLANNER',
+      [TaskType.ARCHITECTURE]: 'PLANNER',
+      [TaskType.BACKEND_API]: 'BACKEND_CODER',
+      [TaskType.DATABASE_SCHEMA]: 'BACKEND_CODER',
+      [TaskType.FRONTEND_CODE]: 'FRONTEND_CODER',
+      [TaskType.UI_UX_DESIGN]: 'UI_UX_DESIGNER',
+      [TaskType.GAME_LOGIC]: 'GAME_LOGIC',
+      [TaskType.CODE_REVIEW]: 'REVIEWER',
+      [TaskType.TESTING]: 'REVIEWER',
+      [TaskType.TROUBLESHOOTING]: 'TROUBLESHOOTER',
+      [TaskType.DEBUGGING]: 'TROUBLESHOOTER',
+    };
+
+    const role = roleMapping[taskType] || 'BACKEND_CODER';
+    const tier = this.swarm.type === SwarmType.PREMIUM ? 'premium' : 'cost';
+    const roleConfig = ROLE_REGISTRY[tier]?.[role];
+
+    if (!roleConfig) {
+      // Fallback to generic chain
+      return [
+        { slug: 'deepseek/deepseek-chat', costHint: 'low' },
+        { slug: 'openai/gpt-4o-mini', costHint: 'mid' },
+      ];
+    }
+
+    return [roleConfig.primary, ...roleConfig.fallbacks];
+  }
+}
+```
+
+---
+
+## 5. Shared Memory: The Blackboard
+
+The Blackboard pattern provides shared memory for all agents, enabling them to coordinate, share artifacts, and track dependencies.
+
+```typescript
+// src/core/Blackboard.ts
+
+export interface Artifact {
+  id: string;
+  path: string;
+  content: string;
+  producedBy: string;
+  status: 'draft' | 'reviewed' | 'repaired' | 'failed' | 'final';
+  deps: string[];
+  taskType: TaskType;
+  createdAt: number;
+  verifiedAt?: number;
+  repairAttempts: number;
+}
+
+export interface AuditEntry {
+  timestamp: number;
+  agentId: string;
+  action: string;
+  details: string;
+}
+
+export class Blackboard {
+  private artifacts = new Map<string, Artifact>();
+  private log: AuditEntry[] = [];
+  private subscribers = new Map<string, (artifact: Artifact) => void>();
+
+  put(artifact: Artifact): void {
+    const existing = this.artifacts.get(artifact.id);
+    this.artifacts.set(artifact.id, artifact);
+    
+    // Notify subscribers
+    const callback = this.subscribers.get(artifact.id);
+    if (callback) callback(artifact);
+    
+    this.note(`Artifact ${artifact.id} (${artifact.path}) updated to status: ${artifact.status}`);
+  }
+
+  get(id: string): Artifact | undefined {
+    return this.artifacts.get(id);
+  }
+
+  getByStatus(status: Artifact['status']): Artifact[] {
+    return [...this.artifacts.values()].filter((a) => a.status === status);
+  }
+
+  getByTaskType(taskType: TaskType): Artifact[] {
+    return [...this.artifacts.values()].filter((a) => a.taskType === taskType);
+  }
+
+  getPendingDependencies(depIds: string[]): Artifact[] {
+    return depIds
+      .map((id) => this.artifacts.get(id))
+      .filter((a): a is Artifact => a !== undefined && a.status !== 'final');
+  }
+
+  all(): Artifact[] {
+    return [...this.artifacts.values()];
+  }
+
+  note(msg: string, agentId = 'system'): void {
+    this.log.push({
+      timestamp: Date.now(),
+      agentId,
+      action: 'note',
+      details: msg,
+    });
+  }
+
+  getLog(): AuditEntry[] {
+    return [...this.log];
+  }
+
+  subscribe(id: string, callback: (artifact: Artifact) => void): void {
+    this.subscribers.set(id, callback);
+  }
+
+  unsubscribe(id: string): void {
+    this.subscribers.delete(id);
+  }
+
+  /** Export all final artifacts as a project file map */
+  exportProject(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const a of this.all()) {
+      if (a.status === 'final') {
+        out[a.path] = a.content;
+      }
+    }
+    return out;
+  }
+
+  /** Get build progress as a percentage */
+  getProgress(): { total: number; completed: number; failed: number; percentage: number } {
+    const all = this.all();
+    const total = all.length;
+    const completed = all.filter((a) => a.status === 'final' || a.status === 'reviewed').length;
+    const failed = all.filter((a) => a.status === 'failed').length;
+    return {
+      total,
+      completed,
+      failed,
+      percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+    };
+  }
+
+  /** Clear old artifacts to free memory */
+  prune(maxAgeMs = 3600000): void {
+    const cutoff = Date.now() - maxAgeMs;
+    for (const [id, artifact] of this.artifacts.entries()) {
+      if (artifact.createdAt < cutoff && artifact.status === 'final') {
+        this.artifacts.delete(id);
+      }
+    }
+  }
+}
+```
+
+---
+
+## 6. Task Decomposer
+
+The Task Decomposer transforms high-level requirements into 50-200 granular, dependency-ordered micro-tasks that can be executed in parallel by specialized sub-agents.
+
+```typescript
+// src/core/TaskDecomposer.ts
+
+export interface DecompositionResult {
+  tasks: SubTask[];
+  buildPlan: string;
+}
+
+export class TaskDecomposer {
+  constructor(
+    private orClient: OpenRouterClient,
+    private swarm: SwarmConfig
+  ) {}
+
+  async decompose(
+    spec: string,
+    productType: ProductType,
+    maxTasks = 200
+  ): Promise<SubTask[]> {
+    const tier = this.swarm.type === SwarmType.PREMIUM ? 'premium' : 'cost';
+    const plannerRole = ROLE_REGISTRY[tier].PLANNER;
+
+    const prompt = PLANNER_PROMPT(maxTasks, productType);
+
+    const result = await this.orClient.call({
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: spec },
+      ],
+      modelChain: [plannerRole.primary, ...plannerRole.fallbacks],
+      jsonMode: true,
+      maxTokens: 8192,
+    });
+
+    const tasks = this.parseTasks(result.text);
+    
+    // Validate dependency graph
+    this.validateGraph(tasks);
+    
+    return tasks.slice(0, maxTasks);
+  }
+
+  private parseTasks(text: string): SubTask[] {
+    try {
+      const clean = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+      const tasksArray = parsed.tasks ?? parsed.subTasks ?? [];
+      
+      return tasksArray.map((t: any, index: number) => ({
+        id: t.id || `task-${uuidv4()}`,
+        parentTaskId: t.parentTaskId || 'root',
+        description: t.description || t.title || '',
+        taskType: this.normalizeTaskType(t.taskType || t.role || 'BACKEND_CODER'),
+        targetPath: t.targetPath || t.file || this.inferPath(t),
+        acceptanceCriteria: t.acceptanceCriteria || [],
+        dependencies: (t.deps || t.dependencies || []).filter((d: any) => typeof d === 'string'),
+        priority: t.priority || 1,
+        complexity: t.complexity || 1,
+        context: {},
+      }));
+    } catch (err) {
+      logger.error({ err, text: text.slice(0, 500) }, 'Failed to parse task decomposition');
+      return [];
+    }
+  }
+
+  private normalizeTaskType(rawType: string): TaskType {
+    const normalized = rawType.toUpperCase().replace(/-/g, '_');
+    
+    const mapping: Record<string, TaskType> = {
+      'BACKEND_CODER': TaskType.BACKEND_API,
+      'FRONTEND_CODER': TaskType.FRONTEND_CODE,
+      'UI_UX_DESIGNER': TaskType.UI_UX_DESIGN,
+      'GAME_LOGIC': TaskType.GAME_LOGIC,
+      'REVIEWER': TaskType.CODE_REVIEW,
+      'PLANNER': TaskType.TASK_DECOMPOSITION,
+      'ARCHITECTURE': TaskType.ARCHITECTURE,
+    };
+
+    return mapping[normalized] || TaskType.BACKEND_API;
+  }
+
+  private inferPath(task: any): string {
+    const type = task.taskType || task.role || '';
+    const desc = (task.description || '').toLowerCase();
+    
+    if (desc.includes('database') || desc.includes('schema')) return `src/db/schema.ts`;
+    if (desc.includes('api') || desc.includes('endpoint')) return `src/api/${this.sanitizeFilename(task.title || 'endpoint')}.ts`;
+    if (desc.includes('component') || desc.includes('ui')) return `src/components/${this.sanitizeFilename(task.title || 'Component')}.tsx`;
+    if (desc.includes('test')) return `src/__tests__/${this.sanitizeFilename(task.title || 'test')}.test.ts`;
+    if (desc.includes('config')) return `src/config/${this.sanitizeFilename(task.title || 'config')}.ts`;
+    if (desc.includes('game')) return `src/game/${this.sanitizeFilename(task.title || 'GameLogic')}.ts`;
+    
+    return `src/${this.sanitizeFilename(task.title || 'file')}.ts`;
+  }
+
+  private sanitizeFilename(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  private validateGraph(tasks: SubTask[]): void {
+    const ids = new Set(tasks.map((t) => t.id));
+    
+    // Filter invalid dependencies
+    for (const task of tasks) {
+      task.dependencies = task.dependencies.filter((d) => ids.has(d));
+    }
+
+    // Cycle detection
+    this.detectCycle(tasks);
+  }
+
+  private detectCycle(tasks: SubTask[]): void {
+    const graph = new Map<string, string[]>();
+    for (const t of tasks) {
+      graph.set(t.id, t.dependencies);
+    }
+
+    const state = new Map<string, number>();
+    const visit = (id: string, path: string[]): void => {
+      if (state.get(id) === 1) {
+        throw new Error(`Dependency cycle detected: ${[...path, id].join(' → ')}`);
+      }
+      if (state.get(id) === 2) return;
+      
+      state.set(id, 1);
+      for (const dep of graph.get(id) ?? []) {
+        visit(dep, [...path, id]);
+      }
+      state.set(id, 2);
+    };
+
+    for (const t of tasks) {
+      if (state.get(t.id) !== 2) {
+        visit(t.id, []);
+      }
+    }
+  }
+}
+
+const PLANNER_PROMPT = (maxTasks: number, productType: ProductType) => `
+You are an expert software architect for a no-code app builder platform.
+
+Your job: Break down the following product request into ${maxTasks} granular, independent, executable sub-tasks.
+
+Product Type: ${productType}
+
+Each sub-task must:
+1. Have a clear, single responsibility
+2. Be completable by a focused coding model in a single response
+3. Include explicit acceptance criteria
+4. Define dependencies only when truly required (avoid unnecessary coupling)
+5. Target a specific file path
+
+Task role mapping:
+- PLANNER: Project architecture, build configuration, dependency setup
+- BACKEND_CODER: APIs, database schemas, authentication, business logic
+- FRONTEND_CODER: React/Next.js/Vue components, state management
+- UI_UX_DESIGNER: Layout, styling, accessibility, responsive design
+- GAME_LOGIC: Game mechanics, physics, AI, gameplay systems
+- REVIEWER: Testing, linting, security checks
+
+For ${productType}, include:
+${getProductTypeRequirements(productType)}
+
+Return ONLY valid JSON:
+{
+  "tasks": [
+    {
+      "id": "unique-task-id",
+      "role": "BACKEND_CODER",
+      "title": "Brief title",
+      "description": "Precise description of what to generate",
+      "targetPath": "src/path/to/file.ts",
+      "deps": ["dependent-task-id"],
+      "complexity": 1,
+      "priority": 1,
+      "acceptanceCriteria": ["Criterion 1", "Criterion 2"]
+    }
+  ]
+}
+`;
+
+function getProductTypeRequirements(productType: ProductType): string {
+  const requirements: Record<ProductType, string> = {
+    [ProductType.MOBILE_APP_IOS]: `
+- iOS-specific scaffolding (Info.plist, entitlements)
+- Swift/SwiftUI or React Native implementation
+- iOS design guidelines (Apple HIG)
+- Push notifications, offline support
+- App Store deployment configuration
+`,
+    [ProductType.MOBILE_APP_ANDROID]: `
+- Android manifest and configuration
+- Kotlin/Jetpack Compose or React Native
+- Material Design implementation
+- Play Services integration
+- APK/AAB build configuration
+`,
+    [ProductType.CROSS_PLATFORM_MOBILE]: `
+- React Native or Flutter setup
+- Platform-specific conditional code
+- Cross-platform design system
+- Push notifications for iOS/Android
+- App store deployment configs
+`,
+    [ProductType.FULLSTACK_SAAS]: `
+- Authentication (Clerk/Auth0/Supabase)
+- Multi-tenancy architecture
+- Payment integration (Stripe)
+- Admin dashboard
+- Email notifications
+- API rate limiting
+- Database migrations
+- CI/CD pipeline
+`,
+    [ProductType.WEB_APP]: `
+- Framework setup (Next.js/Remix)
+- Responsive layout
+- State management
+- API integration
+- SEO optimization
+- Performance optimization
+`,
+    [ProductType.WEBSITE]: `
+- Static generation
+- Content pages
+- SEO metadata
+- Performance (Core Web Vitals)
+- Accessibility (WCAG 2.1 AA)
+`,
+    [ProductType.BUSINESS_SOFTWARE]: `
+- Role-based access control
+- Reporting and analytics
+- Data export (CSV/PDF)
+- Audit logging
+- Workflow automation
+- Multi-user real-time collaboration
+`,
+    [ProductType.GAME_2D]: `
+- Game engine setup (Phaser/Godot)
+- Sprite management
+- Physics and collision
+- Game loop
+- Save/load system
+- UI/HUD
+`,
+    [ProductType.GAME_3D]: `
+- 3D engine setup (Unity/Unreal/Three.js)
+- Asset pipeline
+- Lighting and materials
+- Character controller
+- Game state management
+- Performance optimization for 60fps
+`,
+  };
+  
+  return requirements[productType] || '';
+}
+```
+
+---
+
+## 7. Sub-Agent and Swarm Manager
+
+### 7.1 Sub-Agent
+
+```typescript
+// src/core/SubAgent.ts
+
+export class SubAgent {
+  constructor(
+    private orClient: OpenRouterClient,
+    private blackboard: Blackboard
+  ) {}
+
+  async execute(task: SubTask, role: RoleConfig, projectContext: string): Promise<Artifact> {
+    const startTime = Date.now();
+    
+    // Gather dependency context
+    const depContext = task.dependencies
+      .map((d) => this.blackboard.get(d))
+      .filter(Boolean)
+      .map((a) => `// FILE: ${a!.path}\n${a!.content}`)
+      .join('\n\n');
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: CODER_PROMPT(role.specialty, task.taskType) },
+      {
+        role: 'user',
+        content: [
+          `PROJECT CONTEXT:\n${projectContext}`,
+          `\nDEPENDENCIES (already built):\n${depContext || 'none'}`,
+          `\nYOUR TASK (#${task.id}): ${task.description}`,
+          `\nTarget file: ${task.targetPath || 'src/generated/file.ts'}`,
+          `\nAcceptance criteria:\n${task.acceptanceCriteria.join('\n')}`,
+          `\nReturn ONLY the complete file content. No markdown fences, no commentary.`,
+        ].join('\n'),
+      },
+    ];
+
+    const result = await this.orClient.call({
+      messages,
+      modelChain: [role.primary, ...role.fallbacks],
+      maxTokens: task.complexity > 3 ? 16384 : 8192,
+    });
+
+    // Strip markdown fences if present
+    const content = this.stripFences(result.text);
+
+    const artifact: Artifact = {
+      id: task.id,
+      path: task.targetPath || `src/generated/${task.id}.ts`,
+      content,
+      producedBy: result.modelUsed,
+      status: 'draft',
+      deps: task.dependencies,
+      taskType: task.taskType,
+      createdAt: Date.now(),
+      repairAttempts: 0,
+    };
+
+    this.blackboard.put(artifact);
+    this.blackboard.note(
+      `Agent ${task.id} built ${artifact.path} via ${result.modelUsed} (${result.attempts} attempts, ${Date.now() - startTime}ms)`,
+      task.id
+    );
+
+    return artifact;
+  }
+
+  private stripFences(s: string): string {
+    return s.replace(/^```[\w]*\n?/gm, '').replace(/```$/gm, '').trim();
+  }
+}
+
+const CODER_PROMPT = (specialty: string, taskType: TaskType) => `
+You are an expert engineer specialized in: ${specialty}.
+You produce PRODUCTION-READY, fully-typed, secure, and complete code.
+
+Quality Standards:
+- Follow SOLID principles and clean architecture
+- Include proper error handling and validation
+- Handle loading, empty, and error states
+- Match interfaces of dependency files exactly
+- Include JSDoc comments for public APIs
+- Follow security best practices (OWASP Top 10)
+- Ensure accessibility compliance (WCAG 2.1 AA)
+
+Task Type: ${taskType}
+- Output ONLY the requested file's content
+- No TODOs, stubs, or "implement later" placeholders
+- Complete everything in one response
+- Use modern, widely-adopted patterns
+`;
+```
+
+### 7.2 Swarm Manager
+
+```typescript
+// src/core/SwarmManager.ts
+
+export interface SwarmExecutionResult {
+  completed: number;
+  failed: number;
+  totalCost: number;
+  totalTimeMs: number;
+  artifacts: Artifact[];
+  logs: AuditEntry[];
+}
+
+export class SwarmManager {
+  private activeCount = 0;
+  private completed = new Set<string>();
+  private failed = new Set<string>();
+  private totalCost = 0;
+  private startTime = 0;
+  private abortController: AbortController | null = null;
+
+  constructor(
+    private orClient: OpenRouterClient,
+    private blackboard: Blackboard,
+    private swarm: SwarmConfig,
+    private concurrency: number
+  ) {}
+
+  async run(
+    tasks: SubTask[],
+    projectContext: string,
+    onProgress?: (progress: number, currentTask: string) => void
+  ): Promise<SwarmExecutionResult> {
+    this.startTime = Date.now();
+    this.abortController = new AbortController();
+
+    const pending = new Map(tasks.map((t) => [t.id, { task: t, attempt: 0 }]));
+    const tier = this.swarm.type === SwarmType.PREMIUM ? 'premium' : 'cost';
+    const roles = ROLE_REGISTRY[tier];
+
+    while (pending.size > 0) {
+      // Check for abort signal
+      if (this.abortController.signal.aborted) {
+        logger.warn('Swarm execution aborted');
+        break;
+      }
+
+      // Find tasks with all dependencies completed
+      const ready = [...pending.values()].filter(({ task }) =>
+        task.dependencies.every((d) => this.completed.has(d) || this.failed.has(d))
+      );
+
+      if (ready.length === 0) {
+        // Deadlock guard — no tasks can proceed
+        logger.warn('No ready tasks (possible dependency deadlock). Stopping.');
+        this.blackboard.note('Deadlock detected — shipping partial results');
+        break;
+      }
+
+      // Respect concurrency limit
+      const batch = ready.slice(0, this.concurrency - this.activeCount);
+
+      // Execute batch
+      const results = await Promise.allSettled(
+        batch.map(async ({ task, attempt }) => {
+          const role = roles[task.taskType as unknown as string] || roles.BACKEND_CODER;
+          const agent = new SubAgent(this.orClient, this.blackboard);
+
+          return agent.execute(task, role as RoleConfig, projectContext);
+        })
+      );
+
+      // Process results
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          this.completed.add(result.value.id);
+          this.activeCount = Math.max(0, this.activeCount - 1);
+          
+          const progress = Math.round((this.completed.size / tasks.length) * 100);
+          onProgress?.(progress, result.value.id);
+        } else {
+          const failedTask = batch[results.indexOf(result)];
+          const maxAttempts = 3;
+          
+          if (failedTask.task._retryCount < maxAttempts) {
+            // Schedule retry
+            failedTask.attempt++;
+            pending.set(failedTask.task.id, failedTask);
+          } else {
+            this.failed.add(failedTask.task.id);
+            this.blackboard.put({
+              ...failedTask.task,
+              id: failedTask.task.id,
+              parentTaskId: failedTask.task.parentTaskId,
+              description: failedTask.task.description,
+              taskType: failedTask.task.taskType,
+              acceptanceCriteria: failedTask.task.acceptanceCriteria,
+              dependencies: failedTask.task.dependencies,
+              priority: failedTask.task.priority,
+              context: failedTask.task.context,
+              path: failedTask.task.targetPath || `src/failed/${failedTask.task.id}.ts`,
+              content: `// Build failed after ${maxAttempts} attempts\n// Error: ${result.reason}`,
+              producedBy: 'system',
+              status: 'failed',
+              createdAt: Date.now(),
+              repairAttempts: 0,
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      completed: this.completed.size,
+      failed: this.failed.size,
+      totalCost: this.totalCost,
+      totalTimeMs: Date.now() - this.startTime,
+      artifacts: this.blackboard.all(),
+      logs: this.blackboard.getLog(),
+    };
+  }
+
+  abort(): void {
+    this.abortController?.abort();
+  }
+}
+```
+
+---
+
+## 8. Guardian Swarm: Self-Healing and Quality Assurance
+
+The Guardian Swarm provides a cross-cutting self-healing layer that reviews every artifact, identifies issues, auto-repairs problems, and escalates when necessary.
+
+```typescript
+// src/swarms/GuardianSwarm.ts
+
+export interface GuardianReport {
+  artifactId: string;
+  path: string;
+  status: Artifact['status'];
+  passed: boolean;
+  issues: string[];
+  repairedContent?: string;
+  repairAttempts: number;
+  escalated: boolean;
+}
+
+export class GuardianSwarm {
+  constructor(
+    private orClient: OpenRouterClient,
+    private blackboard: Blackboard,
+    private tier: 'cost' | 'premium' | 'guardian'
+  ) {}
+
+  async heal(projectContext: string): Promise<GuardianReport[]> {
+    const drafts = this.blackboard.getByStatus('draft');
+    const reports: GuardianReport[] = [];
+
+    // Process in batches to respect rate limits
+    const batchSize = this.tier === 'premium' ? 15 : 8;
+    const batches = this.chunk(drafts, batchSize);
+
+    for (const batch of batches) {
+      const results = await Promise.allSettled(
+        batch.map((artifact) => this.healOne(artifact, projectContext))
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          reports.push(result.value);
+        }
+      }
+    }
+
+    return reports;
+  }
+
+  private async healOne(
+    artifact: Artifact,
+    projectContext: string,
+    attempt = 1
+  ): Promise<GuardianReport> {
+    const roles = ROLE_REGISTRY[this.tier] || ROLE_REGISTRY.guardian;
+    const maxAttempts = this.tier === 'premium' ? 4 : 3;
+
+    // Step 1: Review
+    const reviewResult = await this.orClient.call({
+      messages: [
+        { role: 'system', content: REVIEWER_PROMPT },
+        {
+          role: 'user',
+          content: `PROJECT CONTEXT:\n${projectContext}\n\nFILE: ${artifact.path}\n\nCODE:\n${artifact.content}\n\nReturn JSON: {"passed": boolean, "issues": ["specific issue 1", ...]}`,
+        },
+      ],
+      modelChain: [roles.REVIEWER.primary, ...roles.REVIEWER.fallbacks],
+      jsonMode: true,
+      maxTokens: 4096,
+    });
+
+    const verdict = this.parseVerdict(reviewResult.text);
+
+    if (verdict.passed) {
+      artifact.status = 'final';
+      artifact.verifiedAt = Date.now();
+      this.blackboard.put(artifact);
+      
+      return {
+        artifactId: artifact.id,
+        path: artifact.path,
+        status: 'final',
+        passed: true,
+        issues: [],
+        repairAttempts: artifact.repairAttempts,
+        escalated: false,
+      };
+    }
+
+    // Step 2: Repair
+    const escalate = attempt >= 2 && this.tier === 'cost';
+    const repairRole = escalate ? ROLE_REGISTRY[this.tier].ESCALATION : roles.REPAIR;
+
+    const repairResult = await this.orClient.call({
+      messages: [
+        { role: 'system', content: REPAIR_PROMPT },
+        {
+          role: 'user',
+          content: `FILE: ${artifact.path}\n\nCURRENT CODE:\n${artifact.content}\n\nISSUES TO FIX:\n${verdict.issues.join('\n')}\n\nReturn the COMPLETE fixed file only. No markdown fences.`,
+        },
+      ],
+      modelChain: [repairRole.primary, ...repairRole.fallbacks],
+      maxTokens: 8192,
+    });
+
+    // Update artifact with repaired content
+    artifact.content = this.stripFences(repairResult.text);
+    artifact.producedBy += ` +repair(${repairResult.modelUsed})`;
+    artifact.repairAttempts = attempt;
+    artifact.status = 'repaired';
+    this.blackboard.put(artifact);
+
+    this.blackboard.note(
+      `Guardian repaired ${artifact.path} (attempt ${attempt}, escalated=${escalate})`
+    );
+
+    // Step 3: Re-verify (up to maxAttempts cycles)
+    if (attempt < maxAttempts) {
+      return this.healOne(artifact, projectContext, attempt + 1);
+    }
+
+    // Max attempts reached
+    if (escalate && this.tier === 'cost') {
+      // Flag for escalation to premium on next pass
+      artifact.status = 'draft';
+      this.blackboard.put(artifact);
+      
+      return {
+        artifactId: artifact.id,
+        path: artifact.path,
+        status: 'draft',
+        passed: false,
+        issues: verdict.issues,
+        repairAttempts: attempt,
+        escalated: true,
+      };
+    }
+
+    artifact.status = 'failed';
+    this.blackboard.put(artifact);
+
+    return {
+      artifactId: artifact.id,
+      path: artifact.path,
+      status: 'failed',
+      passed: false,
+      issues: verdict.issues,
+      repairAttempts: attempt,
+      escalated: false,
+    };
+  }
+
+  private parseVerdict(text: string): { passed: boolean; issues: string[] } {
+    try {
+      const cleaned = text.replace(/```json|```/g, '').trim();
+      return JSON.parse(cleaned);
+    } catch {
+      return { passed: false, issues: ['Reviewer returned unparseable output'] };
+    }
+  }
+
+  private stripFences(s: string): string {
+    return s.replace(/^```[\w]*\n?/gm, '').replace(/```$/gm, '').trim();
+  }
+
+  private chunk<T>(arr: T[], n: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += n) {
+      out.push(arr.slice(i, i + n));
+    }
+    return out;
+  }
+}
+
+const REVIEWER_PROMPT = `
+You are a senior code reviewer with expertise in security, performance, and best practices.
+
+Review the provided code for:
+- Compilation/type errors, undefined references, wrong imports
+- Security vulnerabilities (injection, XSS, auth gaps, secrets exposure)
+- Logic bugs, race conditions, unhandled errors
+- Violations of acceptance criteria
+- Missing error handling or validation
+- Accessibility issues
+- Performance anti-patterns
+
+Be strict. Return JSON with passed=true only if the code is production-ready.
+Return JSON: {"passed": boolean, "issues": ["specific, actionable issue", ...]}
+`;
+
+const REPAIR_PROMPT = `
+You are a senior debugging engineer. Given a file with identified issues, provide the complete corrected version.
+
+Rules:
+- Fix ALL listed issues without breaking existing functionality
+- Preserve the original file structure and naming
+- Output ONLY the complete fixed file content
+- No markdown fences, no commentary
+- Ensure the fix addresses the root cause, not just symptoms
+`;
+```
+
+---
+
+## 9. Swarm Implementations
+
+### 9.1 Cost-Efficient Swarm
+
+```typescript
+// src/swarms/CostEfficientSwarm.ts
+
+export class CostEfficientSwarm {
+  constructor(private orClient: OpenRouterClient) {}
+
+  async build(
+    spec: string,
+    productType: ProductType,
+    options: {
+      costCap?: number;
+      maxTasks?: number;
+      concurrency?: number;
+      onProgress?: (progress: number, status: string) => void;
+    } = {}
+  ): Promise<BuildOutput> {
+    const {
+      costCap = 5.0,
+      maxTasks = 200,
+      concurrency = 25,
+      onProgress,
+    } = options;
+
+    const blackboard = new Blackboard();
+    const metrics = new MetricsCollector();
+    const swarm: SwarmConfig = {
+      type: SwarmType.COST_EFFICIENT,
+      maxSubAgents: maxTasks,
+      maxConcurrency: concurrency,
+      costCap,
+      fallbackEnabled: true,
+      stayWithinBudget: true,
+      enableSelfImprovement: true,
+      enableAutoTroubleshooting: true,
+    };
+
+    logger.info({ spec: spec.slice(0, 100), productType }, 'Cost-efficient build started');
+
+    // Step 1: Decompose into tasks
+    const decomposer = new TaskDecomposer(this.orClient, swarm);
+    const tasks = await decomposer.decompose(spec, productType, maxTasks);
+    blackboard.note(`Decomposed into ${tasks.length} tasks`);
+    onProgress?.(5, 'Decomposed requirements into tasks');
+
+    // Step 2: Execute with bounded concurrency
+    const router = new FallbackRouter(swarm, this.orClient, metrics);
+    const manager = new SwarmManager(this.orClient, blackboard, swarm, concurrency);
+    
+    const executionResult = await manager.run(tasks, spec, (progress, taskId) => {
+      onProgress?.(5 + Math.round(progress * 0.6), `Building: ${taskId.slice(0, 20)}...`);
+    });
+
+    // Step 3: Guardian healing
+    const guardian = new GuardianSwarm(this.orClient, blackboard, 'cost');
+    const reports = await guardian.heal(spec);
+    onProgress?.(85, 'Reviewing and healing artifacts');
+
+    // Check for escalation candidates
+    const escalated = reports.filter((r) => r.escalated);
+    if (escalated.length > 0) {
+      logger.warn({ count: escalated.length }, 'Some artifacts need escalation to premium');
+    }
+
+    // Step 4: Final assembly
+    const project = blackboard.exportProject();
+    onProgress?.(100, 'Build complete');
+
+    return {
+      buildId: uuidv4(),
+      project,
+      reports,
+      metrics: metrics.snapshot(),
+      progress: blackboard.getProgress(),
+      logs: blackboard.getLog(),
+    };
+  }
+}
+```
+
+### 9.2 Premium Swarm
+
+```typescript
+// src/swarms/PremiumSwarm.ts
+
+export class PremiumSwarm {
+  constructor(private orClient: OpenRouterClient) {}
+
+  async build(
+    spec: string,
+    productType: ProductType,
+    options: {
+      maxTasks?: number;
+      concurrency?: number;
+      onProgress?: (progress: number, status: string) => void;
+    } = {}
+  ): Promise<BuildOutput> {
+    const {
+      maxTasks = 300,
+      concurrency = 50,
+      onProgress,
+    } = options;
+
+    const blackboard = new Blackboard();
+    const metrics = new MetricsCollector();
+    const swarm: SwarmConfig = {
+      type: SwarmType.PREMIUM,
+      maxSubAgents: maxTasks,
+      maxConcurrency: concurrency,
+      costCap: 0, // No limit
+      fallbackEnabled: false,
+      stayWithinBudget: false,
+      enableSelfImprovement: true,
+      enableAutoTroubleshooting: true,
+    };
+
+    logger.info({ spec: spec.slice(0, 100), productType }, 'Premium build started');
+
+    // Step 1: Decompose (more granular for premium)
+    const decomposer = new TaskDecomposer(this.orClient, swarm);
+    const tasks = await decomposer.decompose(spec, productType, maxTasks);
+    blackboard.note(`Decomposed into ${tasks.length} tasks (premium granularity)`);
+    onProgress?.(5, 'Architecting solution');
+
+    // Step 2: Execute with higher concurrency
+    const router = new FallbackRouter(swarm, this.orClient, metrics);
+    const manager = new SwarmManager(this.orClient, blackboard, swarm, concurrency);
+    
+    const executionResult = await manager.run(tasks, spec, (progress, taskId) => {
+      onProgress?.(5 + Math.round(progress * 0.5), `Building: ${taskId.slice(0, 20)}...`);
+    });
+
+    // Step 3: Guardian runs TWO passes for "no questions asked" quality
+    const guardian = new GuardianSwarm(this.orClient, blackboard, 'premium');
+    
+    const firstPass = await guardian.heal(spec);
+    onProgress?.(75, 'First review pass complete');
+    
+    const secondPass = await guardian.heal(spec);
+    onProgress?.(90, 'Second review pass (final validation)');
+
+    // Step 4: Final validation
+    await this.runFinalValidation(blackboard, spec);
+    onProgress?.(95, 'Running final validation');
+
+    const project = blackboard.exportProject();
+    onProgress?.(100, 'Premium build complete');
+
+    return {
+      buildId: uuidv4(),
+      project,
+      reports: secondPass,
+      metrics: metrics.snapshot(),
+      progress: blackboard.getProgress(),
+      logs: blackboard.getLog(),
+    };
+  }
+
+  private async runFinalValidation(blackboard: Blackboard, projectContext: string): Promise<void> {
+    const artifacts = blackboard.all();
+    
+    // Final pass: ensure all artifacts are consistent and compile together
+    for (const artifact of artifacts) {
+      if (artifact.status !== 'final') {
+        artifact.status = 'final'; // Promote remaining artifacts
+        blackboard.put(artifact);
+      }
+    }
+  }
+}
+```
+
+---
+
+## 10. Concierge Agent: The Chat Interface
+
+The Concierge Agent is the friendly front-end that users interact with. It intelligently routes requests—handling simple edits directly and escalating complex builds to the appropriate swarm.
+
+```typescript
+// src/agents/ConciergeAgent.ts
+
+export interface Intent {
+  action: 'chat' | 'quick_edit' | 'spawn_swarm';
+  tier?: 'cost' | 'premium';
+  spec?: string;
+  editTarget?: string;
+  editInstruction?: string;
+  reply: string;
+  confidence: number;
+}
+
+export interface ConciergeResponse {
+  type: 'message' | 'edit' | 'build_start' | 'build_complete' | 'error';
+  text: string;
+  data?: any;
+}
+
+export class ConciergeAgent {
+  private projectContext: Record<string, any> = {};
+
+  constructor(private orClient: OpenRouterClient) {}
+
+  async handle(
+    userMessage: string,
+    history: ChatMessage[] = [],
+    options: { userId?: string; projectId?: string } = {}
+  ): Promise<ConciergeResponse> {
+    try {
+      // Step 1: Classify intent
+      const intent = await this.classifyIntent(userMessage, history);
+
+      switch (intent.action) {
+        case 'chat':
+          return {
+            type: 'message',
+            text: intent.reply,
+          };
+
+        case 'quick_edit':
+          // Handle small task directly — NO full swarm
+          const editResult = await this.handleQuickEdit(intent);
+          return {
+            type: 'edit',
+            text: intent.reply,
+            data: editResult,
+          };
+
+        case 'spawn_swarm':
+          return {
+            type: 'build_start',
+            text: intent.reply,
+            data: { tier: intent.tier, spec: intent.spec },
+          };
+      }
+    } catch (err: any) {
+      logger.error({ err }, 'Concierge agent failed');
+      return {
+        type: 'error',
+        text: `I encountered an error: ${err.message}. Please try again.`,
+      };
+    }
+  }
+
+  private async classifyIntent(
+    userMessage: string,
+    history: ChatMessage[]
+  ): Promise<Intent> {
+    const result = await this.orClient.call({
+      messages: [
+        { role: 'system', content: CONCIERGE_PROMPT },
+        ...history.slice(-8),
+        { role: 'user', content: userMessage },
+      ],
+      modelChain: [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS],
+      jsonMode: true,
+      temperature: 0.4,
+    });
+
+    try {
+      const cleaned = result.text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      
+      return {
+        action: parsed.action || 'chat',
+        tier: parsed.tier,
+        spec: parsed.spec,
+        editTarget: parsed.editTarget,
+        editInstruction: parsed.editInstruction,
+        reply: parsed.reply || parsed.message || 'How can I help?',
+        confidence: parsed.confidence || 0.5,
+      };
+    } catch {
+      return {
+        action: 'chat',
+        reply: result.text || 'How can I help with your project?',
+        confidence: 0,
+      };
+    }
+  }
+
+  private async handleQuickEdit(intent: Intent): Promise<any> {
+    if (!intent.editTarget || !intent.editInstruction) {
+      return { success: false, error: 'Missing edit target or instruction' };
+    }
+
+    // Get current file content from project context
+    const currentContent = this.projectContext.files?.[intent.editTarget] || '';
+    
+    const result = await this.orClient.call({
+      messages: [
+        { role: 'system', content: QUICK_EDIT_PROMPT },
+        {
+          role: 'user',
+          content: `FILE: ${intent.editTarget}\n\nCURRENT CONTENT:\n${currentContent}\n\nEDIT REQUEST: ${intent.editInstruction}\n\nReturn the complete modified file.`,
+        },
+      ],
+      modelChain: [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS],
+      temperature: 0.2,
+    });
+
+    const newContent = result.text.replace(/```[\w]*\n?|```$/gm, '').trim();
+    
+    // Update project context
+    if (this.projectContext.files) {
+      this.projectContext.files[intent.editTarget] = newContent;
+    }
+
+    return {
+      success: true,
+      target: intent.editTarget,
+      content: newContent,
+      modelUsed: result.modelUsed,
+    };
+  }
+
+  updateContext(newContext: Record<string, any>): void {
+    this.projectContext = { ...this.projectContext, ...newContext };
+  }
+
+  getContext(): Record<string, any> {
+    return { ...this.projectContext };
+  }
+}
+
+const CONCIERGE_PROMPT = `
+You are the Concierge — the user's friendly AI partner in the no-code app builder.
+
+Your job is to CLASSIFY each message and respond appropriately.
+
+Decision Rules:
+- "chat": Questions, brainstorming, clarification → just respond conversationally
+- "quick_edit": Small, scoped changes (change a color, add a field, fix a typo, rename something) → handle directly without spawning swarm
+- "spawn_swarm": Building a new product or major feature → spawn the appropriate swarm
+
+Spawn Tier Guidelines:
+- "cost" (default): Great quality at optimized price. Use for MVPs, prototypes, standard projects
+- "premium": Best possible quality, no compromises. Use when user explicitly requests "best" or "no questions asked" or for mission-critical applications
+
+Always:
+- Ask 1-2 clarifying questions BEFORE spawning if requirements are vague
+- Confirm understanding of the project type (mobile app, SaaS, website, game, etc.)
+- Keep responses friendly and clear
+- When spawning, summarize what will be built and the expected timeline
+
+Return ONLY JSON:
+{
+  "action": "chat" | "quick_edit" | "spawn_swarm",
+  "tier": "cost" | "premium",
+  "spec": "detailed build specification",
+  "editTarget": "path/to/file.ext",
+  "editInstruction": "what to change",
+  "reply": "your response to the user",
+  "confidence": 0.0-1.0
+}
+`;
+
+const QUICK_EDIT_PROMPT = `
+You are an expert code editor. Given a file and an edit instruction, produce the complete modified file.
+
+Rules:
+- Apply ONLY the requested change
+- Preserve all other content exactly
+- Output the complete file, not just the changed portion
+- No markdown fences, no explanation
+- If the instruction is unclear, make a reasonable interpretation
+`;
+```
+
+---
+
+## 11. Self-Improvement Engine
+
+The Self-Improvement Engine collects telemetry, scores model performance, and suggests or automatically applies routing optimizations.
+
+```typescript
+// src/services/SelfImprovement.ts
+
+interface Telemetry {
+  model: string;
+  taskType: TaskType;
+  tier: string;
+  success: boolean;
+  costUsd: number;
+  latencyMs: number;
+  repairsNeeded: number;
+  timestamp: number;
+}
+
+interface ModelScore {
+  model: string;
+  successRate: number;
+  avgCost: number;
+  avgLatency: number;
+  avgRepairs: number;
+  totalCalls: number;
+  score: number;
+}
+
+export class SelfImprovement {
+  private records: Telemetry[] = [];
+  private readonly maxRecords = 10000;
+  private readonly promotionThreshold = 0.95;
+  private readonly demotionThreshold = 0.70;
+
+  record(telemetry: Omit<Telemetry, 'timestamp'>): void {
+    this.records.push({ ...telemetry, timestamp: Date.now() });
+    
+    // Prune old records
+    if (this.records.length > this.maxRecords) {
+      this.records = this.records.slice(-this.maxRecords);
+    }
+
+    // Trigger optimization check periodically
+    if (this.records.length % 50 === 0) {
+      this.analyzeAndOptimize();
+    }
+  }
+
+  private analyzeAndOptimize(): void {
+    const scores = this.computeScores();
+    
+    // Log suggestions
+    const promotions = scores.filter((s) => s.successRate >= this.promotionThreshold && s.avgCost < 0.002);
+    const demotions = scores.filter((s) => s.successRate < this.demotionThreshold);
+    
+    if (promotions.length > 0) {
+      logger.info({ promotions }, 'Models eligible for promotion');
+    }
+    
+    if (demotions.length > 0) {
+      logger.warn({ demotions }, 'Models should be demoted');
+    }
+  }
+
+  private computeScores(): ModelScore[] {
+    const byModel = new Map<string, Telemetry[]>();
+    
+    for (const r of this.records) {
+      const existing = byModel.get(r.model) || [];
+      existing.push(r);
+      byModel.set(r.model, existing);
+    }
+
+    return [...byModel.entries()].map(([model, records]) => {
+      const successCount = records.filter((r) => r.success).length;
+      const totalCost = records.reduce((sum, r) => sum + r.costUsd, 0);
+      const totalLatency = records.reduce((sum, r) => sum + r.latencyMs, 0);
+      const totalRepairs = records.reduce((sum, r) => sum + r.repairsNeeded, 0);
+      const totalCalls = records.length;
+
+      const successRate = successCount / totalCalls;
+      const avgCost = totalCost / totalCalls;
+      const avgLatency = totalLatency / totalCalls;
+      const avgRepairs = totalRepairs / totalCalls;
+
+      // Composite score: high success, low cost, low latency, low repairs
+      const score =
+        successRate * 100 -
+        avgRepairs * 20 -
+        avgCost * 1000 -
+        avgLatency / 1000;
+
+      return {
+        model,
+        successRate,
+        avgCost,
+        avgLatency,
+        avgRepairs,
+        totalCalls,
+        score,
+      };
+    }).sort((a, b) => b.score - a.score);
+  }
+
+  suggestReordering(taskType: TaskType): string[] {
+    const taskRecords = this.records.filter((r) => r.taskType === taskType);
+    
+    if (taskRecords.length < 10) {
+      return []; // Not enough data
+    }
+
+    const byModel = new Map<string, { success: number; total: number; avgCost: number }>();
+    
+    for (const r of taskRecords) {
+      const stats = byModel.get(r.model) || { success: 0, total: 0, avgCost: 0 };
+      stats.total++;
+      if (r.success) stats.success++;
+      stats.avgCost = (stats.avgCost * (stats.total - 1) + r.costUsd) / stats.total;
+      byModel.set(r.model, stats);
+    }
+
+    // Sort by success rate / cost ratio
+    return [...byModel.entries()]
+      .sort((a, b) => {
+        const rateA = a[1].success / a[1].total;
+        const rateB = b[1].success / b[1].total;
+        return rateB - rateA;
+      })
+      .map(([model]) => model);
+  }
+
+  getInsights(): {
+    totalSpend: number;
+    topModels: ModelScore[];
+    underperformingModels: ModelScore[];
+    costTrend: number[];
+  } {
+    const scores = this.computeScores();
+    const totalSpend = this.records.reduce((sum, r) => sum + r.costUsd, 0);
+    
+    // Compute cost trend (last 100 vs previous 100)
+    const recent = this.records.slice(-100);
+    const previous = this.records.slice(-200, -100);
+    
+    const recentAvgCost = recent.length > 0
+      ? recent.reduce((sum, r) => sum + r.costUsd, 0) / recent.length
+      : 0;
+    const previousAvgCost = previous.length > 0
+      ? previous.reduce((sum, r) => sum + r.costUsd, 0) / previous.length
+      : 0;
+
+    return {
+      totalSpend,
+      topModels: scores.slice(0, 5),
+      underperformingModels: scores.filter((s) => s.successRate < 0.8).slice(-5),
+      costTrend: [
+        previousAvgCost || 0,
+        recentAvgCost,
+      ],
+    };
+  }
+
+  exportMetrics(): Telemetry[] {
+    return [...this.records];
+  }
+}
+```
+
+---
+
+## 12. System Orchestration and Entry Point
+
+```typescript
+// src/index.ts
+
+import 'dotenv/config';
+import express, { Request, Response } from 'express';
+import { OpenRouterClient } from './core/OpenRouterClient';
+import { CostEfficientSwarm } from './swarms/CostEfficientSwarm';
+import { PremiumSwarm } from './swarms/PremiumSwarm';
+import { ConciergeAgent } from './agents/ConciergeAgent';
+import { MetricsCollector } from './services/MetricsCollector';
+import { SelfImprovement } from './services/SelfImprovement';
+import { logger } from './utils/logger';
+import { env } from './config/env';
+import { ProductType } from './types';
+
+const app = express();
+app.use(express.json({ limit: '10mb' }));
+
+// Initialize services
+const orClient = new OpenRouterClient(
+  process.env.OPENROUTER_API_KEY!,
+  'GenesisSwarm',
+  process.env.OPENROUTER_SITE_URL
+);
+
+const metrics = new MetricsCollector();
+const selfImprovement = new SelfImprovement();
+const concierge = new ConciergeAgent(orClient);
+
+// In-memory build tracking
+const builds = new Map<string, any>();
+
+// REST API Endpoints
+
+app.post('/chat', async (req: Request, res: Response) => {
+  try {
+    const { message, history = [], projectId } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const response = await concierge.handle(message, history, { projectId });
+    
+    // If this is a build start, trigger the appropriate swarm
+    if (response.type === 'build_start' && response.data) {
+      const buildId = uuidv4();
+      const { tier, spec } = response.data;
+      
+      // Determine product type from message
+      const productType = inferProductType(message);
+      
+      // Start build in background
+      const swarm = tier === 'premium' 
+        ? new PremiumSwarm(orClient)
+        : new CostEfficientSwarm(orClient);
+      
+      builds.set(buildId, { status: 'running', tier, startedAt: Date.now() });
+      
+      // Handle build asynchronously
+      (async () => {
+        try {
+          const result = await swarm.build(spec, productType, {
+            costCap: tier === 'cost' ? env.COST_CAP_USD : undefined,
+            maxTasks: env.MAX_TASKS_PER_BUILD,
+            concurrency: env.CONCURRENCY_LIMIT,
+            onProgress: (progress, status) => {
+              builds.set(buildId, { status: 'running', progress, status });
+            },
+          });
+          
+          builds.set(buildId, { status: 'complete', result });
+          concierge.updateContext({ files: result.project, lastBuildId: buildId });
+        } catch (err: any) {
+          builds.set(buildId, { status: 'failed', error: err.message });
+        }
+      })();
+      
+      response.data = { ...response.data, buildId };
+    }
+    
+    res.json(response);
+  } catch (err: any) {
+    logger.error({ err });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/build/:buildId', (req: Request, res: Response) => {
+  const build = builds.get(req.params.buildId);
+  if (!build) {
+    return res.status(404).json({ error: 'Build not found' });
+  }
+  res.json(build);
+});
+
+app.get('/build/:buildId/artifacts', (req: Request, res: Response) => {
+  const build = builds.get(req.params.buildId);
+  if (!build?.result?.project) {
+    return res.status(404).json({ error: 'Build not found or not complete' });
+  }
+  res.json({ files: build.result.project });
+});
+
+app.get('/metrics', (_req: Request, res: Response) => {
+  res.json({
+    ...metrics.snapshot(),
+    insights: selfImprovement.getInsights(),
+  });
+});
+
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    activeBuilds: [...builds.entries()].filter(([, b]) => b.status === 'running').length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Metrics endpoint for build completion logging
+app.post('/metrics/record', (req: Request, res: Response) => {
+  const { model, taskType, tier, success, costUsd, latencyMs, repairsNeeded } = req.body;
+  
+  selfImprovement.record({
+    model,
+    taskType,
+    tier,
+    success,
+    costUsd,
+    latencyMs,
+    repairsNeeded,
+  });
+  
+  metrics.recordSuccess(model, taskType, costUsd, latencyMs);
+  
+  res.json({ ok: true });
+});
+
+// Model routing configuration
+app.get('/routing', (_req: Request, res: Response) => {
+  const costRouting = getCurrentRouting('cost');
+  const premiumRouting = getCurrentRouting('premium');
+  
+  res.json({ cost: costRouting, premium: premiumRouting });
+});
+
+app.put('/routing/:tier/:role', (req: Request, res: Response) => {
+  const { tier, role } = req.params;
+  const { modelSlug } = req.body;
+  
+  // Update routing (in production, persist to DB)
+  MODEL_OVERRIDES[`${tier}:${role}`] = modelSlug;
+  
+  res.json({ ok: true, message: `Updated ${tier}/${role} to ${modelSlug}` });
+});
+
+// Error handling middleware
+app.use((err: Error, _req: Request, res: Response, _next: any) => {
+  logger.error({ err });
+  res.status(500).json({ error: err.message });
+});
+
+// Start server
+const PORT = env.PORT;
+app.listen(PORT, () => {
+  logger.info({ port: PORT, swarm: env.ACTIVE_SWARM }, 'Genesis Swarm API running');
+});
+
+// Helper functions
+function inferProductType(message: string): ProductType {
+  const lower = message.toLowerCase();
+  
+  if (lower.includes('ios') && !lower.includes('android')) return ProductType.MOBILE_APP_IOS;
+  if (lower.includes('android')) return ProductType.MOBILE_APP_ANDROID;
+  if (lower.includes('react native') || lower.includes('flutter')) return ProductType.CROSS_PLATFORM_MOBILE;
+  if (lower.includes('saas') || lower.includes('multi-tenant')) return ProductType.FULLSTACK_SAAS;
+  if (lower.includes('game') && (lower.includes('3d') || lower.includes('unity') || lower.includes('unreal'))) return ProductType.GAME_3D;
+  if (lower.includes('game')) return ProductType.GAME_2D;
+  if (lower.includes('business') || lower.includes('crm') || lower.includes('erp')) return ProductType.BUSINESS_SOFTWARE;
+  if (lower.includes('website')) return ProductType.WEBSITE;
+  
+  return ProductType.WEB_APP;
+}
+
+function getCurrentRouting(tier: 'cost' | 'premium'): Record<string, string> {
+  const routing: Record<string, string> = {};
+  const registry = ROLE_REGISTRY[tier];
+  
+  for (const [role, config] of Object.entries(registry)) {
+    routing[role] = config.primary.slug;
+  }
+  
+  return routing;
+}
+
+// Global exception handlers
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught exception');
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.fatal({ reason }, 'Unhandled rejection');
+  process.exit(1);
+});
+```
+
+### 12.1 Supporting Infrastructure
+
+```typescript
+// src/services/MetricsCollector.ts
+
+export class MetricsCollector {
+  private stats = new Map<string, {
+    success: number;
+    failure: number;
+    totalCost: number;
+    totalLatency: number;
+  }>();
+
+  recordSuccess(modelId: string, taskType: TaskType, cost: number, latencyMs: number): void {
+    this.updateStats(modelId, true, cost, latencyMs);
+  }
+
+  recordFailure(modelId: string, taskType: string, _reason: string): void {
+    this.updateStats(modelId, false, 0, 0);
+  }
+
+  private updateStats(modelId: string, success: boolean, cost: number, latencyMs: number): void {
+    const key = `${modelId}`;
+    const cur = this.stats.get(key) ?? { success: 0, failure: 0, totalCost: 0, totalLatency: 0 };
+    
+    if (success) {
+      cur.success++;
+      cur.totalCost += cost;
+      cur.totalLatency += latencyMs;
+    } else {
+      cur.failure++;
+    }
+    
+    this.stats.set(key, cur);
+  }
+
+  get totalCost(): number {
+    let sum = 0;
+    for (const s of this.stats.values()) sum += s.totalCost;
+    return sum;
+  }
+
+  snapshot(): Record<string, any> {
+    const models: Record<string, any> = {};
+    
+    for (const [modelId, s] of this.stats.entries()) {
+      const total = s.success + s.failure;
+      models[modelId] = {
+        ...s,
+        successRate: total > 0 ? s.success / total : 0,
+        avgLatency: s.success > 0 ? s.totalLatency / s.success : 0,
+      };
+    }
+    
+    return { totalCost: this.totalCost, models };
+  }
+}
+```
+
+```typescript
+// src/utils/logger.ts
+
+import pino from 'pino';
+
+export const logger = pino({
+  level: process.env.LOG_LEVEL ?? 'info',
+  transport: process.env.NODE_ENV !== 'production'
+    ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:standard' } }
+    : undefined,
+  base: {
+    service: 'genesis-swarm',
+  },
+});
+```
+
+---
+
+## 13. Handling Production Blind Spots
+
+### 13.1 Circuit Breaker for Rate Limits
+
+```typescript
+// src/services/CircuitBreaker.ts
+
+export class CircuitBreaker {
+  private failures = new Map<string, { count: number; lastFailure: number }>();
+  private readonly threshold = 5;
+  private readonly resetTimeout = 60000; // 1 minute
+
+  isOpen(modelSlug: string): boolean {
+    const state = this.failures.get(modelSlug);
+    if (!state) return false;
+    
+    if (Date.now() - state.lastFailure > this.resetTimeout) {
+      this.failures.delete(modelSlug);
+      return false;
+    }
+    
+    return state.count >= this.threshold;
+  }
+
+  recordFailure(modelSlug: string): void {
+    const current = this.failures.get(modelSlug) ?? { count: 0, lastFailure: 0 };
+    current.count++;
+    current.lastFailure = Date.now();
+    this.failures.set(modelSlug, current);
+  }
+
+  recordSuccess(modelSlug: string): void {
+    this.failures.delete(modelSlug);
+  }
+
+  // Pause all sub-agent spawning when circuit is open
+  async withCircuitProtection<T>(
+    modelSlug: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    if (this.isOpen(modelSlug)) {
+      throw new Error(`Circuit breaker open for ${modelSlug}. Retry after cooldown.`);
+    }
+
+    try {
+      const result = await fn();
+      this.recordSuccess(modelSlug);
+      return result;
+    } catch (err) {
+      this.recordFailure(modelSlug);
+      throw err;
+    }
+  }
+}
+```
+
+### 13.2 Prompt Injection Prevention
+
+```typescript
+// src/utils/sanitizer.ts
+
+/**
+ * Sanitize user input before including in prompts to prevent prompt injection.
+ */
+export function sanitizeForPrompt(input: string): string {
+  // Remove or escape potential injection patterns
+  return input
+    .replace(/```/g, '``` ') // Break code fence attempts
+    .replace(/<script/gi, '< script') // Break script injection
+    .replace(/javascript:/gi, 'java script:') // Break JS protocol
+    .replace(/on\w+=/gi, 'on= ') // Break event handlers
+    .slice(0, 10000); // Limit input length
+}
+
+/**
+ * Sandboxing: never trust sub-agent outputs as code.
+ * In production, execute generated code in isolated Docker containers.
+ */
+export async function validateArtifactSafety(artifact: Artifact): Promise<{
+  safe: boolean;
+  issues: string[];
+}> {
+  const issues: string[] = [];
+  
+  // Check for common malicious patterns
+  const dangerous = [
+    /eval\s*\(/i,
+    /exec\s*\(/i,
+    /child_process/i,
+    /require\s*\(\s*['"]child_process['"]/i,
+    /process\.env/i,
+    /__dirname/i,
+    /__filename/i,
+    /process\.exit/i,
+    /\.spawn\s*\(/i,
+  ];
+  
+  for (const pattern of dangerous) {
+    if (pattern.test(artifact.content)) {
+      issues.push(`Potentially dangerous pattern detected: ${pattern.source}`);
+    }
+  }
+  
+  return {
+    safe: issues.length === 0,
+    issues,
+  };
+}
+```
+
+### 13.3 Multi-Tenant Isolation
+
+```typescript
+// src/services/TenantManager.ts
+
+interface TenantContext {
+  tenantId: string;
+  rateLimit: number;
+  costLimit: number;
+  allowedModelTiers: ('cost' | 'premium')[];
+}
+
+export class TenantManager {
+  private tenants = new Map<string, TenantContext>();
+
+  registerTenant(tenantId: string, config: Partial<TenantContext> = {}): void {
+    this.tenants.set(tenantId, {
+      tenantId,
+      rateLimit: config.rateLimit ?? 100,
+      costLimit: config.costLimit ?? 10,
+      allowedModelTiers: config.allowedModelTiers ?? ['cost', 'premium'],
+    });
+  }
+
+  getContext(tenantId: string): TenantContext {
+    return this.tenants.get(tenantId) ?? {
+      tenantId,
+      rateLimit: 50,
+      costLimit: 5,
+      allowedModelTiers: ['cost'],
+    };
+  }
+
+  checkRateLimit(tenantId: string, currentRequests: number): boolean {
+    const ctx = this.getContext(tenantId);
+    return currentRequests < ctx.rateLimit;
+  }
+
+  checkCostLimit(tenantId: string, currentSpend: number): boolean {
+    const ctx = this.getContext(tenantId);
+    return currentSpend < ctx.costLimit;
+  }
+}
+```
+
+---
+
+## 14. Training Prompt Library
+
+```typescript
+// src/prompts/systemPrompts.ts
+
+export const GLOBAL_TRAINING_PROMPT = `
+You are an elite software engineering agent for a no-code app builder platform that creates production-grade software.
+
+You build:
+1. Cross-platform mobile apps (iOS, Android, React Native, Flutter) with offline support, push notifications
+2. Full-stack SaaS platforms with auth, payments, admin dashboards, multi-tenancy
+3. Responsive, SEO-optimized websites and web apps
+4. Enterprise business software (CRMs, ERPs) with role-based access
+5. Complex 2D/3D video games for web, mobile, PC, and consoles
+
+Core principles:
+- Write clean, modular, well-documented, tested code
+- Follow security best practices (OWASP Top 10, input validation, encryption)
+- Prioritize accessibility (WCAG 2.1 AA) and performance (Core Web Vitals, 60fps games)
+- Use modern, widely-adopted tech stacks
+- Write unit/integration tests for all code
+- Include setup/deployment instructions
+
+Default tech stacks (unless specified otherwise):
+- Frontend: React, Next.js, React Native, Flutter, Tailwind CSS
+- Backend: Node.js, Express, tRPC, PostgreSQL, Redis
+- Auth: Clerk, Auth0, Supabase Auth
+- Payments: Stripe, PayPal
+- Game Engines: Godot, Unity, Phaser (web), Unreal Engine
+- DevOps: Docker, GitHub Actions, Vercel, AWS
+`;
+
+export const UI_UX_PROMPT = `
+You specialize in creating beautiful, accessible, responsive UI/UX.
+- Follow modern design systems and platform-specific guidelines
+- Implement ARIA attributes and semantic HTML
+- Use Tailwind CSS for styling
+- Include micro-interactions and loading states
+- Mobile-first responsive design
+`;
+
+export const BACKEND_API_PROMPT = `
+You build scalable, secure REST/GraphQL APIs.
+- Follow OWASP security standards
+- Implement proper error handling and validation
+- Use TypeScript with strict typing
+- Include rate limiting and authentication
+- Document API endpoints with OpenAPI/Swagger
+`;
+
+export const GAME_LOGIC_PROMPT = `
+You implement robust game mechanics and gameplay systems.
+- Write deterministic, testable code
+- Optimize for 60fps performance
+- Use appropriate game engine patterns (ECS, state machines)
+- Include save/load functionality
+- Handle cross-platform differences gracefully
+`;
+
+export const TROUBLESHOOTER_PROMPT = `
+You analyze code to identify bugs, security issues, and performance problems.
+- Root cause analysis, not just symptom treatment
+- Minimal, targeted fixes that don't break existing functionality
+- Validate fixes against acceptance criteria
+- Document changes and their impact
+`;
+
+export const CONCIERGE_PROMPT = `
+You are a friendly, expert product assistant.
+- For small requests: provide exact code changes immediately
+- For large requests: confirm requirements, then escalate to swarm
+- Maintain project context for relevant suggestions
+- Keep responses concise for quick tasks, detailed for planning
+- Never make breaking changes without warning
+`;
+```
+
+---
+
+## 15. Migration Guide: Replacing Your 21-Agent Swarm
+
+### Step 1: Map Existing Agents to Roles
+
+| Old Agent Role | New Role(s) | Notes |
+|----------------|-------------|-------|
+| UI/UX Agent | UI_UX_DESIGNER | Direct mapping |
+| Backend Agent | BACKEND_CODER | Direct mapping |
+| Frontend Agent | FRONTEND_CODER | Direct mapping |
+| Database Agent | BACKEND_CODER + DATABASE_SCHEMA | Combined |
+| Game Logic Agent | GAME_LOGIC | Direct mapping |
+| Security Agent | REVIEWER | Integrated into Guardian |
+| Testing Agent | REVIEWER | Integrated into Guardian |
+| API Documentation | DOCUMENTATION | Auto-generated |
+| Deployment Agent | DEVOPS | Add to system prompts |
+| Quality Assurance | GUARDIAN SWARM | Automated review |
+| Task Orchestrator | TASK DECOMPOSER | Split into 200 micro-tasks |
+| Multi-agents (N) | SUB-AGENT POOL | Spawn 200 parallel agents |
+
+### Step 2: Port Custom Prompts
+
+Extract custom system prompts from your existing agents and add them to `src/prompts/systemPrompts.ts` under the appropriate role.
+
+### Step 3: Validate Model Mappings
+
+Update `src/config/modelRegistry.ts` with the actual OpenRouter slugs for your preferred models. Star models in the OpenRouter portal for automatic prioritization.
+
+### Step 4: Run Parallel Validation
+
+Deploy the new system alongside your existing swarm for 1 week, comparing outputs quality, cost, and build time. Gradually shift traffic to the new system.
+
+---
+
+## 16. Getting Started
+
+```bash
+# Install dependencies
+npm install
+
+# Set up environment
+cp .env.example .env
+# Edit .env with your OPENROUTER_API_KEY
+
+# Start Redis (for Bull queue, optional)
+docker run -p 6379:6379 redis:alpine
+
+# Run development server
+npm run dev
+
+# Or build for production
+npm run build
+npm start
+```
+
+### Example API Usage
+
+```bash
+# Start a chat conversation
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Build a React Native e-commerce app with Stripe payments and push notifications",
+    "history": []
+  }'
+
+# Check build status
+curl http://localhost:3000/build/{buildId}
+
+# Get generated artifacts
+curl http://localhost:3000/build/{buildId}/artifacts
+
+# View metrics
+curl http://localhost:3000/metrics
+
+# Update model routing
+curl -X PUT http://localhost:3000/routing/cost/BACKEND_CODER \
+  -H "Content-Type: application/json" \
+  -d '{"modelSlug": "deepseek/deepseek-chat-v3"}'
+```
+
+---
+
+## Summary: Key Features Delivered
+
+| Feature | Implementation |
+|---------|----------------|
+| **Two Swarms** | Cost-Efficient (≤200 agents, budget-first) and Premium (200+ agents, best models) |
+| **Fallback Routing** | Multi-tier fallback chains with exponential backoff, circuit breakers |
+| **Task Decomposition** | Up to 300 granular, dependency-ordered micro-tasks |
+| **Guardian Self-Healing** | Review → Repair → Re-verify cycles with escalation |
+| **Concierge Chat Agent** | Handles simple requests directly, escalates complex builds |
+| **Self-Improvement** | Metrics collection, scoring, automatic routing optimization |
+| **Model Command Center** | Single file for all model configuration, easy swapping |
+| **Starred Model Priority** | Auto-fetches and prioritizes starred OpenRouter models |
+| **Multi-Tenant Isolation** | Per-tenant rate/cost limits and tier restrictions |
+| **Security Sanitization** | Prompt injection prevention, artifact safety validation |
+| **Circuit Breakers** | Prevents cascading failures during rate limit events |
+| **Migration Path** | Explicit mapping from 21-agent to new role-based system |
+
+This architecture provides a production-ready foundation for your no-code platform, capable of generating high-quality mobile apps, SaaS platforms, websites, business software, and video games while continuously learning and optimizing its own performance.
