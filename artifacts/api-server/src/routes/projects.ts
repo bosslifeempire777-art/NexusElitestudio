@@ -1472,7 +1472,7 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
   try {
     // Generate Expo project files via AI
     console.log(`[MobileBuild] Generating Expo files for project ${project.id}...`);
-    const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
+    const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase, project.id);
 
     // Push to GitHub + trigger EAS build (returns array; "all" returns 2 builds)
     console.log(`[MobileBuild] Triggering ${platform} EAS build...`);
@@ -1582,7 +1582,7 @@ router.get("/:id/mobile-download", requireAuth, async (req, res) => {
   const nexusApiBase = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
 
   try {
-    const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
+    const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase, project.id);
     const zip = new AdmZip();
     for (const [filePath, content] of Object.entries(files)) {
       // Binary PNG placeholder files are stored as base64
@@ -1762,7 +1762,7 @@ router.post("/:id/ota-updates", requireAuth, async (req, res) => {
   try {
     // Generate the project's actual Expo files so the OTA update bundles real app code
     const nexusApiBase = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
-    const projectFiles = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase);
+    const projectFiles = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase, project.id);
 
     const result = await publishOtaUpdate({
       easProjectSlug: projectEasSlug(project.id),

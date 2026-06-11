@@ -6,21 +6,25 @@ export interface ExpoFiles {
 
 const EXPO_OWNER = "Nexuselitestudio";
 
-const APP_JSON_TEMPLATE = (name: string, slug: string) => JSON.stringify({
-  expo: {
-    name,
-    slug,
-    owner: EXPO_OWNER,
-    version: "1.0.0",
-    orientation: "portrait",
-    icon: "./assets/icon.png",
-    userInterfaceStyle: "dark",
-    splash: { image: "./assets/splash.png", resizeMode: "contain", backgroundColor: "#0a0a0f" },
-    ios:     { supportsTablet: true, bundleIdentifier: `com.nexuselite.${slug}` },
-    android: { adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: "#0a0a0f" }, package: `com.nexuselite.${slug}` },
-    web:     { favicon: "./assets/favicon.png" },
-  },
-}, null, 2);
+const APP_JSON_TEMPLATE = (name: string, slug: string) => {
+  // Bundle identifiers must contain only alphanumerics and dots (no hyphens)
+  const bundleId = slug.replace(/-/g, "");
+  return JSON.stringify({
+    expo: {
+      name,
+      slug,
+      owner: EXPO_OWNER,
+      version: "1.0.0",
+      orientation: "portrait",
+      icon: "./assets/icon.png",
+      userInterfaceStyle: "dark",
+      splash: { image: "./assets/splash.png", resizeMode: "contain", backgroundColor: "#0a0a0f" },
+      ios:     { supportsTablet: true, bundleIdentifier: `com.nexuselite.${bundleId}` },
+      android: { adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: "#0a0a0f" }, package: `com.nexuselite.${bundleId}` },
+      web:     { favicon: "./assets/favicon.png" },
+    },
+  }, null, 2);
+};
 
 const EAS_JSON = JSON.stringify({
   cli:   { version: ">= 5.9.0" },
@@ -79,16 +83,14 @@ const BABEL_CONFIG = `module.exports = function(api) {
 const PLACEHOLDER_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "my-app";
-}
-
 export async function generateMobileCode(
   name: string,
   prompt: string,
   nexusApiBase: string,
+  projectId: string,
 ): Promise<ExpoFiles> {
-  const slug = slugify(name);
+  // Canonical slug matches projectEasSlug() in projects.ts — both must use this format
+  const slug = `nexus-mobile-${projectId}`.slice(0, 60);
 
   const system = `You are an expert React Native / Expo developer who builds polished, production-ready mobile apps.
 
