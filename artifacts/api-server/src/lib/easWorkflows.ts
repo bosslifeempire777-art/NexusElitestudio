@@ -89,12 +89,15 @@ export async function triggerWorkflowRun(opts: {
   await mkdir(join(dir, ".eas", "workflows"), { recursive: true });
   await writeFile(join(dir, ".eas", "workflows", `${workflowName}.yml`), yaml, "utf8");
 
+  // Pass the YAML file path (not the name) and --no-wait so the trigger
+  // returns immediately after queuing — no server-side hang waiting for CI to finish.
+  const workflowFilePath = `.eas/workflows/${workflowName}.yml`;
   const { stdout } = await execFileAsync(
     EAS_BIN,
-    ["workflow:run", workflowName, "--non-interactive", "--json"],
+    ["workflow:run", workflowFilePath, "--no-wait", "--non-interactive", "--json"],
     {
       cwd: dir,
-      timeout: 60_000,
+      timeout: 30_000,
       env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
     },
   );

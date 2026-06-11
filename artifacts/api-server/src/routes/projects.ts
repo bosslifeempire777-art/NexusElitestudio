@@ -1741,7 +1741,7 @@ router.get("/:id/ota-branches", requireAuth, async (req, res) => {
 });
 
 /** Publish an OTA update */
-router.post("/:id/ota-updates", requireAuth, async (req, res) => {
+router.post(["/:id/ota-updates", "/:id/ota-update"], requireAuth, async (req, res) => {
   const userId   = req.auth!.userId;
   const isAdmin  = req.auth!.isAdmin;
   const isVip    = req.auth!.isVip;
