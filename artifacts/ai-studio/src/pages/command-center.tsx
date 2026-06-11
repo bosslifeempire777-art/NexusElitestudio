@@ -716,6 +716,7 @@ function SwarmTab() {
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
   const [savedAt, setSavedAt]     = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("cost");
   const [search, setSearch]       = useState<Record<string, string>>({});
   const [openDrop, setOpenDrop]   = useState<string | null>(null);
@@ -723,14 +724,24 @@ function SwarmTab() {
 
   const reload = async () => {
     setLoading(true);
+    setSaveError(null);
     try {
-      const [rd, m] = await Promise.all([
+      // Fetch registry and models independently so a slow/failing models
+      // endpoint can't leave registry as {} and cause silent empty saves.
+      const [rdResult, mResult] = await Promise.allSettled([
         fetchJson("/api/command-center/role-registry"),
         fetchJson("/api/command-center/openrouter/models"),
       ]);
-      setRegistry(rd.registry || {});
-      setConcierge(rd.concierge || { primary: "", fallbacks: [] });
-      setModels(m.data || []);
+      if (rdResult.status === "fulfilled") {
+        setRegistry(rdResult.value.registry || {});
+        setConcierge(rdResult.value.concierge || { primary: "", fallbacks: [] });
+      } else {
+        setSaveError(`Failed to load registry: ${rdResult.reason?.message ?? "unknown error"}`);
+      }
+      if (mResult.status === "fulfilled") {
+        setModels(mResult.value.data || []);
+      }
+      // Models failing is non-fatal — registry still loads fine
     } finally {
       setLoading(false);
     }
@@ -748,13 +759,20 @@ function SwarmTab() {
   }, [openDrop]);
 
   const save = async () => {
+    if (Object.keys(registry).length === 0) {
+      setSaveError("Registry hasn't loaded yet — please wait for the page to finish loading before saving.");
+      return;
+    }
     setSaving(true);
+    setSaveError(null);
     try {
       await fetchJson("/api/command-center/role-registry", {
         method: "PUT",
         body: JSON.stringify({ registry, concierge }),
       });
       setSavedAt(Date.now());
+    } catch (err: any) {
+      setSaveError(err?.message ?? "Save failed — check your connection and try again.");
     } finally {
       setSaving(false);
     }
@@ -939,7 +957,7 @@ function SwarmTab() {
           <Button variant="outline" onClick={reload} disabled={loading} className="h-8 px-3 text-xs gap-1.5">
             <RefreshCw className="w-3 h-3" /> Refresh
           </Button>
-          <Button onClick={save} disabled={saving} className="h-8 px-3 text-xs gap-1.5">
+          <Button onClick={save} disabled={saving || loading} className="h-8 px-3 text-xs gap-1.5">
             {saving
               ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
               : justSaved
@@ -948,6 +966,17 @@ function SwarmTab() {
           </Button>
         </div>
       </div>
+
+      {/* ── Error banner ── */}
+      {saveError && (
+        <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span className="flex-1">{saveError}</span>
+          <button onClick={() => setSaveError(null)} className="shrink-0 hover:text-red-300">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* ── Tab bar ── */}
       <div className="flex gap-0.5 border-b border-border/30 overflow-x-auto">
