@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, sep } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,8 +36,18 @@ export interface MobileBuildStatus {
 
 async function writeTempProject(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nexus-build-"));
+  // Resolve the canonical temp root so path-traversal attempts can be detected.
+  const root = resolve(dir) + sep;
+
   for (const [filePath, content] of Object.entries(files)) {
-    const full = join(dir, filePath);
+    const full = resolve(join(dir, filePath));
+
+    // Containment check: reject any path that escapes the temp directory.
+    if (!full.startsWith(root)) {
+      console.warn(`[EAS] Skipping unsafe path: ${filePath}`);
+      continue;
+    }
+
     await mkdir(dirname(full), { recursive: true });
     await writeFile(full, content, "utf8");
   }
