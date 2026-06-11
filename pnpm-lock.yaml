@@ -375,6 +375,9 @@ importers:
 
   artifacts/api-server:
     dependencies:
+      '@openrouter/agent':
+        specifier: ^0.7.1
+        version: 0.7.1
       '@replit/connectors-sdk':
         specifier: ^0.3.0
         version: 0.3.0
@@ -879,7 +882,7 @@ packages:
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
-    engines: {'0': node >=0.10.0}
+    engines: {node: '>=0.10.0'}
 
   '@expo/code-signing-certificates@0.0.5':
     resolution: {integrity: sha512-BNhXkY1bblxKZpltzAx98G2Egj9g1Q+JRcvR7E99DOj862FTCX+ZPsAUtPTr7aHxwtrL7+fL3r0JSmM9kBm+Bw==}
@@ -1078,6 +1081,9 @@ packages:
   '@oclif/plugin-autocomplete@3.2.50':
     resolution: {integrity: sha512-SQRIJSYue/1tIn7X55W/97gTb8UkSoHeFAcBng2r2YMJyWj8uB1DtFl28D8BDXPQXPTiPK89hQGejoT7RdkR2w==}
     engines: {node: '>=18.0.0'}
+
+  '@openrouter/agent@0.7.1':
+    resolution: {integrity: sha512-NrxszvWG/C2biUjKva4qDgA/DyIIiKaa0AoKLLVq1PPfClHb4GIdOREMIne3rL+IIRsshWVTXDKL4SdEF4Gw6w==}
 
   '@openrouter/devtools@0.1.0':
     resolution: {integrity: sha512-37+JfJ3r6hkQtwBtk8kZ1UczqeTYu/w9IA2+/2EL5LSNxC3B9f3k3COuq+k2/sBWxOtQHqdS4bAa6qBDZZ/0aw==}
@@ -4021,6 +4027,7 @@ packages:
   recharts@2.15.4:
     resolution: {integrity: sha512-UT/q6fwS3c1dHbXv2uFgYJ9BMFHu3fwnd7AYZaEQhXuYQ4hgsxLvsUXzGdKeZrW5xopzDCvuA2N41WJ88I7zIw==}
     engines: {node: '>=14'}
+    deprecated: 1.x and 2.x branches are no longer active. Bump to Recharts v3 to receive latest features and bugfixes. See https://github.com/recharts/recharts/wiki/3.0-migration-guide
     peerDependencies:
       react: ^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
       react-dom: ^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
@@ -5394,6 +5401,11 @@ snapshots:
       ejs: 3.1.10
     transitivePeerDependencies:
       - supports-color
+
+  '@openrouter/agent@0.7.1':
+    dependencies:
+      '@openrouter/sdk': 0.12.20
+      zod: 4.3.6
 
   '@openrouter/devtools@0.1.0':
     dependencies:
