@@ -32,3 +32,22 @@ description: What's implemented vs the design doc; what was intentionally skippe
 
 **Why:** These were architectural suggestions in the design doc, not requirements. 
 The implemented system is production-ready without them.
+
+## Self-Improvement Engine
+- Class: SelfImprovementEngine, singleton exported as `selfImprovement` from genesisSwarm.ts
+- Telemetry via optional `telemetryCtx?: { role, tier }` on `_callChain`
+- callByRole passes telemetryCtx automatically — no changes needed at call sites
+- API: GET /admin/command-center/self-improvement/insights|suggest/:tier
+
+## OpenRouter SDK — complete API surface
+- chatViaSdk: non-streaming, with AbortController timeout (existing)
+- listModels(): fetches /api/v1/models, 5-min cache
+- getCredits(): fetches /api/v1/auth/key
+- chatStreamViaSdk(): async generator, SSE stream via raw fetch
+- API: GET /admin/command-center/or-models|or-credits
+
+## Agent config bug — root cause documented
+Architect Council was bypassing role registry (swarm_role_config) because
+HydraAgent.run() → callLlm() → getActiveTiers() reads swarm_tier_config (old system).
+Fix: Architect Council now calls callByRole("PLANNER") directly.
+Rule: Never use HydraAgent inside the Genesis swarm — it ignores _activeRegistry.

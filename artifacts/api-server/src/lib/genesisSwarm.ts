@@ -150,6 +150,131 @@ export const ROLE_REGISTRY: Record<"cost" | "premium" | "guardian", Partial<Reco
   },
 };
 
+// ─────────────────────────────────────────────────────────────
+// SELF-IMPROVEMENT ENGINE — telemetry, scoring, routing hints
+// ─────────────────────────────────────────────────────────────
+
+interface Telemetry {
+  model:         string;
+  role:          string;
+  tier:          string;
+  success:       boolean;
+  latencyMs:     number;
+  tokensIn:      number;
+  tokensOut:     number;
+  repairsNeeded: number;
+  timestamp:     number;
+}
+
+export interface ModelScore {
+  model:        string;
+  successRate:  number;
+  avgLatency:   number;
+  avgTokensOut: number;
+  avgRepairs:   number;
+  totalCalls:   number;
+  score:        number;
+}
+
+class SelfImprovementEngine {
+  private records:                    Telemetry[] = [];
+  private readonly maxRecords         = 10_000;
+  private readonly promotionThreshold = 0.95;
+  private readonly demotionThreshold  = 0.70;
+
+  record(t: Omit<Telemetry, "timestamp">): void {
+    this.records.push({ ...t, timestamp: Date.now() });
+    if (this.records.length > this.maxRecords) {
+      this.records = this.records.slice(-this.maxRecords);
+    }
+    if (this.records.length % 50 === 0) {
+      this._analyzeAndLog();
+    }
+  }
+
+  private _computeScores(): ModelScore[] {
+    const byModel = new Map<string, Telemetry[]>();
+    for (const r of this.records) {
+      const list = byModel.get(r.model) ?? [];
+      list.push(r);
+      byModel.set(r.model, list);
+    }
+    return [...byModel.entries()].map(([model, recs]) => {
+      const total        = recs.length;
+      const successCount = recs.filter(r => r.success).length;
+      const successRate  = successCount / total;
+      const avgLatency   = recs.reduce((s, r) => s + r.latencyMs,      0) / total;
+      const avgTokensOut = recs.reduce((s, r) => s + r.tokensOut,       0) / total;
+      const avgRepairs   = recs.reduce((s, r) => s + r.repairsNeeded,   0) / total;
+      const score        = successRate * 100 - avgRepairs * 20 - avgLatency / 1000;
+      return { model, successRate, avgLatency, avgTokensOut, avgRepairs, totalCalls: total, score };
+    }).sort((a, b) => b.score - a.score);
+  }
+
+  private _analyzeAndLog(): void {
+    const scores     = this._computeScores();
+    const promotions = scores.filter(s => s.successRate >= this.promotionThreshold);
+    const demotions  = scores.filter(s => s.successRate <  this.demotionThreshold);
+    if (promotions.length) {
+      console.log(`[SelfImprovement] 🚀 Top performers: ${promotions.map(s => `${s.model}(${(s.successRate * 100).toFixed(0)}%)`).join(", ")}`);
+    }
+    if (demotions.length) {
+      console.warn(`[SelfImprovement] ⚠️  Underperformers: ${demotions.map(s => `${s.model}(${(s.successRate * 100).toFixed(0)}%)`).join(", ")}`);
+    }
+  }
+
+  suggestReordering(tier: string): string[] {
+    const recs = this.records.filter(r => r.tier === tier);
+    if (recs.length < 10) return [];
+    const byModel = new Map<string, { success: number; total: number }>();
+    for (const r of recs) {
+      const s = byModel.get(r.model) ?? { success: 0, total: 0 };
+      s.total++;
+      if (r.success) s.success++;
+      byModel.set(r.model, s);
+    }
+    return [...byModel.entries()]
+      .sort((a, b) => (b[1].success / b[1].total) - (a[1].success / a[1].total))
+      .map(([model]) => model);
+  }
+
+  getInsights(): {
+    totalCalls:            number;
+    successRate:           number;
+    avgLatencyMs:          number;
+    topModels:             ModelScore[];
+    underperformingModels: ModelScore[];
+    byTier:                Record<string, { calls: number; successRate: number }>;
+  } {
+    const scores   = this._computeScores();
+    const total    = this.records.length;
+    const successes = this.records.filter(r => r.success).length;
+    const avgLat   = total ? this.records.reduce((s, r) => s + r.latencyMs, 0) / total : 0;
+
+    const byTier: Record<string, { calls: number; successRate: number }> = {};
+    for (const r of this.records) {
+      const t = byTier[r.tier] ?? { calls: 0, successRate: 0 };
+      t.calls++;
+      byTier[r.tier] = t;
+    }
+    for (const tier of Object.keys(byTier)) {
+      const tr = this.records.filter(r => r.tier === tier);
+      byTier[tier].successRate = tr.filter(r => r.success).length / tr.length;
+    }
+
+    return {
+      totalCalls:            total,
+      successRate:           total ? successes / total : 0,
+      avgLatencyMs:          avgLat,
+      topModels:             scores.slice(0, 5),
+      underperformingModels: scores.filter(s => s.successRate < this.demotionThreshold),
+      byTier,
+    };
+  }
+}
+
+export const selfImprovement = new SelfImprovementEngine();
+
 // Concierge uses fast/capable models for routing
 const CONCIERGE_MODEL     = "google/gemini-2.5-flash";
 const CONCIERGE_FALLBACKS = ["openai/gpt-4o-mini", "deepseek/deepseek-chat"];
@@ -406,22 +531,23 @@ export async function callByRole(
 ): Promise<{ text: string; modelUsed: string }> {
   const roleConf = _activeRegistry[swarmTier]?.[role] ?? _activeRegistry.cost.BACKEND_CODER!;
   const chain    = [roleConf.primary.slug, ...roleConf.fallbacks.map(f => f.slug)];
-  const text     = await _callChain(chain, prompt, system, maxTokens, temperature, jsonMode, agentName, mem, onLog);
+  const text     = await _callChain(chain, prompt, system, maxTokens, temperature, jsonMode, agentName, mem, onLog, { role: String(role), tier: swarmTier });
   return { text, modelUsed: chain[0] };
 }
 
 const MAX_RETRIES_PER_MODEL = 3;
 
 async function _callChain(
-  chain:       string[],
-  prompt:      string,
-  system:      string,
-  maxTokens:   number,
-  temperature: number,
-  jsonMode:    boolean,
-  agentName:   string,
-  mem?:        SharedMemory,
-  onLog?:      (msg: string) => void,
+  chain:         string[],
+  prompt:        string,
+  system:        string,
+  maxTokens:     number,
+  temperature:   number,
+  jsonMode:      boolean,
+  agentName:     string,
+  mem?:          SharedMemory,
+  onLog?:        (msg: string) => void,
+  telemetryCtx?: { role: string; tier: string },
 ): Promise<string> {
   let lastErr: any = null;
 
@@ -430,6 +556,7 @@ async function _callChain(
     for (const model of chain) {
       if ((_circuit[model] ?? 0) > Date.now()) continue;
 
+      const modelStart = Date.now();
       for (let attempt = 0; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
         try {
           const body: Record<string, any> = {
@@ -458,6 +585,19 @@ async function _callChain(
             mem.metrics.tokensOut += data.usage?.completion_tokens ?? 0;
           }
 
+          if (telemetryCtx) {
+            selfImprovement.record({
+              model,
+              role:          telemetryCtx.role,
+              tier:          telemetryCtx.tier,
+              success:       true,
+              latencyMs:     Date.now() - modelStart,
+              tokensIn:      data.usage?.prompt_tokens     ?? 0,
+              tokensOut:     data.usage?.completion_tokens ?? 0,
+              repairsNeeded: 0,
+            });
+          }
+
           onLog?.(`  ✓ [${agentName}] ${model} attempt ${attempt + 1} (${content.length} chars)`);
           return content;
         } catch (err: any) {
@@ -469,6 +609,18 @@ async function _callChain(
           if (!retryable || attempt === MAX_RETRIES_PER_MODEL) {
             // Non-retryable error OR exhausted retries — open circuit, move to next model
             _circuit[model] = Date.now() + (status === 429 ? 30_000 : 15_000);
+            if (telemetryCtx) {
+              selfImprovement.record({
+                model,
+                role:          telemetryCtx.role,
+                tier:          telemetryCtx.tier,
+                success:       false,
+                latencyMs:     Date.now() - modelStart,
+                tokensIn:      0,
+                tokensOut:     0,
+                repairsNeeded: 0,
+              });
+            }
             break;
           }
 
@@ -604,7 +756,7 @@ Use "premium" only when the user says "best quality", "no compromises", or it's 
   const chain = _conciergeChain;
   let raw = "";
   try {
-    raw = await _callChain(chain, userPrompt, system, 2000, 0.3, true, "Concierge", mem, onLog);
+    raw = await _callChain(chain, userPrompt, system, 2000, 0.3, true, "Concierge", mem, onLog, { role: "CONCIERGE", tier: "concierge" });
   } catch {
     raw = `{"tier":"cost","spec":"${userPrompt.replace(/"/g, "'")}","action":"spawn_swarm"}`;
   }
@@ -666,16 +818,19 @@ async function runOrchestration(
   const ctx = JSON.stringify(blueprint, null, 2);
 
   const archResults = await Promise.allSettled(
-    ARCHITECTS.map(([name, role]) => {
+    ARCHITECTS.map(([archName, archRole]) => {
       swarmLog(onLog,
-        `🏛 [Architect Council / ${name}] Designing ${name.replace("Architect", "")} layer...`,
-        { type: "agent_start", role: "PLANNER", model: plannerModel, task: `${name} design`, swarm: swarmTier },
+        `🏛 [Architect Council / ${archName}] Designing ${archName.replace("Architect", "")} layer...`,
+        { type: "agent_start", role: "PLANNER", model: plannerModel, task: `${archName} design`, swarm: swarmTier },
       );
-      const a = new HydraAgent(name, role, swarmTier === "premium" ? "reasoning" : "reasoning", 0.3, 6000);
-      return a.run(
-        `Produce your section of the Technical Design Document for this blueprint. Output JSON with key '${name}_design'.`,
-        ctx, mem, onLog,
+      const archSystem = `You are ${archName}, a ${archRole}. Respond in production-quality JSON only.`;
+      const archPrompt = (
+        `PROJECT CONTEXT:\n${ctx}\n\n` +
+        `TASK:\nProduce your section of the Technical Design Document for this blueprint. ` +
+        `Output JSON with key '${archName}_design'.`
       );
+      return callByRole(archPrompt, archSystem, "PLANNER", swarmTier as "cost" | "premium", 6000, 0.3, false, archName, mem, onLog)
+        .then(r => ({ name: archName, output: r.text, files: {} as ProjectFiles, meta: {} } as AgentResult));
     })
   );
 
@@ -872,7 +1027,7 @@ async function runGuardianPass(
       const ctx  = `FILE: ${filePath}\n\n${code.slice(0, 6000)}`;
       const outs = await Promise.allSettled(
         CRITICS.map(([n, r]) =>
-          _callChain(reviewChain, ctx, `You are ${n}, a ${r}. ${sysBase}`, 1500, 0.2, true, n, mem)
+          _callChain(reviewChain, ctx, `You are ${n}, a ${r}. ${sysBase}`, 1500, 0.2, true, n, mem, undefined, { role: "REVIEWER", tier: "guardian" })
         )
       );
 
@@ -904,7 +1059,7 @@ async function runGuardianPass(
       try {
         const fixSystem = `Rewrite the file fixing every issue. Emit a single ===FILE: ${filePath}=== block.`;
         const fixPrompt = `ORIGINAL:\n${code}\n\nISSUES:\n- ${issues.join("\n- ")}`;
-        const fixed     = await _callChain(repairChain, fixPrompt, fixSystem, 8000, 0.2, false, `Guardian:${filePath}`, mem);
+        const fixed     = await _callChain(repairChain, fixPrompt, fixSystem, 8000, 0.2, false, `Guardian:${filePath}`, mem, undefined, { role: "REPAIR", tier: "guardian" });
         const newCode   = extractCodeFiles(fixed)[filePath] ?? code;
         mem.writeFile(filePath, newCode);
         repaired++;

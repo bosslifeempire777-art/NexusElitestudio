@@ -10,11 +10,11 @@ import {
 } from "@workspace/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { MODEL_TIERS, invalidateTierCache } from "../lib/hydraSwarm.js";
-import { ROLE_REGISTRY } from "../lib/genesisSwarm.js";
+import { ROLE_REGISTRY, selfImprovement } from "../lib/genesisSwarm.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
-import { getOpenRouterClient, chatViaSdk } from "../lib/openrouterSdk.js";
+import { getOpenRouterClient, chatViaSdk, listModels, getCredits } from "../lib/openrouterSdk.js";
 
 const router: IRouter = Router();
 router.use(requireAdmin);
@@ -599,6 +599,45 @@ router.delete("/role-registry/:tier/:role", async (req, res) => {
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: "delete_failed", message: err.message });
+  }
+});
+
+/* ── Self-Improvement Engine ──────────────────────────────── */
+
+router.get("/self-improvement/insights", (_req, res) => {
+  try {
+    res.json(selfImprovement.getInsights());
+  } catch (err: any) {
+    res.status(500).json({ error: "insights_failed", message: err.message });
+  }
+});
+
+router.get("/self-improvement/suggest/:tier", (req, res) => {
+  try {
+    const suggested = selfImprovement.suggestReordering(req.params.tier);
+    res.json({ tier: req.params.tier, suggested });
+  } catch (err: any) {
+    res.status(500).json({ error: "suggest_failed", message: err.message });
+  }
+});
+
+/* ── OpenRouter — models list & credits ───────────────────── */
+
+router.get("/or-models", async (_req, res) => {
+  try {
+    const models = await listModels();
+    res.json({ models });
+  } catch (err: any) {
+    res.status(500).json({ error: "models_failed", message: err.message });
+  }
+});
+
+router.get("/or-credits", async (_req, res) => {
+  try {
+    const credits = await getCredits();
+    res.json(credits);
+  } catch (err: any) {
+    res.status(500).json({ error: "credits_failed", message: err.message });
   }
 });
 

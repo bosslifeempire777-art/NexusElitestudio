@@ -2,6 +2,19 @@ import { OpenRouter } from "@openrouter/sdk";
 import { SDKHooks } from "@openrouter/sdk/hooks/hooks.js";
 import { createOpenRouterDevtools } from "@openrouter/devtools";
 
+const OR_BASE = "https://openrouter.ai/api/v1";
+
+function orHeaders(): Record<string, string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
+  return {
+    Authorization:  `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer":  "https://nexuselitestudio.com",
+    "X-Title":       "NexusElite AI Studio",
+  };
+}
+
 let cached: OpenRouter | null = null;
 
 /**
@@ -130,5 +143,118 @@ export async function chatViaSdk(
   } finally {
     settled = true;
     if (timer) clearTimeout(timer);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MODELS LIST — for command portal model pickers
+// ─────────────────────────────────────────────────────────────
+
+export interface OpenRouterModel {
+  id:             string;
+  name:           string;
+  context_length: number;
+  pricing: {
+    prompt:     string;  // USD per token as string
+    completion: string;
+  };
+}
+
+let _modelsCache: { ts: number; data: OpenRouterModel[] } | null = null;
+const MODELS_CACHE_MS = 5 * 60_000; // 5 minutes
+
+export async function listModels(): Promise<OpenRouterModel[]> {
+  if (_modelsCache && Date.now() - _modelsCache.ts < MODELS_CACHE_MS) {
+    return _modelsCache.data;
+  }
+  const res  = await fetch(`${OR_BASE}/models`, { headers: orHeaders() });
+  if (!res.ok) throw new Error(`OpenRouter /models: HTTP ${res.status}`);
+  const json = await res.json() as any;
+  const data = (json.data ?? []).map((m: any) => ({
+    id:             String(m.id),
+    name:           String(m.name ?? m.id),
+    context_length: Number(m.context_length ?? 0),
+    pricing: {
+      prompt:     String(m.pricing?.prompt     ?? "0"),
+      completion: String(m.pricing?.completion ?? "0"),
+    },
+  }));
+  _modelsCache = { ts: Date.now(), data };
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────
+// CREDITS — API key usage & limits
+// ─────────────────────────────────────────────────────────────
+
+export async function getCredits(): Promise<{
+  label:       string;
+  creditLimit: number | null;
+  usedCredits: number;
+  remaining:   number | null;
+  isFreeTier:  boolean;
+}> {
+  const res  = await fetch(`${OR_BASE}/auth/key`, { headers: orHeaders() });
+  if (!res.ok) throw new Error(`OpenRouter /auth/key: HTTP ${res.status}`);
+  const json = await res.json() as any;
+  const d    = json.data ?? {};
+  const creditLimit  = typeof d.limit === "number" ? d.limit : null;
+  const usedCredits  = typeof d.usage === "number" ? d.usage : 0;
+  return {
+    label:       String(d.label ?? "API Key"),
+    creditLimit,
+    usedCredits,
+    remaining:   creditLimit !== null ? creditLimit - usedCredits : null,
+    isFreeTier:  Boolean(d.is_free_tier),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// STREAMING CHAT — yields text deltas via SSE
+// Use for real-time output; avoids SDK's AbortSignal.timeout quirks
+// ─────────────────────────────────────────────────────────────
+
+export async function* chatStreamViaSdk(
+  body:  Record<string, any>,
+  opts?: { timeoutMs?: number },
+): AsyncGenerator<string> {
+  const timeoutMs  = opts?.timeoutMs ?? 120_000;
+  const controller = new AbortController();
+  const timer      = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${OR_BASE}/chat/completions`, {
+      method:  "POST",
+      headers: orHeaders(),
+      body:    JSON.stringify({ ...body, stream: true }),
+      signal:  controller.signal,
+    });
+
+    if (!res.ok) throw new Error(`OpenRouter stream: HTTP ${res.status}`);
+    if (!res.body) throw new Error("No response body for streaming");
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const chunk = line.slice(6).trim();
+        if (chunk === "[DONE]") return;
+        try {
+          const parsed = JSON.parse(chunk);
+          const delta  = parsed.choices?.[0]?.delta?.content;
+          if (delta) yield delta as string;
+        } catch { /* skip malformed SSE frames */ }
+      }
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
