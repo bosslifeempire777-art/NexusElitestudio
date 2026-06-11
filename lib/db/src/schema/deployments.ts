@@ -8,6 +8,7 @@ export const deploymentsTable = pgTable("deployments", {
   brandedUrl: text("branded_url").notNull(),
   provider: text("provider").notNull().default("nexus-edge"),
   providerServiceId: text("provider_service_id"),
+  providerProjectId: text("provider_project_id"),
   providerLiveUrl: text("provider_live_url"),
   status: text("status").notNull().default("live"),
   errorMessage: text("error_message"),

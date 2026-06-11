@@ -1190,10 +1190,31 @@ export async function generateChatResponse(
     content: t.content,
   }));
 
-  // Include a meaningful snippet of the generated code so the AI can actually
-  // diagnose button issues, broken flows, or missing features rather than guessing.
+  // Include a meaningful code snapshot so the AI can diagnose specific issues.
+  // Rather than slicing from the start (which is mostly CSS/HTML structure),
+  // we extract the <script> content — that's where all button handlers,
+  // fetch calls, and data logic live. Then prepend a condensed HTML skeleton
+  // so the AI has structural context too.
   const codeContext = currentCode && currentCode.length > 100
-    ? `\n\nCURRENT GENERATED CODE (first 8000 chars — use this to diagnose specific issues):\n\`\`\`html\n${currentCode.slice(0, 8_000)}\n\`\`\``
+    ? (() => {
+        const MAX = 20_000;
+        // Extract all <script>...</script> blocks
+        const scriptBlocks: string[] = [];
+        const scriptRe = /<script(?:\s[^>]*)?>[\s\S]*?<\/script>/gi;
+        let m: RegExpExecArray | null;
+        while ((m = scriptRe.exec(currentCode)) !== null) {
+          scriptBlocks.push(m[0]);
+        }
+        const scriptContent = scriptBlocks.join("\n\n");
+        // Condensed HTML structure (strip scripts + styles for brevity)
+        const skeleton = currentCode
+          .replace(/<style[\s\S]*?<\/style>/gi, "<style>/* ... */</style>")
+          .replace(/<script[\s\S]*?<\/script>/gi, "")
+          .replace(/\s{2,}/g, " ")
+          .slice(0, 3_000);
+        const combined = `HTML STRUCTURE:\n${skeleton}\n\nSCRIPT CONTENT (button handlers, fetch calls, data logic):\n${scriptContent}`;
+        return `\n\nCURRENT GENERATED CODE (extracted for diagnosis):\n\`\`\`\n${combined.slice(0, MAX)}\n\`\`\``;
+      })()
     : "";
 
   const sys = `You are an elite AI engineer inside "NexusElite AI Studio" — powered by HYDRA-PRIME SWARM v4, a 21-agent autonomous build system.

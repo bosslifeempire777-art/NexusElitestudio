@@ -67,6 +67,7 @@ export default function DeploymentsPage() {
   const [domainBusy, setDomainBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [provisioning, setProvisioning] = useState<string | null>(null);
+  const [provisionPicker, setProvisionPicker] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
 
   const headers = useCallback((): Record<string, string> => {
@@ -182,12 +183,18 @@ export default function DeploymentsPage() {
     }
   }
 
-  async function handleProvision(id: string) {
-    if (!confirm("Provision a dedicated Vercel deployment for this project? The app will be hosted on Vercel with your NEXUS_API wired in (Pro/Elite plan).")) return;
+  async function handleProvision(id: string, provider: "vercel" | "railway") {
+    const label = provider === "railway" ? "Railway" : "Vercel";
+    if (!confirm(`Provision a dedicated ${label} deployment? Your app will be hosted on ${label} with the NexusElite API wired in (Pro/Elite plan).`)) return;
+    setProvisionPicker(null);
     setProvisioning(id);
     setError(null);
     try {
-      const res = await fetch(`/api/deployments/${id}/provision`, { method: "POST", headers: headers() });
+      const res = await fetch(`/api/deployments/${id}/provision`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ provider }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || `Provision failed (${res.status})`);
       await load();
@@ -328,7 +335,7 @@ export default function DeploymentsPage() {
                         <div className="mt-1 flex items-center gap-2 text-xs text-violet-300">
                           <Server className="w-3 h-3" />
                           <span className="font-mono">
-                            Dedicated {d.provider === "vercel" ? "Vercel" : "Render"} deployment
+                            Dedicated {d.provider === "vercel" ? "Vercel" : d.provider === "railway" ? "Railway" : "Render"} deployment
                           </span>
                           {d.providerLiveUrl && (
                             <a
@@ -385,14 +392,41 @@ export default function DeploymentsPage() {
                           {syncing === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                           Sync
                         </button>
+                      ) : provisioning === d.id ? (
+                        <button disabled className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded flex items-center gap-1 opacity-60">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Provisioning…
+                        </button>
+                      ) : provisionPicker === d.id ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground">Host on:</span>
+                          <button
+                            onClick={() => handleProvision(d.id, "vercel")}
+                            className="px-2 py-1 text-xs bg-black border border-white/30 text-white rounded hover:bg-white/10 font-mono flex items-center gap-1"
+                            title="Deploy to Vercel — instant static hosting"
+                          >
+                            ▲ Vercel
+                          </button>
+                          <button
+                            onClick={() => handleProvision(d.id, "railway")}
+                            className="px-2 py-1 text-xs bg-[#0B0D0E] border border-[#8B5CF6]/60 text-[#8B5CF6] rounded hover:bg-[#8B5CF6]/10 font-mono flex items-center gap-1"
+                            title="Deploy to Railway — Node.js container hosting"
+                          >
+                            🚂 Railway
+                          </button>
+                          <button
+                            onClick={() => setProvisionPicker(null)}
+                            className="px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
                       ) : (
                         <button
-                          onClick={() => handleProvision(d.id)}
-                          disabled={provisioning === d.id}
-                          className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded hover:bg-violet-500/10 flex items-center gap-1 disabled:opacity-40"
-                          title="Deploy to Vercel — your app gets its own vercel.app URL with NEXUS_API wired in"
+                          onClick={() => setProvisionPicker(d.id)}
+                          className="px-3 py-1.5 text-xs border border-violet-500/40 text-violet-300 rounded hover:bg-violet-500/10 flex items-center gap-1"
+                          title="Deploy to Vercel or Railway — your app gets a dedicated live URL"
                         >
-                          {provisioning === d.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Server className="w-3 h-3" />}
+                          <Server className="w-3 h-3" />
                           Provision Dedicated
                         </button>
                       )}

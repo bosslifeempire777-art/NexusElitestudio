@@ -24,6 +24,13 @@ import {
   deleteVercelDeployment,
   injectNexusApi,
 } from "../lib/vercel.js";
+import {
+  isRailwayConfigured,
+  pingRailway,
+  createRailwayDeployment,
+  getRailwayDeploymentStatus,
+  deleteRailwayProject,
+} from "../lib/railway.js";
 
 function getPublicBaseUrl(): string {
   const domain =
@@ -98,6 +105,16 @@ router.get("/vercel/status", requireAuth, async (_req, res) => {
     return;
   }
   const ping = await pingVercel();
+  res.json({ configured: true, ...ping });
+});
+
+// ── Railway integration health ────────────────────────────────────────────
+router.get("/railway/status", requireAuth, async (_req, res) => {
+  if (!isRailwayConfigured()) {
+    res.json({ configured: false, ok: false, message: "RAILWAY_TOKEN not set" });
+    return;
+  }
+  const ping = await pingRailway();
   res.json({ configured: true, ...ping });
 });
 
@@ -242,6 +259,22 @@ router.post("/", requireAuth, async (req, res) => {
           `[${new Date().toISOString()}] ⚠ Render redeploy failed: ${r.error}`,
         );
       }
+    } else if (existing.provider === "railway" && isRailwayConfigured()) {
+      // Railway: push fresh HTML as a new deployment (creates a new deployment in the same service)
+      const nexusApiUrl = `${getPublicBaseUrl()}/api/projects/${project.id}/appdata`;
+      const htmlWithApi = injectNexusApi(project.generatedCode!, nexusApiUrl, project.id);
+      const r = await createRailwayDeployment({ slug: existing.slug, html: htmlWithApi });
+      if (r.ok && r.deploymentId) {
+        newStatus = "provisioning";
+        newProviderServiceId = r.deploymentId;
+        redeployLogs.push(
+          `[${new Date().toISOString()}] 🔁 Re-deployed to Railway (${r.deploymentId})`,
+        );
+      } else {
+        redeployLogs.push(
+          `[${new Date().toISOString()}] ⚠ Railway redeploy failed: ${r.error}`,
+        );
+      }
     }
 
     const [updated] = await db
@@ -323,6 +356,8 @@ router.delete("/:id", requireAuth, async (req, res) => {
       await deleteVercelDeployment(dep.providerServiceId).catch(() => undefined);
     } else if (dep.provider === "render" && isRenderConfigured()) {
       await deleteRenderService(dep.providerServiceId).catch(() => undefined);
+    } else if (dep.provider === "railway" && isRailwayConfigured() && dep.providerProjectId) {
+      await deleteRailwayProject(dep.providerProjectId).catch(() => undefined);
     }
   }
   await db.delete(customDomainsTable).where(eq(customDomainsTable.deploymentId, dep.id));
@@ -330,12 +365,19 @@ router.delete("/:id", requireAuth, async (req, res) => {
   res.status(204).send();
 });
 
-// ── Provision dedicated Vercel hosting for a deployment ───────────────────
+// ── Provision dedicated hosting (Vercel or Railway) for a deployment ─────
 router.post("/:id/provision", requireAuth, async (req, res) => {
   const userId = req.auth!.userId;
   const isAdmin = req.auth!.isAdmin;
   const isVip = req.auth!.isVip;
   const userPlan = req.auth!.plan;
+  const { provider: requestedProvider } = req.body as { provider?: string };
+
+  // Determine which provider to use: prefer explicit request, then Vercel, then Railway
+  const useRailway =
+    requestedProvider === "railway" ||
+    (!requestedProvider && !isVercelConfigured() && isRailwayConfigured());
+  const useVercel = !useRailway;
 
   // Pro / Elite / VIP / admin only
   if (!isAdmin && !isVip && userPlan !== "pro" && userPlan !== "elite") {
@@ -348,8 +390,12 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
     return;
   }
 
-  if (!isVercelConfigured()) {
+  if (useVercel && !isVercelConfigured()) {
     res.status(503).json({ error: "not_configured", message: "Vercel hosting is not configured on this server. Set the VERCEL_TOKEN secret." });
+    return;
+  }
+  if (useRailway && !isRailwayConfigured()) {
+    res.status(503).json({ error: "not_configured", message: "Railway hosting is not configured. Set the RAILWAY_TOKEN secret." });
     return;
   }
 
@@ -377,31 +423,50 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
     where: eq(projectsTable.id, dep.projectId),
   });
   if (!project?.generatedCode) {
-    res.status(400).json({ error: "no_code", message: "Project has no generated code to deploy to Vercel." });
+    res.status(400).json({ error: "no_code", message: "Project has no generated code to deploy." });
     return;
   }
 
   // Inject the correct absolute NEXUS_API URL into the HTML before uploading.
-  // This ensures buttons in the Vercel-hosted app call back to the NexusElite
-  // platform API (CORS wildcard allows cross-origin fetches).
+  // This ensures buttons in the hosted app call back to the NexusElite platform
+  // API (CORS wildcard allows cross-origin fetches).
   const nexusApiUrl = `${getPublicBaseUrl()}/api/projects/${project.id}/appdata`;
   const htmlWithApi = injectNexusApi(project.generatedCode, nexusApiUrl, project.id);
 
-  const result = await createVercelDeployment({ slug: dep.slug, html: htmlWithApi });
-  if (!result.ok || !result.deploymentId) {
-    res.status(502).json({ error: "vercel_failed", message: result.error || "Failed to create Vercel deployment" });
-    return;
-  }
-
-  // Vercel static deployments are usually live in seconds — do an immediate status check
-  const statusCheck = await getVercelDeploymentStatus(result.deploymentId);
-  const initialStatus = statusCheck.readyState === "READY" ? "live" : "provisioning";
-  const liveUrl = statusCheck.url || result.url;
-
+  let updatePayload: Partial<typeof deploymentsTable.$inferInsert>;
   const now = new Date();
-  const [updated] = await db
-    .update(deploymentsTable)
-    .set({
+
+  if (useRailway) {
+    const result = await createRailwayDeployment({ slug: dep.slug, html: htmlWithApi });
+    if (!result.ok || !result.deploymentId) {
+      res.status(502).json({ error: "railway_failed", message: result.error || "Failed to create Railway deployment" });
+      return;
+    }
+    updatePayload = {
+      provider: "railway",
+      providerServiceId: result.deploymentId,
+      providerProjectId: result.projectId ?? null,
+      providerLiveUrl: result.url ?? null,
+      status: "provisioning",
+      updatedAt: now,
+      buildLogs: [
+        ...(Array.isArray(dep.buildLogs) ? (dep.buildLogs as string[]) : []),
+        `[${now.toISOString()}] 🚂 Provisioning dedicated Railway deployment (${result.deploymentId})`,
+        `[${now.toISOString()}] ↳ Railway project: ${result.projectId ?? "pending"}`,
+        `[${now.toISOString()}] ↳ NEXUS_API wired to: ${nexusApiUrl}`,
+      ],
+    };
+  } else {
+    const result = await createVercelDeployment({ slug: dep.slug, html: htmlWithApi });
+    if (!result.ok || !result.deploymentId) {
+      res.status(502).json({ error: "vercel_failed", message: result.error || "Failed to create Vercel deployment" });
+      return;
+    }
+    // Vercel static deployments are usually live in seconds — do an immediate status check
+    const statusCheck = await getVercelDeploymentStatus(result.deploymentId);
+    const initialStatus = statusCheck.readyState === "READY" ? "live" : "provisioning";
+    const liveUrl = statusCheck.url || result.url;
+    updatePayload = {
       provider: "vercel",
       providerServiceId: result.deploymentId,
       providerLiveUrl: liveUrl ?? null,
@@ -413,7 +478,12 @@ router.post("/:id/provision", requireAuth, async (req, res) => {
         `[${now.toISOString()}] ↳ Vercel URL: ${liveUrl ?? "pending…"}`,
         `[${now.toISOString()}] ↳ NEXUS_API wired to: ${nexusApiUrl}`,
       ],
-    })
+    };
+  }
+
+  const [updated] = await db
+    .update(deploymentsTable)
+    .set(updatePayload)
     .where(eq(deploymentsTable.id, dep.id))
     .returning();
 
@@ -505,6 +575,36 @@ router.post("/:id/sync", requireAuth, async (req, res) => {
       case "build_in_progress":
       case "update_in_progress":
       case "pre_deploy_in_progress":
+        newStatus = "provisioning";
+        break;
+      default:
+        break;
+    }
+  } else if (dep.provider === "railway") {
+    if (!isRailwayConfigured()) {
+      res.status(503).json({ error: "not_configured", message: "RAILWAY_TOKEN not set on this server." });
+      return;
+    }
+    const status = await getRailwayDeploymentStatus(dep.providerServiceId);
+    if (!status.ok) {
+      res.status(502).json({ error: "railway_failed", message: status.error });
+      return;
+    }
+    statusLabel = status.status ?? "unknown";
+    if (status.url) providerLiveUrl = status.url;
+    switch (status.status) {
+      case "SUCCESS":
+        newStatus = "live";
+        errorMessage = null;
+        break;
+      case "FAILED":
+      case "CRASHED":
+        newStatus = "failed";
+        errorMessage = `Railway reported: ${status.status}`;
+        break;
+      case "BUILDING":
+      case "DEPLOYING":
+      case "INITIALIZING":
         newStatus = "provisioning";
         break;
       default:

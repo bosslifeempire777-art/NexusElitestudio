@@ -3,6 +3,7 @@ import { deploymentsTable } from "@workspace/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { isRenderConfigured, getRenderServiceStatus } from "./render.js";
 import { isVercelConfigured, getVercelDeploymentStatus } from "./vercel.js";
+import { isRailwayConfigured, getRailwayDeploymentStatus } from "./railway.js";
 
 const POLL_INTERVAL_MS = Number(process.env["RENDER_POLL_INTERVAL_MS"] || 30_000);
 const ACTIVE_STATUSES = ["provisioning", "building"];
@@ -116,6 +117,51 @@ async function pollOnce(): Promise<void> {
             ],
           })
           .where(eq(deploymentsTable.id, dep.id));
+
+      } else if (dep.provider === "railway") {
+        if (!isRailwayConfigured()) continue;
+        const status = await getRailwayDeploymentStatus(dep.providerServiceId);
+        if (!status.ok) continue;
+
+        let newStatus = dep.status;
+        let errorMessage: string | null = dep.errorMessage;
+        switch (status.status) {
+          case "SUCCESS":
+            newStatus = "live";
+            errorMessage = null;
+            break;
+          case "FAILED":
+          case "CRASHED":
+            newStatus = "failed";
+            errorMessage = `Railway reported: ${status.status}`;
+            break;
+          case "BUILDING":
+          case "DEPLOYING":
+          case "INITIALIZING":
+            newStatus = "provisioning";
+            break;
+          default:
+            break;
+        }
+
+        const liveUrlChanged = status.url && status.url !== dep.providerLiveUrl;
+        if (newStatus === dep.status && !liveUrlChanged) continue;
+
+        const now = new Date();
+        await db
+          .update(deploymentsTable)
+          .set({
+            status: newStatus,
+            providerLiveUrl: status.url ?? dep.providerLiveUrl,
+            errorMessage,
+            lastDeployedAt: newStatus === "live" ? now : dep.lastDeployedAt,
+            updatedAt: now,
+            buildLogs: [
+              ...(Array.isArray(dep.buildLogs) ? (dep.buildLogs as string[]) : []),
+              `[${now.toISOString()}] 🛰 Auto-poll: Railway → ${status.status ?? "unknown"}`,
+            ],
+          })
+          .where(eq(deploymentsTable.id, dep.id));
       }
     }
   } catch (err) {
@@ -132,7 +178,7 @@ async function pollOnce(): Promise<void> {
  */
 export function startRenderPoller(): void {
   if (timer) return;
-  const hasAnyProvider = isVercelConfigured() || isRenderConfigured();
+  const hasAnyProvider = isVercelConfigured() || isRenderConfigured() || isRailwayConfigured();
   if (!hasAnyProvider) {
     console.log("[deploymentPoller] No provider tokens set — poller disabled");
     return;
