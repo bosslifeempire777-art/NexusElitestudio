@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile as wf, mkdir as mk, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 
 const execFileAsync = promisify(execFile);
 const EXPO_OWNER = "Nexuselitestudio";
@@ -88,7 +88,20 @@ export interface OtaPublishResult {
   createdAt: string;
 }
 
-/** Publish an OTA update via EAS CLI using the project's actual Expo files */
+/**
+ * Publish an OTA update via EAS Update.
+ *
+ * Key design decisions:
+ * - `projectFiles` comes from generateMobileCode() which already includes correctly
+ *   configured `app.json` (owner + slug matching EAS project) and `eas.json`.
+ *   We write them as-is and do NOT overwrite them with minimal stubs afterwards,
+ *   preserving all EAS project linkage.
+ * - `npm install --legacy-peer-deps` is run before `eas update` because Metro
+ *   bundler (used by `eas update`) requires node_modules to exist locally.
+ *   This adds ~2-4 minutes to publish time but is unavoidable for local bundling.
+ * - Binary asset files (PNGs stored as base64 in projectFiles) are detected by
+ *   extension and decoded before writing so Metro can process them.
+ */
 export async function publishOtaUpdate(opts: {
   easProjectSlug: string;
   accountName:    string;
@@ -100,51 +113,116 @@ export async function publishOtaUpdate(opts: {
   const token = process.env.EXPO_TOKEN;
   if (!token) throw new Error("EXPO_TOKEN not set");
 
-  const { writeFile: wf, mkdir: mk } = await import("node:fs/promises");
-  const { resolve } = await import("node:path");
   const dir = await mkdtemp(join(tmpdir(), "nexus-ota-"));
+  const root = resolve(dir) + "/";
 
-  // Write the actual generated project files to the temp dir.
-  // Containment check: resolve each target path and verify it stays inside dir.
+  // ── Step 1: Write the complete project files ─────────────────────────────
+  // projectFiles from generateMobileCode already includes:
+  //   - app.json  (with correct expo.owner, expo.slug for this EAS project)
+  //   - eas.json  (with correct build profiles)
+  //   - package.json, tsconfig.json, babel.config.js
+  //   - all app screens and components
+  // We use them as the source of truth; no overwriting afterwards.
   for (const [filePath, content] of Object.entries(projectFiles)) {
-    const resolved = resolve(dir, filePath);
-    if (!resolved.startsWith(dir + "/") && resolved !== dir) {
-      throw new Error(`Path traversal rejected: ${filePath}`);
+    const resolved = resolve(join(dir, filePath));
+
+    // Containment check: reject any path that escapes the temp directory.
+    if (!resolved.startsWith(root)) {
+      console.warn(`[easUpdate] Skipping unsafe path: ${filePath}`);
+      continue;
     }
-    await mk(join(resolved, ".."), { recursive: true }).catch(() => undefined);
-    await wf(resolved, content, "utf8");
+
+    await mk(dirname(resolved), { recursive: true });
+
+    // Binary assets (PNGs) are stored as base64 strings in projectFiles
+    if (filePath.match(/\.(png|jpg|jpeg|gif|webp)$/i)) {
+      const { writeFile: wfBuf } = await import("node:fs/promises");
+      await wfBuf(resolved, Buffer.from(content, "base64"));
+    } else {
+      await wf(resolved, content, "utf8");
+    }
   }
 
-  // Ensure app.json exists with proper EAS slug linkage
-  const appJson = JSON.stringify({
-    expo: { name: easProjectSlug, slug: easProjectSlug, version: "1.0.0", owner: accountName },
-  }, null, 2);
-  await wf(join(dir, "app.json"), appJson, "utf8");
+  // ── Step 2: Write fallback app.json / eas.json only if absent ────────────
+  // (generateMobileCode always includes both, but guard just in case)
+  const appJsonPath = join(dir, "app.json");
+  const easJsonPath = join(dir, "eas.json");
 
-  // eas.json — project linkage so `eas update` targets the right project
-  const easJson = JSON.stringify({
-    cli: { version: ">= 5.0.0" },
-    build: { preview: { distribution: "internal" } },
-    submit: { production: {} },
-  }, null, 2);
-  await wf(join(dir, "eas.json"), easJson, "utf8");
+  const appJsonExists = await access(appJsonPath).then(() => true).catch(() => false);
+  if (!appJsonExists) {
+    console.warn("[easUpdate] app.json not in projectFiles — writing fallback");
+    await wf(appJsonPath, JSON.stringify({
+      expo: {
+        name:    easProjectSlug,
+        slug:    easProjectSlug,
+        version: "1.0.0",
+        owner:   accountName,
+        runtimeVersion: { policy: "appVersion" },
+        updates: { enabled: true, fallbackToCacheTimeout: 0 },
+      },
+    }, null, 2), "utf8");
+  }
 
+  const easJsonExists = await access(easJsonPath).then(() => true).catch(() => false);
+  if (!easJsonExists) {
+    console.warn("[easUpdate] eas.json not in projectFiles — writing fallback");
+    await wf(easJsonPath, JSON.stringify({
+      cli:   { version: ">= 5.9.0" },
+      build: {
+        preview: { distribution: "internal", android: { buildType: "apk" } },
+      },
+      submit: { production: {} },
+    }, null, 2), "utf8");
+  }
+
+  // ── Step 3: Install dependencies so Metro bundler can run ────────────────
+  // `eas update` uses Metro to bundle JS locally before uploading.
+  // Without node_modules the bundle step will fail.
+  console.log("[easUpdate] Installing Expo dependencies (Metro bundler requirement)…");
+  try {
+    const { stdout: npmOut } = await execFileAsync(
+      "npm",
+      ["install", "--legacy-peer-deps", "--prefer-offline", "--no-audit", "--no-fund"],
+      {
+        cwd:     dir,
+        timeout: 360_000, // 6 minutes
+        env:     { ...process.env, CI: "1" },
+      },
+    );
+    console.log("[easUpdate] npm install done:", npmOut.slice(0, 200));
+  } catch (npmErr: any) {
+    throw new Error(`[easUpdate] npm install failed (required for eas update): ${npmErr?.message ?? npmErr}`);
+  }
+
+  // ── Step 4: Run eas update ───────────────────────────────────────────────
+  console.log(`[easUpdate] Publishing OTA to branch "${branch}" for ${easProjectSlug}…`);
   const { stdout } = await execFileAsync(
     EAS_BIN,
-    ["update", "--branch", branch, "--message", message, "--non-interactive", "--json"],
+    [
+      "update",
+      "--branch",  branch,
+      "--message", message,
+      "--non-interactive",
+      "--json",
+    ],
     {
-      cwd: dir,
-      timeout: 180_000,
-      env: { ...process.env, EXPO_TOKEN: token, CI: "1", EXPO_NO_TELEMETRY: "1" },
+      cwd:     dir,
+      timeout: 300_000, // 5 minutes (post-install bundling)
+      env:     {
+        ...process.env,
+        EXPO_TOKEN:         token,
+        CI:                 "1",
+        EXPO_NO_TELEMETRY:  "1",
+      },
     },
   );
 
   let parsed: any = {};
-  try { parsed = JSON.parse(stdout.trim()); } catch { /* ignore */ }
+  try { parsed = JSON.parse(stdout.trim()); } catch { /* keep empty parsed */ }
   const update = Array.isArray(parsed) ? parsed[0] : parsed;
 
   return {
-    updateId:  update?.id ?? update?.updateId,
+    updateId:  update?.id ?? update?.updateId ?? "unknown",
     branch:    update?.branchName ?? branch,
     message:   update?.message ?? message,
     platform:  update?.platform ?? "android,ios",
