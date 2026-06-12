@@ -1223,8 +1223,10 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         await db.update(projectsTable)
           .set({ memory: newMemory as any })
           .where(eq(projectsTable.id, project.id));
+        // Signal the frontend that memory was updated so it can refetch
+        emitLog(project.id, `__MEMORY_UPDATED__`);
       } catch (memErr) {
-        console.warn("Memory update (chat-only) failed:", memErr);
+        console.warn("Memory update (chat-only) failed:", String(memErr));
       }
       return;
     }
@@ -1329,6 +1331,17 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       const reply = await chatReplyPromise.catch(() => quickReply);
       emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
       await persistChatHistory(reply).catch(() => {});
+      // Still update memory even when code gen fails
+      try {
+        const newMemory = await updateProjectMemory(
+          project.name, project.type, priorMemory, userMessage, reply, false,
+        );
+        await db.update(projectsTable)
+          .set({ memory: newMemory as any })
+          .where(eq(projectsTable.id, project.id));
+      } catch (memErr) {
+        console.warn("Memory update (error path) failed:", String(memErr));
+      }
       await db.update(projectsTable)
         .set({ status: prevStatus === "deployed" ? "deployed" : "ready", updatedAt: new Date() })
         .where(eq(projectsTable.id, project.id));

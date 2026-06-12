@@ -1389,6 +1389,7 @@ export default function ProjectDetail() {
                   // "Work Complete" banner so the user can review the chat first.
                   setWorkCompleted(true);
                 }}
+                onMemoryUpdated={() => refetch()}
               />
             </div>
           )}
@@ -1595,7 +1596,7 @@ function ProjectMemoryPanel({ memory }: { memory: ProjectMemoryShape | null }) {
 }
 
 function AgentTerminal({
-  projectId, projectName, projectStatus, projectType, onBuildComplete, onUpdateStarted, initialHistory,
+  projectId, projectName, projectStatus, projectType, onBuildComplete, onUpdateStarted, onMemoryUpdated, initialHistory,
 }: {
   projectId: string;
   projectName: string;
@@ -1603,6 +1604,7 @@ function AgentTerminal({
   projectType?: string;
   onBuildComplete?: () => void;
   onUpdateStarted?: () => void;
+  onMemoryUpdated?: () => void;
   initialHistory?: ChatMessage[];
 }) {
   const [, navigate] = useLocation();
@@ -1850,6 +1852,12 @@ function AgentTerminal({
           } catch {
             // ignore malformed reply payload
           }
+          return;
+        }
+
+        // __MEMORY_UPDATED__ — memory saved for chat-only (no-code) turns; refetch project
+        if (msg === "__MEMORY_UPDATED__") {
+          onMemoryUpdated?.();
           return;
         }
 
