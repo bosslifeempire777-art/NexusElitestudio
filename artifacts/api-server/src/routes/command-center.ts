@@ -15,6 +15,7 @@ import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
 import { getOpenRouterClient, chatViaSdk, listModels, getCredits } from "../lib/openrouterSdk.js";
+import { runAgentWithTools, ALL_AGENT_TOOLS } from "../lib/agentTools.js";
 
 const router: IRouter = Router();
 router.use(requireAdmin);
@@ -287,43 +288,37 @@ router.post("/custom-agents/:id/run", async (req, res) => {
     res.status(500).json({ error: "OPENROUTER_API_KEY not set" }); return;
   }
 
-  // Per-model timeout — Opus / Sonnet routinely take > 90s for long
-  // generations. Use 180s for those, 60s for fast models. Routed through
-  // chatViaSdk so the AbortController is owned & cleaned up properly,
-  // which is what stops the 'lost connection to server' crash loop.
-  const isSlowModel = /opus|sonnet|gpt-4o(?!-mini)/i.test(agent.model);
-  const timeoutMs = isSlowModel ? 180_000 : 60_000;
-
   try {
-    const result: any = await chatViaSdk(
-      {
-        model:    agent.model,
-        messages: [
-          { role: "system", content: agent.systemPrompt },
-          { role: "user",   content: String(task) },
-        ],
-      },
-      { timeoutMs },
-    );
-    const choice = result?.choices?.[0];
+    // Use the full agentic tool loop — agents can now run bash (tests!),
+    // read/write files, search code, and fetch URLs.
+    const result = await runAgentWithTools({
+      model:        agent.model,
+      task:         String(task),
+      tools:        ALL_AGENT_TOOLS,
+      maxSteps:     30,
+      systemPrompt: agent.systemPrompt,
+    });
+
     res.json({
-      output: choice?.message?.content ?? "",
-      usage:  result?.usage ?? null,
-      agent:  { id: agent.id, name: agent.name, model: agent.model },
+      output:        result.text,
+      toolCallCount: result.toolCallCount,
+      usage: {
+        prompt_tokens:     result.inputTokens,
+        completion_tokens: result.outputTokens,
+        total_tokens:      result.inputTokens + result.outputTokens,
+      },
+      agent: { id: agent.id, name: agent.name, model: agent.model },
     });
   } catch (err: any) {
     const isTimeout = err?.name === "AbortError" || /timeout/i.test(err?.message ?? "");
     if (isTimeout) {
       res.status(504).json({
-        error: "model_timeout",
-        message: `${agent.model} didn't respond in ${Math.round(timeoutMs / 1000)}s. Try a faster model (e.g. gpt-4o-mini, gemini-2.0-flash) or shorten the task and retry.`,
+        error:   "model_timeout",
+        message: `${agent.model} timed out. Try a faster model (gpt-4o-mini, gemini-2.0-flash) or shorten the task.`,
       });
       return;
     }
 
-    // OpenRouter returns 402 when the account balance is too low to cover
-    // the request. Surface that explicitly so admins know to top up rather
-    // than seeing a vague "run failed".
     const status: number | undefined =
       err?.statusCode ?? err?.status ?? err?.response?.status;
     const msg = String(err?.message ?? "");
@@ -332,12 +327,35 @@ router.post("/custom-agents/:id/run", async (req, res) => {
       /insufficient credits|requires more credits|add more credits/i.test(msg);
     if (isCreditsError) {
       res.status(402).json({
-        error: "openrouter_insufficient_credits",
-        message:
-          "OpenRouter account is out of credits. Add credits at https://openrouter.ai/settings/credits, then re-run the agent. (Models tried: " +
-          agent.model + ")",
+        error:   "openrouter_insufficient_credits",
+        message: "OpenRouter account is out of credits. Add credits at https://openrouter.ai/settings/credits then retry.",
       });
       return;
+    }
+
+    // Some models don't support tool calling — fall back to plain chat
+    const noTools = /tool|function.*call|not support/i.test(msg);
+    if (noTools) {
+      try {
+        const fallback: any = await chatViaSdk({
+          model:    agent.model,
+          messages: [
+            { role: "system", content: agent.systemPrompt },
+            { role: "user",   content: String(task) },
+          ],
+        }, { timeoutMs: 120_000 });
+        res.json({
+          output:        fallback?.choices?.[0]?.message?.content ?? "",
+          toolCallCount: 0,
+          usage:         fallback?.usage ?? null,
+          agent:         { id: agent.id, name: agent.name, model: agent.model },
+          note:          "Tool calling not supported by this model — ran without tools.",
+        });
+        return;
+      } catch (fbErr: any) {
+        res.status(500).json({ error: "run_failed", message: fbErr?.message ?? String(fbErr) });
+        return;
+      }
     }
 
     res.status(500).json({ error: "run_failed", message: err?.message ?? String(err) });

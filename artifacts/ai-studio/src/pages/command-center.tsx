@@ -339,6 +339,8 @@ function CustomAgentsTab() {
   const [running, setRunning] = useState<string | null>(null);
   const [task, setTask] = useState("");
   const [output, setOutput] = useState<string>("");
+  const [toolCallCount, setToolCallCount] = useState<number | null>(null);
+  const [runNote, setRunNote] = useState<string | null>(null);
 
   const reload = async () => {
     const [a, m] = await Promise.all([
@@ -377,12 +379,16 @@ function CustomAgentsTab() {
     if (!task.trim()) return;
     setRunning(id);
     setOutput("");
+    setToolCallCount(null);
+    setRunNote(null);
     try {
       const r = await fetchJson(`/api/command-center/custom-agents/${id}/run`, {
         method: "POST",
         body: JSON.stringify({ task }),
       });
       setOutput(r.output || "(no output)");
+      if (typeof r.toolCallCount === "number") setToolCallCount(r.toolCallCount);
+      if (r.note) setRunNote(r.note);
     } catch (e: any) {
       setOutput("Error: " + e.message);
     } finally { setRunning(null); }
@@ -461,9 +467,21 @@ function CustomAgentsTab() {
                 {running === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
               </Button>
             </div>
-            {running === a.id && <div className="text-xs text-muted-foreground mt-2">Running…</div>}
+            {running === a.id && <div className="text-xs text-muted-foreground mt-2 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /> Running agent loop…</div>}
             {output && running !== a.id && (
-              <pre className="mt-3 bg-black/80 border border-border rounded p-3 text-xs whitespace-pre-wrap max-h-[260px] overflow-y-auto">{output}</pre>
+              <div className="mt-3 space-y-1">
+                {(toolCallCount !== null || runNote) && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {toolCallCount !== null && (
+                      <span className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 rounded px-2 py-0.5">
+                        🔧 {toolCallCount} tool call{toolCallCount !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                    {runNote && <span className="italic">{runNote}</span>}
+                  </div>
+                )}
+                <pre className="bg-black/80 border border-border rounded p-3 text-xs whitespace-pre-wrap max-h-[260px] overflow-y-auto">{output}</pre>
+              </div>
             )}
           </CardContent>
         </Card>

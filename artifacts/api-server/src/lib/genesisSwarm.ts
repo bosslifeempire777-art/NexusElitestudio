@@ -12,6 +12,7 @@
  */
 
 import { chatViaSdk } from "./openrouterSdk.js";
+import { runAgentWithTools, WORKSPACE_TOOLS, REPAIR_TOOLS } from "./agentTools.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
@@ -639,6 +640,51 @@ async function _callChain(
 }
 
 // ─────────────────────────────────────────────────────────────
+// LLM CALL WITH TOOLS — primary model gets tool access; falls
+// back to plain _callChain on tool-unsupported models
+// ─────────────────────────────────────────────────────────────
+
+async function _callChainWithTools(
+  chain:       string[],
+  prompt:      string,
+  system:      string,
+  maxTokens:   number,
+  temperature: number,
+  agentName:   string,
+  tools:       import("./agentTools.js").ToolDef[],
+  mem?:        SharedMemory,
+  onLog?:      (msg: string) => void,
+): Promise<string> {
+  const primary = chain[0];
+  if (!primary) throw new Error("Empty model chain");
+
+  try {
+    const result = await runAgentWithTools({
+      model:        primary,
+      systemPrompt: system,
+      task:         prompt,
+      tools,
+      maxSteps:     10,
+      maxTokens,
+      temperature,
+    });
+
+    if (mem) {
+      mem.metrics.calls++;
+      mem.metrics.tokensIn  += result.inputTokens;
+      mem.metrics.tokensOut += result.outputTokens;
+    }
+
+    onLog?.(`  ✓ [${agentName}] ${primary} (tools:${result.toolCallCount}) (${result.text.length} chars)`);
+    return result.text;
+  } catch (err: any) {
+    // Model doesn't support tool calling or transient error — fall back to plain chain
+    onLog?.(`  ⟳ [${agentName}] tool-call failed (${String(err?.message ?? "").slice(0, 80)}), retrying without tools`);
+    return _callChain(chain, prompt, system, maxTokens, temperature, false, agentName, mem, onLog);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // PROMPT SANITIZER — prevent injection from user input
 // ─────────────────────────────────────────────────────────────
 
@@ -1027,7 +1073,13 @@ async function runGuardianPass(
       const ctx  = `FILE: ${filePath}\n\n${code.slice(0, 6000)}`;
       const outs = await Promise.allSettled(
         CRITICS.map(([n, r]) =>
-          _callChain(reviewChain, ctx, `You are ${n}, a ${r}. ${sysBase}`, 1500, 0.2, true, n, mem, undefined, { role: "REVIEWER", tier: "guardian" })
+          // Reviewers get WORKSPACE_TOOLS: can read platform template files,
+          // search code patterns, and fetch documentation for reference.
+          _callChainWithTools(
+            reviewChain, ctx,
+            `You are ${n}, a ${r}. ${sysBase}\n\nYou have tools to read workspace files and search code patterns for reference.`,
+            1500, 0.2, n, WORKSPACE_TOOLS, mem, undefined,
+          )
         )
       );
 
@@ -1057,9 +1109,17 @@ async function runGuardianPass(
       );
 
       try {
-        const fixSystem = `Rewrite the file fixing every issue. Emit a single ===FILE: ${filePath}=== block.`;
+        // Repair agents get REPAIR_TOOLS: bash (syntax validation), read, search.
+        // They can write code to /tmp, run node --check, then produce the fixed file.
+        const fixSystem = (
+          `Rewrite the file fixing every issue listed. Emit a single ===FILE: ${filePath}=== block.\n` +
+          `You have tools: bash_command (validate syntax with 'echo "..." | node --check'), read_file, search_code.`
+        );
         const fixPrompt = `ORIGINAL:\n${code}\n\nISSUES:\n- ${issues.join("\n- ")}`;
-        const fixed     = await _callChain(repairChain, fixPrompt, fixSystem, 8000, 0.2, false, `Guardian:${filePath}`, mem, undefined, { role: "REPAIR", tier: "guardian" });
+        const fixed     = await _callChainWithTools(
+          repairChain, fixPrompt, fixSystem, 8000, 0.2,
+          `Guardian:${filePath}`, REPAIR_TOOLS, mem, undefined,
+        );
         const newCode   = extractCodeFiles(fixed)[filePath] ?? code;
         mem.writeFile(filePath, newCode);
         repaired++;
