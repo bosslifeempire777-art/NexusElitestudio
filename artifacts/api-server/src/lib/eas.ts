@@ -87,7 +87,7 @@ async function pushFilesToGitHub(
     const connectors = new ReplitConnectors();
 
     async function gh(endpoint: string, options: RequestInit = {}): Promise<any> {
-      const res = await connectors.proxy("github", endpoint, options);
+      const res = await connectors.proxy("github", endpoint, options as any);
       const text = await res.text();
       if (!res.ok) throw new Error(`GitHub ${res.status} on ${endpoint}: ${text.slice(0, 300)}`);
       try { return JSON.parse(text); } catch { return text; }

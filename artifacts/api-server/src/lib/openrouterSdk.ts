@@ -340,11 +340,9 @@ export async function callModelWithTools(opts: {
     model:  opts.model,
     input:  messages as any,
     tools:  (opts.tools ?? []) as any,
-    ...(opts.stopWhen ? { stopWhen: opts.stopWhen } : {}),
-    params: {
-      ...(opts.maxTokens    !== undefined ? { max_tokens:  opts.maxTokens }  : {}),
-      ...(opts.temperature  !== undefined ? { temperature: opts.temperature } : {}),
-    },
+    ...(opts.stopWhen    ? { stopWhen: opts.stopWhen } : {}),
+    ...(opts.maxTokens   !== undefined ? { max_tokens:  opts.maxTokens }  : {}),
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
   });
 
   // All three consume the same underlying ReusableReadableStream — safe to call concurrently
@@ -397,11 +395,9 @@ export async function* streamAgentText(opts: {
     model:  opts.model,
     input:  messages as any,
     tools:  (opts.tools ?? []) as any,
-    ...(opts.stopWhen ? { stopWhen: opts.stopWhen } : {}),
-    params: {
-      ...(opts.maxTokens    !== undefined ? { max_tokens:  opts.maxTokens }  : {}),
-      ...(opts.temperature  !== undefined ? { temperature: opts.temperature } : {}),
-    },
+    ...(opts.stopWhen    ? { stopWhen: opts.stopWhen } : {}),
+    ...(opts.maxTokens   !== undefined ? { max_tokens:  opts.maxTokens }  : {}),
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
   });
 
   for await (const delta of result.getTextStream()) {

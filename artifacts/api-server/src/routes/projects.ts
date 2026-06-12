@@ -1212,14 +1212,14 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     // Helper — persist chat history once we have the real reply
     async function persistChatHistory(reply: string) {
       try {
-        const existing = (project.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
+        const existing = (project!.chatHistory as Array<{ role: string; content: string; timestamp: string }> | null) ?? [];
         const nowIso = new Date().toISOString();
         await db.update(projectsTable)
           .set({ chatHistory: [...existing,
             { role: "user",  content: userMessage, timestamp: nowIso },
             { role: "agent", content: reply,        timestamp: nowIso },
           ] as any })
-          .where(eq(projectsTable.id, project.id));
+          .where(eq(projectsTable.id, project!.id));
       } catch (err) {
         console.warn("Failed to persist chat history:", err);
       }
@@ -1939,7 +1939,8 @@ router.get("/:id/webhooks", requireAuth, async (req, res) => {
     remoteIds = new Set(remoteHooks.map(h => h.id));
   } catch {
     // If EAS is unavailable, serve local data with a sync_status flag
-    return res.json(localHooks.map(h => ({ ...h, syncStatus: "eas_unavailable" })));
+    res.json(localHooks.map(h => ({ ...h, syncStatus: "eas_unavailable" })));
+    return;
   }
 
   const reconciled = localHooks.map(h => ({
