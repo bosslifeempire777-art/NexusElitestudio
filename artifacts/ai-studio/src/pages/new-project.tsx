@@ -3,14 +3,15 @@ import { useLocation } from "wouter";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, Button, Input, Textarea, Badge } from "@/components/ui/cyber-ui";
 import { useCreateProject, CreateProjectRequestType } from "@workspace/api-client-react";
-import { Bot, Code2, Smartphone, Cloud, Cpu, Gamepad2, Settings2, PlaySquare } from "lucide-react";
+import { Bot, Code2, Smartphone, Cloud, Cpu, Gamepad2, Settings2, PlaySquare, Wind } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 
 const projectTypes = [
   { id: 'saas',       label: 'SaaS Platform',   icon: Cloud,      desc: 'Full-stack web application with auth & db' },
   { id: 'website',    label: 'Web Application',  icon: Code2,      desc: 'Modern frontend with complex UI' },
-  { id: 'mobile_app', label: 'Mobile App',       icon: Smartphone, desc: 'Cross-platform mobile application' },
+  { id: 'mobile_app',  label: 'Mobile App (Expo)', icon: Smartphone, desc: 'React Native / Expo cross-platform app with EAS builds' },
+  { id: 'flutter_app', label: 'Flutter App',      icon: Wind,       desc: 'Flutter/Dart app — download source & build anywhere' },
   { id: 'game',       label: 'Video Game',       icon: Gamepad2,   desc: '2D/3D game with physics & logic' },
   { id: 'ai_tool',    label: 'AI Tool',          icon: Bot,        desc: 'Tool leveraging LLMs or custom models' },
   { id: 'automation', label: 'Automation',       icon: Cpu,        desc: 'Background workers & data pipelines' },

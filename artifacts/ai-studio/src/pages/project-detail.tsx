@@ -166,6 +166,11 @@ export default function ProjectDetail() {
   const [workflowRunError, setWorkflowRunError]   = useState<string | null>(null);
   const historyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Flutter Build state ───────────────────────────────────────────────────
+  const [showFlutterPanel, setShowFlutterPanel]     = useState(false);
+  const [isFlutterDownloading, setIsFlutterDownloading] = useState(false);
+  const [flutterDownloadError, setFlutterDownloadError] = useState<string | null>(null);
+
   const triggerMobileBuild = useCallback(async () => {
     if (!id || isMobileBuilding) return;
     setIsMobileBuilding(true);
@@ -377,6 +382,39 @@ export default function ProjectDetail() {
     if (tab === 'webhooks') loadWebhooks();
     if (tab === 'workflows') loadWorkflows();
   }, [loadBuildHistory, loadOtaData, loadWebhooks, loadWorkflows]);
+
+  const openFlutterPanel = useCallback(() => {
+    setFlutterDownloadError(null);
+    setShowFlutterPanel(true);
+  }, []);
+
+  const downloadFlutterSource = useCallback(async () => {
+    if (!id || isFlutterDownloading) return;
+    setIsFlutterDownloading(true);
+    setFlutterDownloadError(null);
+    try {
+      const token = getToken();
+      const res = await fetch(`/api/projects/${id}/flutter-download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: res.statusText }));
+        setFlutterDownloadError((err as any).message ?? "Download failed");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${project?.name ?? "flutter-app"}-flutter.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setFlutterDownloadError(err?.message ?? "Download failed");
+    } finally {
+      setIsFlutterDownloading(false);
+    }
+  }, [id, isFlutterDownloading, project?.name]);
 
   function authHeaders(): Record<string, string> {
     const token = getToken();
@@ -986,6 +1024,96 @@ export default function ProjectDetail() {
         </div>
       )}
 
+      {/* ── Flutter Studio Panel ── */}
+      {showFlutterPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg bg-card border border-cyan-500/40 rounded-lg shadow-2xl overflow-hidden flex flex-col">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-cyan-500/30 bg-cyan-900/20 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🦋</span>
+                <h3 className="font-display font-bold text-sm text-cyan-300">FLUTTER STUDIO</h3>
+                <span className="text-[10px] font-mono text-muted-foreground/60 ml-1">{project.name}</span>
+              </div>
+              <button onClick={() => setShowFlutterPanel(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+
+              {/* Info box */}
+              <div className="bg-background/60 border border-border/50 rounded p-3 text-xs font-mono text-muted-foreground space-y-1">
+                <p><span className="text-cyan-400">Framework:</span> Flutter 3.x / Dart 3.0</p>
+                <p><span className="text-cyan-400">Targets:</span> iOS · Android · Web · Desktop</p>
+                <p><span className="text-cyan-400">Build:</span> Local SDK or Codemagic CI/CD</p>
+              </div>
+
+              {/* How it works */}
+              <div className="space-y-2">
+                <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">How It Works</p>
+                <div className="space-y-2">
+                  {[
+                    { n: '1', label: 'Download source', desc: 'AI generates your complete Dart/Flutter project files' },
+                    { n: '2', label: 'Install Flutter SDK', desc: 'Get it free at flutter.dev/docs/get-started/install' },
+                    { n: '3', label: 'Run locally', desc: 'flutter pub get → flutter run (or build apk/ipa)' },
+                    { n: '4', label: 'Or use Codemagic', desc: 'Cloud builds at codemagic.io — no local SDK needed' },
+                  ].map(step => (
+                    <div key={step.n} className="flex gap-3 items-start">
+                      <div className="w-6 h-6 rounded-full bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 font-bold text-xs shrink-0 mt-0.5">{step.n}</div>
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">{step.label}</p>
+                        <p className="text-[11px] text-muted-foreground">{step.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Error */}
+              {flutterDownloadError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-xs text-red-400 font-mono">
+                  {flutterDownloadError}
+                </div>
+              )}
+
+              {/* Download button */}
+              <button
+                onClick={downloadFlutterSource}
+                disabled={isFlutterDownloading}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm transition-all"
+              >
+                {isFlutterDownloading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating Dart source…</>
+                  : <><Download className="w-4 h-4" /> Download Flutter Source (.zip)</>
+                }
+              </button>
+
+              <div className="flex gap-2">
+                <a
+                  href="https://docs.flutter.dev/get-started/install"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 border border-border/50 rounded text-xs text-muted-foreground hover:text-foreground hover:border-cyan-500/50 transition-colors font-mono"
+                >
+                  <ExternalLink className="w-3 h-3" /> Flutter Docs
+                </a>
+                <a
+                  href="https://codemagic.io/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 border border-border/50 rounded text-xs text-muted-foreground hover:text-foreground hover:border-cyan-500/50 transition-colors font-mono"
+                >
+                  <ExternalLink className="w-3 h-3" /> Codemagic CI
+                </a>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Upgrade / Paywall Modal ── */}
       {showUpgradeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -1142,6 +1270,19 @@ export default function ProjectDetail() {
                 >
                   <Smartphone className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Publish App</span>
+                </Button>
+              )}
+              {/* Flutter download button — only shown for flutter_app projects */}
+              {project.type === 'flutter_app' && (
+                <Button
+                  size="sm"
+                  onClick={() => openFlutterPanel()}
+                  disabled={project.status === 'building' || !(project as any).hasCode}
+                  title="Download Flutter/Dart source code"
+                  className="h-7 px-3 text-xs gap-1 bg-cyan-600 hover:bg-cyan-500 text-white border-0"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Flutter SDK</span>
                 </Button>
               )}
             </div>

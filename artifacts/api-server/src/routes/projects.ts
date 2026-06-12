@@ -16,6 +16,7 @@ import jwt from "jsonwebtoken";
 import AdmZip from "adm-zip";
 import { triggerMobileBuild, getMobileBuildStatus } from "../lib/eas.js";
 import { generateMobileCode } from "../lib/generateMobileCode.js";
+import { generateFlutterCode } from "../lib/generateFlutterCode.js";
 import { mobileBuildTable, easWebhookTable } from "@workspace/db/schema";
 import { listOtaUpdates, listChannels, listBranches, publishOtaUpdate } from "../lib/easUpdate.js";
 import { submitBuild, getSubmissionStatus } from "../lib/easSubmit.js";
@@ -24,7 +25,7 @@ import { listWorkflowRuns, WORKFLOW_TEMPLATES, triggerWorkflowRun, getWorkflowRu
 
 const router: IRouter = Router();
 
-const PROJECT_TYPES = ["website", "mobile_app", "saas", "automation", "ai_tool", "game"];
+const PROJECT_TYPES = ["website", "mobile_app", "flutter_app", "saas", "automation", "ai_tool", "game"];
 
 /** Fetch characters linked to a game project for AI context injection */
 async function getProjectCharacters(projectId: string): Promise<CharacterContext[]> {
@@ -85,6 +86,7 @@ function inferFramework(type: string, prompt: string): string {
     return "HTML5 Canvas (Arcade)";
   }
   if (type === "mobile_app") return "React Native";
+  if (type === "flutter_app") return "Flutter (Dart)";
   if (type === "saas") return "Next.js + Express";
   if (type === "website") return "React + Vite";
   if (type === "automation") return "Python + FastAPI";
@@ -1614,6 +1616,56 @@ router.get("/:id/mobile-download", requireAuth, async (req, res) => {
     res.send(buffer);
   } catch (err: any) {
     res.status(500).json({ error: "zip_failed", message: err?.message ?? "Failed to generate ZIP" });
+  }
+});
+
+/** Download Flutter project as a ZIP (Dart source — user builds locally or via Codemagic) */
+router.get("/:id/flutter-download", requireAuth, async (req, res) => {
+  const userId   = req.auth!.userId;
+  const isAdmin  = req.auth!.isAdmin;
+  const userPlan = req.auth!.plan;
+  const isVip    = req.auth!.isVip;
+
+  if (!isAdmin && !isVip && userPlan === "free") {
+    res.status(402).json({
+      error: "plan_limit",
+      code: "FLUTTER_DOWNLOAD_NOT_ALLOWED",
+      message: "Flutter source download requires a paid plan.",
+    });
+    return;
+  }
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+  if (project.type !== "flutter_app") {
+    res.status(400).json({ error: "not_flutter", message: "Only flutter_app projects can use this endpoint." });
+    return;
+  }
+
+  try {
+    const files = await generateFlutterCode(
+      project.name,
+      project.prompt ?? project.description ?? "",
+      project.id,
+    );
+    const zip = new AdmZip();
+    for (const [filePath, content] of Object.entries(files)) {
+      zip.addFile(filePath, Buffer.from(content, "utf-8"));
+    }
+    const safeName = project.name.replace(/[^a-z0-9_-]/gi, "_").slice(0, 60);
+    const buffer = zip.toBuffer();
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}-flutter.zip"`);
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err: any) {
+    console.error("[FlutterDownload]", err?.message ?? err);
+    res.status(500).json({ error: "zip_failed", message: err?.message ?? "Failed to generate Flutter ZIP" });
   }
 });
 

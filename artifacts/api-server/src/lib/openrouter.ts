@@ -438,7 +438,7 @@ const DEPARTMENTS: Record<string, string> = {
 function selectDepartments(blueprint: Record<string, any>): string[] {
   const pt = (blueprint.project_type || "").toLowerCase();
   let base = ["Backend", "Database", "Auth", "DevOps", "QA", "Docs"];
-  if (pt.includes("mobile"))     base = base.concat(["MobileIOS", "MobileAndroid", "Frontend"]);
+  if (pt.includes("mobile") || pt.includes("flutter"))     base = base.concat(["MobileIOS", "MobileAndroid", "Frontend"]);
   if (pt.includes("saas"))       base = base.concat(["Frontend", "Payments", "AIML"]);
   if (pt.includes("website"))    base = base.concat(["Frontend"]);
   if (pt.includes("ai_tool"))    base = base.concat(["Frontend", "AIML"]);
@@ -1376,8 +1376,9 @@ function getDefaultHtml(type: string, name: string, prompt: string): string {
   switch (type) {
     case "saas":       return saasTemplate(name, prompt);
     case "website":    return websiteTemplate(name, prompt);
-    case "mobile_app": return mobileTemplate(name, prompt);
-    case "ai_tool":    return aiToolTemplate(name, prompt);
+    case "mobile_app":  return mobileTemplate(name, prompt);
+    case "flutter_app": return flutterTemplate(name, prompt);
+    case "ai_tool":     return aiToolTemplate(name, prompt);
     case "automation": return automationTemplate(name, prompt);
     case "game":       return gameTemplate(name, prompt);
     default:           return saasTemplate(name, prompt);
@@ -1627,6 +1628,108 @@ body{background:#0f0f1a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFo
 function showTab(id,el){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  const s=document.getElementById(id);if(s)s.classList.add('active');
+  if(el)el.classList.add('active');
+}
+</script></body></html>`;
+}
+
+function flutterTemplate(name: string, _prompt: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${name}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0f;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:420px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+.status-bar{height:44px;background:#12121f;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font-size:12px;color:#64748b;flex-shrink:0}
+.app-bar{background:#1a1a30;padding:16px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #2d2d50;flex-shrink:0}
+.flutter-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:20px}
+.app-bar h1{font-size:18px;font-weight:600;letter-spacing:.3px}
+.screen{display:none;flex:1;overflow-y:auto;padding:16px;flex-direction:column;gap:12px}.screen.active{display:flex}
+.card{background:#1a1a30;border:1px solid #2d2d50;border-radius:16px;padding:18px}
+.card-title{font-size:13px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px}
+.fab{position:fixed;bottom:90px;right:20px;width:56px;height:56px;border-radius:28px;background:linear-gradient(135deg,#7c3aed,#06b6d4);border:none;color:#fff;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(124,58,237,.5);transition:.2s}
+.fab:hover{transform:scale(1.08)}
+.list-tile{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid #1e1e3d}
+.list-tile:last-child{border:none}
+.leading{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
+.tile-info h3{font-size:14px;font-weight:600;margin-bottom:2px}
+.tile-info p{font-size:12px;color:#64748b}
+.chip{display:inline-flex;align-items:center;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;margin:3px}
+.chip-primary{background:#4f1d96;color:#c4b5fd;border:1px solid #7c3aed}
+.chip-teal{background:#083344;color:#67e8f9;border:1px solid #06b6d4}
+.filled-btn{width:100%;padding:15px;border-radius:14px;border:none;background:linear-gradient(135deg,#7c3aed,#06b6d4);color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;transition:.2s}
+.filled-btn:hover{opacity:.9}
+.outlined-btn{width:100%;padding:14px;border-radius:14px;border:1px solid #7c3aed;background:transparent;color:#c4b5fd;font-size:15px;font-weight:600;cursor:pointer;transition:.2s}
+.outlined-btn:hover{background:#4f1d96/20}
+.bottom-nav{height:72px;background:#12121f;border-top:1px solid #2d2d50;display:flex;align-items:center;justify-content:space-around;flex-shrink:0;padding-bottom:8px}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;padding:8px 18px;border-radius:20px;transition:.2s;color:#64748b}
+.nav-item.active{color:#7c3aed;background:#4f1d9620}
+.nav-item span{font-size:10px;font-weight:600}
+.stat-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px}
+.stat-box{background:#12121f;border:1px solid #2d2d50;border-radius:12px;padding:14px;text-align:center}
+.stat-val{font-size:22px;font-weight:700;background:linear-gradient(135deg,#7c3aed,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.stat-label{font-size:11px;color:#64748b;margin-top:2px}
+.flutter-badge{background:#12121f;border:1px solid #06b6d4;border-radius:8px;padding:6px 12px;font-size:11px;color:#67e8f9;display:inline-flex;align-items:center;gap:6px;margin-top:8px}
+</style></head><body>
+<div class="status-bar"><span>9:41</span><span>🦋 Flutter</span><span>100% 🔋</span></div>
+<div class="app-bar"><div class="flutter-logo">🦋</div><h1>${name}</h1></div>
+<div id="home" class="screen active">
+  <div class="stat-row">
+    <div class="stat-box"><div class="stat-val">∞</div><div class="stat-label">Possibilities</div></div>
+    <div class="stat-box"><div class="stat-val">60fps</div><div class="stat-label">Performance</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Quick Actions</div>
+    <button class="filled-btn" onclick="alert('Launching...')">🚀 Get Started</button>
+    <button class="outlined-btn" onclick="showNav('explore',this)">🔍 Explore Features</button>
+  </div>
+  <div class="card">
+    <div class="card-title">Features</div>
+    <div class="list-tile"><div class="leading" style="background:#1e1050">⚡</div><div class="tile-info"><h3>Fast & Native</h3><p>60fps on all platforms</p></div></div>
+    <div class="list-tile"><div class="leading" style="background:#082f49">📱</div><div class="tile-info"><h3>Cross Platform</h3><p>iOS, Android, Web, Desktop</p></div></div>
+    <div class="list-tile"><div class="leading" style="background:#052e16">🎨</div><div class="tile-info"><h3>Material You</h3><p>Adaptive design system</p></div></div>
+  </div>
+  <div class="flutter-badge">🦋 Built with Flutter · Dart 3.0</div>
+</div>
+<div id="explore" class="screen">
+  <div class="card">
+    <div class="card-title">Discover</div>
+    <div class="list-tile"><div class="leading" style="background:#1e1050">🌟</div><div class="tile-info"><h3>Featured</h3><p>Top picks for you</p></div></div>
+    <div class="list-tile"><div class="leading" style="background:#082f49">🔥</div><div class="tile-info"><h3>Trending</h3><p>Popular right now</p></div></div>
+    <div class="list-tile"><div class="leading" style="background:#4a1942">🆕</div><div class="tile-info"><h3>New</h3><p>Just arrived</p></div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Categories</div>
+    <div>
+      <span class="chip chip-primary">Productivity</span><span class="chip chip-teal">Tools</span>
+      <span class="chip chip-primary">Social</span><span class="chip chip-teal">Creative</span>
+      <span class="chip chip-primary">Health</span><span class="chip chip-teal">Finance</span>
+    </div>
+  </div>
+</div>
+<div id="profile" class="screen">
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:18px">
+      <div style="width:64px;height:64px;border-radius:32px;background:linear-gradient(135deg,#7c3aed,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:26px">🦋</div>
+      <div><div style="font-weight:700;font-size:16px">Alex Johnson</div><div style="color:#64748b;font-size:12px;margin-top:2px">alex@example.com</div></div>
+    </div>
+    <button class="filled-btn" onclick="alert('Profile saved!')">Save Profile</button>
+    <button class="outlined-btn" onclick="alert('Settings')">⚙️ Settings</button>
+  </div>
+</div>
+<button class="fab" onclick="alert('Create new!')">+</button>
+<div class="bottom-nav">
+  <div class="nav-item active" onclick="showNav('home',this)"><span style="font-size:20px">🏠</span><span>Home</span></div>
+  <div class="nav-item" onclick="showNav('explore',this)"><span style="font-size:20px">🔍</span><span>Explore</span></div>
+  <div class="nav-item" onclick="showNav('profile',this)"><span style="font-size:20px">👤</span><span>Profile</span></div>
+</div>
+<script>
+function showNav(id,el){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const s=document.getElementById(id);if(s)s.classList.add('active');
   if(el)el.classList.add('active');
 }

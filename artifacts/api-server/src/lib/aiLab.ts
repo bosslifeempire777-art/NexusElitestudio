@@ -52,6 +52,11 @@ const MODEL_ROSTER: Record<string, ModelSpec[]> = {
     { slug: "openai/gpt-4o",                       label: "GPT-4o",            provider: "openai"    },
     { slug: "google/gemini-2.5-flash",             label: "Gemini 2.5 Flash",  provider: "google"    },
   ],
+  flutter_app: [
+    { slug: "anthropic/claude-3.5-sonnet",         label: "Claude 3.5 Sonnet", provider: "anthropic" },
+    { slug: "openai/gpt-4o",                       label: "GPT-4o",            provider: "openai"    },
+    { slug: "google/gemini-2.5-flash",             label: "Gemini 2.5 Flash",  provider: "google"    },
+  ],
   automation: [
     { slug: "openai/gpt-4o-mini",                  label: "GPT-4o mini",       provider: "openai"    },
     { slug: "google/gemini-2.0-flash-001",         label: "Gemini 2.0 Flash",  provider: "google"    },

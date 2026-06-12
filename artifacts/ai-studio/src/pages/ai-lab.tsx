@@ -29,7 +29,8 @@ const APP_TYPES = [
   { id: "saas",       label: "SaaS / Dashboard"          },
   { id: "website",    label: "Website / Landing"         },
   { id: "ai_tool",    label: "AI Tool / Chatbot"         },
-  { id: "mobile_app", label: "Mobile App"                },
+  { id: "mobile_app",  label: "Mobile App (Expo/RN)"     },
+  { id: "flutter_app", label: "Flutter App"              },
   { id: "automation", label: "Automation / Backend"      },
   { id: "game",       label: "Game"                      },
 ];
