@@ -321,10 +321,22 @@ router.get("/:id", requireAuth, async (req, res) => {
 
 // Delete project
 router.delete("/:id", requireAuth, async (req, res) => {
-  const userId = req.auth!.userId;
-  await db.delete(projectsTable).where(
-    and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId))
-  );
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+  const projectId = String(req.params.id);
+
+  // Admin can delete any project; regular users can only delete their own
+  const where = isAdmin
+    ? eq(projectsTable.id, projectId)
+    : and(eq(projectsTable.id, projectId), eq(projectsTable.userId, userId));
+
+  const existing = await db.query.projectsTable.findFirst({ where });
+  if (!existing) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  await db.delete(projectsTable).where(where);
   res.status(204).send();
 });
 

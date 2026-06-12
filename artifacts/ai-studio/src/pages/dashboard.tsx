@@ -2,10 +2,11 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge } from "@/components/ui/cyber-ui";
 import { useListProjects, useGetUserAnalytics } from "@workspace/api-client-react";
 import { Link, useLocation } from "wouter";
-import { Plus, Terminal, Activity, Zap, Database, AlertTriangle, CheckCircle } from "lucide-react";
+import { Plus, Terminal, Activity, Zap, Database, AlertTriangle, CheckCircle, Trash2, X, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { getToken } from "@/lib/auth";
 
 const PLAN_LIMITS: Record<string, { builds: number; projects: number; deployments: number }> = {
   free:    { builds: 1,  projects: 2,  deployments: 0 },
@@ -16,7 +17,7 @@ const PLAN_LIMITS: Record<string, { builds: number; projects: number; deployment
 };
 
 export default function Dashboard() {
-  const { data: projects, isLoading: projectsLoading } = useListProjects();
+  const { data: projects, isLoading: projectsLoading, refetch } = useListProjects();
   const { data: analytics } = useGetUserAnalytics();
   const { user } = useAuth();
   const [, navigate] = useLocation();
@@ -29,11 +30,16 @@ export default function Dashboard() {
     return false;
   });
 
+  // Admin delete state
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteName, setConfirmDeleteName] = useState<string>("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   useEffect(() => {
     if (upgradeSuccess) {
       const timer = setTimeout(() => {
         setUpgradeSuccess(false);
-        // Remove query param from URL without refresh
         const url = new URL(window.location.href);
         url.searchParams.delete("upgrade");
         window.history.replaceState({}, "", url.toString());
@@ -62,6 +68,43 @@ export default function Dashboard() {
       default: return 'outline';
     }
   };
+
+  const openDeleteConfirm = useCallback((e: React.MouseEvent, id: string, name: string) => {
+    e.stopPropagation();
+    setDeleteError(null);
+    setConfirmDeleteName(name);
+    setConfirmDeleteId(id);
+  }, []);
+
+  const cancelDelete = useCallback(() => {
+    setConfirmDeleteId(null);
+    setConfirmDeleteName("");
+    setDeleteError(null);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!confirmDeleteId) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const token = getToken();
+      const res = await fetch(`/api/projects/${confirmDeleteId}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok && res.status !== 204) {
+        const body = await res.json().catch(() => ({ message: res.statusText }));
+        throw new Error((body as any).message ?? "Delete failed");
+      }
+      setConfirmDeleteId(null);
+      setConfirmDeleteName("");
+      refetch();
+    } catch (err: any) {
+      setDeleteError(err?.message ?? "Delete failed");
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [confirmDeleteId, refetch]);
 
   return (
     <AppLayout>
@@ -97,7 +140,7 @@ export default function Dashboard() {
           <StatCard title="AI Tokens Used" value={analytics?.aiTokensUsed?.toLocaleString() || 0} icon={Terminal} color="text-muted-foreground" />
         </div>
 
-        {/* Plan Usage Banner — shown only for limited plans */}
+        {/* Plan Usage Banner */}
         {showUsageBanner && (
           <Card className={`border ${(buildsNearLimit || projectsNearLimit) ? 'border-yellow-500/50 bg-yellow-500/5' : 'border-border/40 bg-secondary/20'}`}>
             <CardContent className="p-5">
@@ -110,7 +153,6 @@ export default function Dashboard() {
                       {planLimits.deployments === 0 && <span className="ml-2 text-yellow-400">· No Deployments</span>}
                     </p>
                   </div>
-                  {/* Builds bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs font-mono text-muted-foreground">
                       <span>Builds this month</span>
@@ -127,7 +169,6 @@ export default function Dashboard() {
                       </div>
                     )}
                   </div>
-                  {/* Projects bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs font-mono text-muted-foreground">
                       <span>Projects</span>
@@ -175,19 +216,31 @@ export default function Dashboard() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {projects?.map(project => (
+              {(projects as any[])?.map((project: any) => (
                 <Card
                   key={project.id}
-                  className="group hover:border-primary/50 transition-colors flex flex-col cursor-pointer select-none"
+                  className="group hover:border-primary/50 transition-colors flex flex-col cursor-pointer select-none relative"
                   onClick={() => navigate(`/projects/${project.id}`)}
                 >
                   <CardHeader className="pb-3 border-b border-border/30">
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-lg truncate pr-2 group-hover:text-glow transition-all">{project.name}</CardTitle>
-                      <Badge variant={getStatusColor(project.status) as any}>
-                        {project.status === 'building' && <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping mr-1.5 inline-block" />}
-                        {project.status}
-                      </Badge>
+                    <div className="flex justify-between items-start gap-2">
+                      <CardTitle className="text-lg truncate pr-2 group-hover:text-glow transition-all flex-1 min-w-0">{project.name}</CardTitle>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Badge variant={getStatusColor(project.status) as any}>
+                          {project.status === 'building' && <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping mr-1.5 inline-block" />}
+                          {project.status}
+                        </Badge>
+                        {/* Admin-only delete button */}
+                        {user?.isAdmin && (
+                          <button
+                            onClick={(e) => openDeleteConfirm(e, project.id, project.name)}
+                            title="Delete this project"
+                            className="w-7 h-7 flex items-center justify-center rounded border border-red-500/30 text-red-400/60 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/60 transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs font-mono text-muted-foreground pt-1">TYPE: {project.type.toUpperCase()}</p>
                   </CardHeader>
@@ -208,6 +261,62 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* ── Delete Confirmation Modal ── */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-card border border-red-500/40 rounded-lg shadow-2xl">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-red-500/30 bg-red-900/10">
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-red-400" />
+                <h3 className="font-display font-bold text-sm text-red-400 uppercase tracking-wider">Delete Project</h3>
+              </div>
+              <button onClick={cancelDelete} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-foreground">
+                Are you sure you want to delete{" "}
+                <span className="font-bold text-red-300">"{confirmDeleteName}"</span>?
+              </p>
+              <p className="text-xs font-mono text-muted-foreground">
+                This will permanently remove the project, all its files, build history, and data. This action <span className="text-red-400 font-bold">cannot be undone</span>.
+              </p>
+
+              {deleteError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-xs text-red-400 font-mono">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={cancelDelete}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 border border-border/50 rounded text-sm font-mono text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed rounded text-sm font-bold text-white transition-colors flex items-center justify-center gap-2"
+                >
+                  {isDeleting
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting…</>
+                    : <><Trash2 className="w-3.5 h-3.5" /> Yes, Delete It</>
+                  }
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }
