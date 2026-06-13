@@ -17,6 +17,7 @@ import deploymentsRouter from "./deployments.js";
 import usageRouter from "./usage.js";
 import aiLabRouter from "./aiLab.js";
 import commandCenterRouter from "./command-center.js";
+import mobileBuildsRouter from "./mobile-builds.js";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use("/deployments", deploymentsRouter);
 router.use("/usage", usageRouter);
 router.use("/ai-lab", aiLabRouter);
 router.use("/command-center", commandCenterRouter);
+router.use("/mobile-builds", mobileBuildsRouter);
 
 export default router;
