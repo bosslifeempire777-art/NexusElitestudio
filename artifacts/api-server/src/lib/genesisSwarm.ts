@@ -12,9 +12,37 @@
  */
 
 import { chatViaSdk } from "./openrouterSdk.js";
-import { runAgentWithTools, WORKSPACE_TOOLS, REPAIR_TOOLS } from "./agentTools.js";
+import { runAgentWithTools, WORKSPACE_TOOLS, REPAIR_TOOLS, ALL_AGENT_TOOLS } from "./agentTools.js";
+import type { ToolDef } from "./agentTools.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+
+// ─────────────────────────────────────────────────────────────
+// TOOL NAME REGISTRY — all available tool names
+// ─────────────────────────────────────────────────────────────
+
+export const ALL_TOOL_NAMES = [
+  "bash_command",
+  "read_file",
+  "write_file",
+  "list_directory",
+  "search_code",
+  "fetch_url",
+  "run_tests",
+] as const;
+
+export type ToolName = typeof ALL_TOOL_NAMES[number];
+
+const TOOL_MAP = new Map<string, ToolDef>(ALL_AGENT_TOOLS.map(t => [t.name, t]));
+
+function toolsFromNames(names: string[]): ToolDef[] {
+  return names.map(n => TOOL_MAP.get(n)).filter(Boolean) as ToolDef[];
+}
+
+const DEFAULT_WORKER_TOOL_NAMES: string[] = [...ALL_TOOL_NAMES];
+const DEFAULT_HEAD_TOOL_NAMES: string[]   = ["read_file", "list_directory", "search_code", "fetch_url"];
+const DEFAULT_REVIEWER_TOOL_NAMES: string[] = ["read_file", "list_directory", "search_code", "fetch_url"];
+const DEFAULT_REPAIR_TOOL_NAMES: string[]   = ["bash_command", "read_file", "search_code"];
 
 // ─────────────────────────────────────────────────────────────
 // ROLE REGISTRY — verified model IDs only (no fictional IDs)
@@ -288,25 +316,48 @@ let _activeRegistry: typeof ROLE_REGISTRY = ROLE_REGISTRY;
 let _conciergeModel                        = CONCIERGE_MODEL;
 let _conciergeChain                        = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
 
+// Per-role tool overrides: key = "tier.role", value = array of tool names
+let _roleToolsMap: Record<string, string[]> = {};
+
+// Returns tool list for a role, falling back to the provided default set
+function getToolsForRole(
+  tier:        string,
+  role:        string,
+  defaultSet:  string[],
+): ToolDef[] {
+  const key   = `${tier}.${role}`;
+  const names = _roleToolsMap[key];
+  return toolsFromNames(names && names.length > 0 ? names : defaultSet);
+}
+
 async function loadLiveRegistry(): Promise<void> {
   try {
     const result = await db.execute(sql`
-      SELECT tier, role, primary_slug, fallbacks FROM swarm_role_config
+      SELECT tier, role, primary_slug, fallbacks, tools FROM swarm_role_config
     `);
     const rows = (result as any).rows ?? [];
     if (rows.length === 0) {
       _activeRegistry = ROLE_REGISTRY;
       _conciergeModel = CONCIERGE_MODEL;
       _conciergeChain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+      _roleToolsMap   = {};
       return;
     }
     const live = JSON.parse(JSON.stringify(ROLE_REGISTRY)) as typeof ROLE_REGISTRY;
     let conciergeRow: { primary: string; fallbacks: string[] } | null = null;
+    const toolsMap: Record<string, string[]> = {};
+
     for (const row of rows) {
       const tier    = String(row.tier);
       const role    = String(row.role) as RoleName;
       const primary = String(row.primary_slug);
       const fb: string[] = Array.isArray(row.fallbacks) ? row.fallbacks.map(String) : [];
+
+      // Load tool config if present
+      if (Array.isArray(row.tools) && row.tools.length > 0) {
+        toolsMap[`${tier}.${role}`] = row.tools.map(String);
+      }
+
       if (tier === "concierge" && role === ("main" as RoleName)) {
         conciergeRow = { primary, fallbacks: fb };
         continue;
@@ -318,6 +369,7 @@ async function loadLiveRegistry(): Promise<void> {
       }
     }
     _activeRegistry = live;
+    _roleToolsMap   = toolsMap;
     if (conciergeRow) {
       _conciergeModel = conciergeRow.primary || CONCIERGE_MODEL;
       _conciergeChain = [_conciergeModel, ...(conciergeRow.fallbacks.length ? conciergeRow.fallbacks : CONCIERGE_FALLBACKS)];
@@ -325,10 +377,12 @@ async function loadLiveRegistry(): Promise<void> {
       _conciergeModel = CONCIERGE_MODEL;
       _conciergeChain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
     }
-  } catch {
+  } catch (err) {
+    console.warn("[loadLiveRegistry] failed, using defaults:", (err as any)?.message);
     _activeRegistry = ROLE_REGISTRY;
     _conciergeModel = CONCIERGE_MODEL;
     _conciergeChain = [CONCIERGE_MODEL, ...CONCIERGE_FALLBACKS];
+    _roleToolsMap   = {};
   }
 }
 
@@ -1020,11 +1074,12 @@ async function workerExecute(
     `EXISTING FILES:\n${mem.contextSnippet().slice(0, 2000)}`
   );
 
-  const chain = [primaryModel, ...roleConf.fallbacks.map(f => f.slug)];
-  const out   = await _callChain(chain, prompt, system, 8000, 0.2, false, workerName, mem, onLog);
+  const chain        = [primaryModel, ...roleConf.fallbacks.map(f => f.slug)];
+  const workerTools  = getToolsForRole(swarmTier, genesisRole, DEFAULT_WORKER_TOOL_NAMES);
+  const out          = await _callChainWithTools(chain, prompt, system, 8000, 0.2, workerName, workerTools, mem, onLog);
 
   swarmLog(onLog,
-    `  ✅ [${workerName}] ${task.title} complete`,
+    `  ✅ [${workerName}] ${task.title} complete (tools: ${workerTools.map(t => t.name).join(", ")})`,
     { type: "agent_done", role: genesisRole, model: primaryModel, swarm: swarmTier },
   );
 
@@ -1071,14 +1126,14 @@ async function runGuardianPass(
   const fileResults = await Promise.allSettled(
     fileEntries.map(async ([filePath, code]) => {
       const ctx  = `FILE: ${filePath}\n\n${code.slice(0, 6000)}`;
+      const reviewerTools = getToolsForRole("guardian", "REVIEWER", DEFAULT_REVIEWER_TOOL_NAMES);
       const outs = await Promise.allSettled(
         CRITICS.map(([n, r]) =>
-          // Reviewers get WORKSPACE_TOOLS: can read platform template files,
-          // search code patterns, and fetch documentation for reference.
+          // Reviewers: read workspace files, search code, fetch docs
           _callChainWithTools(
             reviewChain, ctx,
             `You are ${n}, a ${r}. ${sysBase}\n\nYou have tools to read workspace files and search code patterns for reference.`,
-            1500, 0.2, n, WORKSPACE_TOOLS, mem, undefined,
+            1500, 0.2, n, reviewerTools, mem, undefined,
           )
         )
       );
@@ -1109,16 +1164,16 @@ async function runGuardianPass(
       );
 
       try {
-        // Repair agents get REPAIR_TOOLS: bash (syntax validation), read, search.
-        // They can write code to /tmp, run node --check, then produce the fixed file.
+        // Repair agents: bash (syntax validation), read, search — configurable
+        const repairTools = getToolsForRole("guardian", "REPAIR", DEFAULT_REPAIR_TOOL_NAMES);
         const fixSystem = (
           `Rewrite the file fixing every issue listed. Emit a single ===FILE: ${filePath}=== block.\n` +
-          `You have tools: bash_command (validate syntax with 'echo "..." | node --check'), read_file, search_code.`
+          `You have tools: bash_command (validate syntax), read_file, search_code.`
         );
         const fixPrompt = `ORIGINAL:\n${code}\n\nISSUES:\n- ${issues.join("\n- ")}`;
         const fixed     = await _callChainWithTools(
           repairChain, fixPrompt, fixSystem, 8000, 0.2,
-          `Guardian:${filePath}`, REPAIR_TOOLS, mem, undefined,
+          `Guardian:${filePath}`, repairTools, mem, undefined,
         );
         const newCode   = extractCodeFiles(fixed)[filePath] ?? code;
         mem.writeFile(filePath, newCode);

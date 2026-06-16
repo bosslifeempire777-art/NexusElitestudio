@@ -10,7 +10,7 @@ import {
 } from "@workspace/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { MODEL_TIERS, invalidateTierCache } from "../lib/hydraSwarm.js";
-import { ROLE_REGISTRY, selfImprovement } from "../lib/genesisSwarm.js";
+import { ROLE_REGISTRY, selfImprovement, ALL_TOOL_NAMES } from "../lib/genesisSwarm.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
@@ -522,15 +522,27 @@ router.delete("/swarm-tiers/:tier", async (req, res) => {
 
 /* ── Role Registry — per-role model config ────────────────── */
 
+// Default tool sets per role category (mirrors genesisSwarm.ts defaults)
+const DEFAULT_WORKER_TOOLS   = [...ALL_TOOL_NAMES] as string[];
+const DEFAULT_GUARDIAN_TOOLS = ["read_file", "list_directory", "search_code", "fetch_url"];
+const DEFAULT_REPAIR_TOOLS   = ["bash_command", "read_file", "search_code"];
+
+function defaultToolsForRole(tier: string, role: string): string[] {
+  if (tier === "guardian") {
+    return role === "REPAIR" ? DEFAULT_REPAIR_TOOLS : DEFAULT_GUARDIAN_TOOLS;
+  }
+  return DEFAULT_WORKER_TOOLS;
+}
+
 router.get("/role-registry", async (_req, res) => {
   try {
     const result = await db.execute(sql`
-      SELECT tier, role, primary_slug, fallbacks FROM swarm_role_config
+      SELECT tier, role, primary_slug, fallbacks, tools FROM swarm_role_config
     `);
     const rows = (result as any).rows ?? [];
 
-    // Build flat registry: { cost: { PLANNER: { primary, fallbacks, specialty } } }
-    type FlatEntry = { primary: string; fallbacks: string[]; specialty: string };
+    // Build flat registry: { cost: { PLANNER: { primary, fallbacks, specialty, tools } } }
+    type FlatEntry = { primary: string; fallbacks: string[]; specialty: string; tools: string[] };
     const flat: Record<string, Record<string, FlatEntry>> = {};
     for (const [tier, roles] of Object.entries(ROLE_REGISTRY)) {
       flat[tier] = {};
@@ -539,6 +551,7 @@ router.get("/role-registry", async (_req, res) => {
           primary:   conf.primary.slug,
           fallbacks: conf.fallbacks.map((f: any) => f.slug),
           specialty: conf.specialty ?? "",
+          tools:     defaultToolsForRole(tier, role),
         };
       }
     }
@@ -546,20 +559,24 @@ router.get("/role-registry", async (_req, res) => {
     // Apply DB overrides
     const concierge = { primary: "google/gemini-2.5-flash", fallbacks: ["openai/gpt-4o-mini", "deepseek/deepseek-chat"] };
     for (const row of rows) {
-      const tier = String(row.tier);
-      const role = String(row.role);
+      const tier    = String(row.tier);
+      const role    = String(row.role);
       const primary = String(row.primary_slug);
       const fb: string[] = Array.isArray(row.fallbacks) ? row.fallbacks.map(String) : [];
+      const savedTools: string[] | null = Array.isArray(row.tools) && row.tools.length > 0
+        ? row.tools.map(String)
+        : null;
       if (tier === "concierge" && role === "main") {
-        concierge.primary = primary;
+        concierge.primary   = primary;
         concierge.fallbacks = fb;
       } else if (flat[tier]?.[role]) {
         flat[tier][role].primary   = primary;
         flat[tier][role].fallbacks = fb;
+        if (savedTools) flat[tier][role].tools = savedTools;
       }
     }
 
-    res.json({ registry: flat, concierge });
+    res.json({ registry: flat, concierge, allToolNames: [...ALL_TOOL_NAMES] });
   } catch (err: any) {
     res.status(500).json({ error: "fetch_failed", message: err.message });
   }
@@ -578,12 +595,15 @@ router.put("/role-registry", async (req, res) => {
           const fallbacks = (Array.isArray(conf.fallbacks) ? conf.fallbacks : [])
             .filter((s: any) => typeof s === "string" && s.trim())
             .map((s: string) => s.trim());
+          const tools = (Array.isArray(conf.tools) ? conf.tools : [])
+            .filter((s: any) => typeof s === "string" && (ALL_TOOL_NAMES as readonly string[]).includes(s));
           await db.execute(sql`
-            INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, updated_at, updated_by)
-            VALUES (${tier}, ${role}, ${primary}, ${JSON.stringify(fallbacks)}::jsonb, NOW(), ${userId})
+            INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, tools, updated_at, updated_by)
+            VALUES (${tier}, ${role}, ${primary}, ${JSON.stringify(fallbacks)}::jsonb, ${JSON.stringify(tools)}::jsonb, NOW(), ${userId})
             ON CONFLICT (tier, role) DO UPDATE SET
               primary_slug = EXCLUDED.primary_slug,
               fallbacks    = EXCLUDED.fallbacks,
+              tools        = EXCLUDED.tools,
               updated_at   = NOW(),
               updated_by   = ${userId}
           `);
@@ -595,8 +615,8 @@ router.put("/role-registry", async (req, res) => {
       const fallbacks = (Array.isArray(concierge.fallbacks) ? concierge.fallbacks : [])
         .filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim());
       await db.execute(sql`
-        INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, updated_at, updated_by)
-        VALUES ('concierge', 'main', ${primary}, ${JSON.stringify(fallbacks)}::jsonb, NOW(), ${userId})
+        INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, tools, updated_at, updated_by)
+        VALUES ('concierge', 'main', ${primary}, ${JSON.stringify(fallbacks)}::jsonb, '[]'::jsonb, NOW(), ${userId})
         ON CONFLICT (tier, role) DO UPDATE SET
           primary_slug = EXCLUDED.primary_slug,
           fallbacks    = EXCLUDED.fallbacks,

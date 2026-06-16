@@ -711,9 +711,19 @@ function Meta({ label, value }: { label: string; value: string }) {
 
 /* ─────────────────────── SWARM CONFIG ─────────────────────── */
 
-type RoleEntry    = { primary: string; fallbacks: string[]; specialty: string };
+type RoleEntry    = { primary: string; fallbacks: string[]; specialty: string; tools: string[] };
 type RoleReg      = Record<string, Record<string, RoleEntry>>;
 type ConciergeConf = { primary: string; fallbacks: string[] };
+
+const TOOL_LABELS: Record<string, string> = {
+  bash_command:    "🖥 Bash",
+  read_file:       "📄 Read File",
+  write_file:      "✏️ Write File",
+  list_directory:  "📁 List Dir",
+  search_code:     "🔍 Search Code",
+  fetch_url:       "🌐 Fetch URL",
+  run_tests:       "🧪 Run Tests",
+};
 
 const ROLE_LABELS: Record<string, string> = {
   PLANNER:        "📐 Planner",
@@ -728,17 +738,22 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 function SwarmTab() {
-  const [registry, setRegistry]   = useState<RoleReg>({});
-  const [concierge, setConcierge] = useState<ConciergeConf>({ primary: "", fallbacks: [] });
-  const [models, setModels]       = useState<ModelInfo[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [saving, setSaving]       = useState(false);
-  const [savedAt, setSavedAt]     = useState<number | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("cost");
-  const [search, setSearch]       = useState<Record<string, string>>({});
-  const [openDrop, setOpenDrop]   = useState<string | null>(null);
-  const dropRef                   = useRef<Record<string, HTMLDivElement | null>>({});
+  const [registry, setRegistry]       = useState<RoleReg>({});
+  const [concierge, setConcierge]     = useState<ConciergeConf>({ primary: "", fallbacks: [] });
+  const [allToolNames, setAllToolNames] = useState<string[]>([]);
+  const [models, setModels]           = useState<ModelInfo[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [saving, setSaving]           = useState(false);
+  const [savedAt, setSavedAt]         = useState<number | null>(null);
+  const [saveError, setSaveError]     = useState<string | null>(null);
+  const [activeTab, setActiveTab]     = useState("cost");
+  const [search, setSearch]           = useState<Record<string, string>>({});
+  const [openDrop, setOpenDrop]       = useState<string | null>(null);
+  const [openTools, setOpenTools]     = useState<Set<string>>(new Set());
+  const dropRef                       = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const toggleToolsPanel = (key: string) =>
+    setOpenTools(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
 
   const reload = async () => {
     setLoading(true);
@@ -753,6 +768,9 @@ function SwarmTab() {
       if (rdResult.status === "fulfilled") {
         setRegistry(rdResult.value.registry || {});
         setConcierge(rdResult.value.concierge || { primary: "", fallbacks: [] });
+        setAllToolNames(rdResult.value.allToolNames || [
+          "bash_command","read_file","write_file","list_directory","search_code","fetch_url","run_tests",
+        ]);
       } else {
         setSaveError(`Failed to load registry: ${rdResult.reason?.message ?? "unknown error"}`);
       }
@@ -763,6 +781,17 @@ function SwarmTab() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const setRoleTools = (tier: string, role: string, tools: string[]) =>
+    setRegistry(p => ({ ...p, [tier]: { ...p[tier], [role]: { ...p[tier]?.[role], tools } } }));
+
+  const toggleTool = (tier: string, role: string, toolName: string) => {
+    const current = registry[tier]?.[role]?.tools ?? [];
+    const updated = current.includes(toolName)
+      ? current.filter(t => t !== toolName)
+      : [...current, toolName];
+    setRoleTools(tier, role, updated);
   };
 
   useEffect(() => { reload().catch(console.error); }, []);
@@ -945,6 +974,52 @@ function SwarmTab() {
     );
   };
 
+  const renderToolToggles = (tier: string, role: string, currentTools: string[]) => {
+    const key        = `${tier}.${role}`;
+    const isOpen     = openTools.has(key);
+    const toolsToShow = allToolNames.length > 0 ? allToolNames : Object.keys(TOOL_LABELS);
+    return (
+      <div className="mt-2">
+        <button
+          onClick={() => toggleToolsPanel(key)}
+          className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        >
+          <span className={`transition-transform ${isOpen ? "rotate-90" : ""}`}>▶</span>
+          Tools ({currentTools.length}/{toolsToShow.length})
+          <span className="ml-1 text-[8px] font-normal normal-case tracking-normal text-muted-foreground/40">
+            {currentTools.slice(0, 3).map(n => TOOL_LABELS[n]?.split(" ")[1] ?? n).join(", ")}
+            {currentTools.length > 3 ? ` +${currentTools.length - 3}` : ""}
+          </span>
+        </button>
+        {isOpen && (
+          <div className="mt-1.5 grid grid-cols-2 gap-0.5">
+            {toolsToShow.map(toolName => {
+              const active = currentTools.includes(toolName);
+              return (
+                <button
+                  key={toolName}
+                  onClick={() => toggleTool(tier, role, toolName)}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-colors text-left ${
+                    active
+                      ? "bg-primary/15 border-primary/40 text-primary"
+                      : "bg-black/20 border-border/20 text-muted-foreground/50 hover:border-border/40 hover:text-muted-foreground"
+                  }`}
+                >
+                  <span className={`w-3 h-3 rounded-sm border flex-shrink-0 flex items-center justify-center text-[8px] ${
+                    active ? "bg-primary border-primary text-primary-foreground" : "border-border/40"
+                  }`}>
+                    {active ? "✓" : ""}
+                  </span>
+                  {TOOL_LABELS[toolName] ?? toolName}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center py-16 text-muted-foreground">
       <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading role registry…
@@ -1102,6 +1177,7 @@ function SwarmTab() {
               </div>
               {renderModelPicker(`${activeTab}.${role}.primary`, entry.primary, v => setPrimary(activeTab, role, v), "Primary")}
               {renderFallbackList(activeTab, role, entry.fallbacks)}
+              {renderToolToggles(activeTab, role, entry.tools ?? [])}
             </div>
           ))}
           {Object.keys(registry[activeTab] ?? {}).length === 0 && (
