@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve, sep } from "node:path";
+import { join, dirname, resolve, sep, extname } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +34,27 @@ export interface MobileBuildStatus {
   logsUrl:     string | null;
 }
 
+const BINARY_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp", ".tiff", ".ttf", ".otf", ".woff", ".woff2"]);
+
+/**
+ * Returns true for file paths that should be treated as binary.
+ * Also returns true when the content itself is a base64 data URI.
+ */
+function isBinaryFile(filePath: string, content: string): boolean {
+  if (BINARY_EXTENSIONS.has(extname(filePath).toLowerCase())) return true;
+  if (content.startsWith("data:") && content.includes(";base64,"))  return true;
+  return false;
+}
+
+/**
+ * Extract raw base64 string from a data URI (data:image/png;base64,<HERE>)
+ * or return the content unchanged if it is already a plain base64 string.
+ */
+function toBase64(content: string): string {
+  const idx = content.indexOf(";base64,");
+  return idx !== -1 ? content.slice(idx + 8) : content;
+}
+
 async function writeTempProject(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "nexus-build-"));
   // Resolve the canonical temp root so path-traversal attempts can be detected.
@@ -49,7 +70,13 @@ async function writeTempProject(files: Record<string, string>): Promise<string> 
     }
 
     await mkdir(dirname(full), { recursive: true });
-    await writeFile(full, content, "utf8");
+
+    if (isBinaryFile(filePath, content)) {
+      // Write binary assets as a Buffer so the file is not corrupted by UTF-8 encoding.
+      await writeFile(full, Buffer.from(toBase64(content), "base64"));
+    } else {
+      await writeFile(full, content, "utf8");
+    }
   }
   console.log(`[EAS] Wrote ${Object.keys(files).length} files to ${dir}`);
   return dir;
@@ -115,7 +142,13 @@ async function pushFilesToGitHub(
       method: "POST",
       body: JSON.stringify({
         base_tree: treeSha,
-        tree: Object.entries(files).map(([path, content]) => ({ path, mode: "100644", type: "blob", content })),
+        tree: Object.entries(files).map(([path, content]) => {
+          if (isBinaryFile(path, content)) {
+            // GitHub requires base64-encoded content + explicit encoding for binary blobs.
+            return { path, mode: "100644", type: "blob", content: toBase64(content), encoding: "base64" };
+          }
+          return { path, mode: "100644", type: "blob", content };
+        }),
       }),
       headers: { "Content-Type": "application/json" },
     });
