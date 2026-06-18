@@ -22,6 +22,7 @@ import { listOtaUpdates, listChannels, listBranches, publishOtaUpdate } from "..
 import { submitBuild, getSubmissionStatus } from "../lib/easSubmit.js";
 import { createEasWebhook, deleteEasWebhook, listEasWebhooks, type WebhookEvent } from "../lib/easWebhooks.js";
 import { listWorkflowRuns, WORKFLOW_TEMPLATES, triggerWorkflowRun, getWorkflowRunLogs } from "../lib/easWorkflows.js";
+import { runConciergeAgent, needsFullSwarm } from "../lib/conciergeAgent.js";
 
 const router: IRouter = Router();
 
@@ -1195,7 +1196,10 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
   // Step 2: Respond to the client IMMEDIATELY — don't make them wait 30-90s
   // for the AI chat reply to generate. The real reply will arrive via SSE
   // as a __REPLY__:{...} message a few seconds later.
-  const quickReply = `Got it! Dispatching the swarm to apply "${userMessage.slice(0, 60)}" to ${project.name}. Building now — the preview will update automatically when done.`;
+  const isSwarmTask = needsFullSwarm(userMessage);
+  const quickReply = isSwarmTask
+    ? `Got it! That sounds like a full rebuild — deploying the Genesis Swarm to regenerate ${project.name} from scratch. Preview will auto-update when done.`
+    : `On it! The Concierge Agent is reading ${project.name}'s code, analyzing the issue, and making the fix autonomously. Preview will update when done.`;
   res.json({ reply: quickReply, updating: hasCode });
 
   // Step 3: Everything else runs in the background — client already responded.
@@ -1245,75 +1249,96 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       return;
     }
 
-    // Code rebuild — stream agent logs RIGHT NOW (chat reply runs in parallel)
+    // Code rebuild — routed through NEXUS CONCIERGE AGENT (autonomous tool-calling loop)
+    // or the full Genesis Swarm for complete rebuilds.
     try {
-      emitLog(project.id, `[Orchestrator] 🧠 Received change request: "${userMessage.slice(0, 80)}"`);
-      await new Promise(r => setTimeout(r, 250));
-      emitLog(project.id, `[Software Architect] 🏗️ Analysing existing codebase structure...`);
-      await new Promise(r => setTimeout(r, 250));
-      emitLog(project.id, `[Code Analyzer] 🔍 Reviewing current implementation...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Design System] 🎨 Checking design consistency...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Router Agent] 🔀 Validating routing and navigation...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Middleware] 🔧 Verifying API layer integrity...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Database Engineer] 🗄️ Checking data model compatibility...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[UI/UX Designer] 🖼️ Updating interface components...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Performance] ⚡ Pre-checking optimisation impact...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Code Generator] 💻 Applying changes to ${project.name}...`);
-      await new Promise(r => setTimeout(r, 200));
-      emitLog(project.id, `[Orchestrator] 🔧 Generating updated code with AI...`);
-
+      const nexusApiUrl  = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
+      const nexusAuthUrl = `${getBaseUrl()}/api/projects/${project.id}/auth`;
       const chatCharacters = project.type === "game" ? await getProjectCharacters(project.id) : [];
-      const updatedCode = await generateUpdatedCode(
-        project.type,
-        project.name,
-        project.generatedCode!,
-        userMessage,
-        userSecretNames,
-        priorMemory,
-        chatCharacters,
-      );
 
-      let finalCode  = updatedCode;
-      let changed    = updatedCode !== project.generatedCode && updatedCode.length > 100;
-      const isAuthFix = isAuthRepairRequest(userMessage);
+      let finalCode = project.generatedCode!;
+      let changed   = false;
 
-      // Auth repair retry: if nothing changed on a login/auth fix request, try
-      // once more with an explicit instruction that forces replacement of the old pattern.
-      if (!changed && isAuthFix) {
-        emitLog(project.id, `[Auth Agent] 🔐 Auth pattern detected — deep repair pass in progress...`);
-        try {
-          const retryCode = await generateUpdatedCode(
+      if (isSwarmTask) {
+        // ── Full Genesis Swarm rebuild ────────────────────────────────────────
+        emitLog(project.id, `[Orchestrator] 🚀 Full rebuild requested — deploying Genesis Swarm...`);
+        emitLog(project.id, `[Genesis Swarm] 🌊 Initialising all specialist agents...`);
+        await new Promise(r => setTimeout(r, 300));
+
+        const swarmLogs = generateAgentLogs(project.type, project.name);
+        const halfIdx   = Math.floor(swarmLogs.length * 0.4);
+        for (const log of swarmLogs.slice(0, halfIdx)) {
+          emitLog(project.id, log);
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        const swarmCode = await generateProjectCode(
+          project.type,
+          project.name,
+          project.prompt ?? project.description ?? userMessage,
+          chatCharacters,
+        );
+
+        for (const log of swarmLogs.slice(halfIdx)) {
+          emitLog(project.id, log);
+          await new Promise(r => setTimeout(r, 60));
+        }
+
+        if (swarmCode && swarmCode.length > 100) {
+          finalCode = swarmCode;
+          changed   = true;
+          emitLog(project.id, `[Genesis Swarm] ✅ Rebuild complete — ${swarmCode.length.toLocaleString()} bytes generated`);
+        } else {
+          emitLog(project.id, `[Orchestrator] ⚠️  Swarm generation returned no output — app unchanged`);
+        }
+
+      } else {
+        // ── Concierge Agent — autonomous read/analyze/fix/test loop ──────────
+        const conciergeResult = await runConciergeAgent({
+          projectId:       project.id,
+          projectName:     project.name,
+          projectType:     project.type,
+          currentCode:     project.generatedCode!,
+          userMessage,
+          userSecretNames,
+          nexusApiUrl,
+          nexusAuthUrl,
+          emitLog: (msg: string) => emitLog(project.id, msg),
+        });
+
+        if (conciergeResult.needsSwarm) {
+          // Concierge escalated mid-loop — run full swarm
+          emitLog(project.id, `[Orchestrator] 🚀 Concierge escalated to Genesis Swarm — full rebuild in progress...`);
+          const swarmLogs = generateAgentLogs(project.type, project.name);
+          const halfIdx   = Math.floor(swarmLogs.length * 0.4);
+          for (const log of swarmLogs.slice(0, halfIdx)) {
+            emitLog(project.id, log);
+            await new Promise(r => setTimeout(r, 100));
+          }
+          const swarmCode = await generateProjectCode(
             project.type,
             project.name,
-            project.generatedCode!,
-            `FORCE AUTH REPAIR: Replace ALL login/register logic with real NEXUS_AUTH backend calls. ` +
-            `Remove any localStorage password storage, hardcoded user arrays, or btoa patterns. ` +
-            `Use window.NEXUS_AUTH+'/login' and window.NEXUS_AUTH+'/register' exactly as specified. ` +
-            `Show demo credentials (admin@demo.com / NexusDemo123) on the login form. ` +
-            `Original user request: ${userMessage}`,
-            userSecretNames,
-            priorMemory,
+            project.prompt ?? project.description ?? userMessage,
             chatCharacters,
           );
-          if (retryCode !== project.generatedCode && retryCode.length > 100) {
-            finalCode = retryCode;
-            changed   = true;
-            emitLog(project.id, `[Auth Agent] ✅ Auth system rebuilt with real backend`);
+          for (const log of swarmLogs.slice(halfIdx)) {
+            emitLog(project.id, log);
+            await new Promise(r => setTimeout(r, 60));
           }
-        } catch (retryErr) {
-          console.warn("Auth repair retry failed:", retryErr);
+          if (swarmCode && swarmCode.length > 100) {
+            finalCode = swarmCode;
+            changed   = true;
+            emitLog(project.id, `[Genesis Swarm] ✅ Rebuild complete — ${swarmCode.length.toLocaleString()} bytes`);
+          }
+        } else {
+          finalCode = conciergeResult.code;
+          changed   = conciergeResult.changed;
         }
       }
 
       // By now the chat reply has had 90-180s to generate in parallel — collect it.
       let reply = await chatReplyPromise;
+      const isAuthFix = isAuthRepairRequest(userMessage);
 
       // If the change request was auth-related and code still didn't change, override
       // the optimistic reply with an honest diagnostic message.
