@@ -1070,7 +1070,65 @@ WRONG vs RIGHT examples:
   return getDefaultHtml(type, name, prompt);
 }
 
-/** Apply a user-requested change to an existing project's HTML code */
+/** Returns true when the change request is about fixing login / auth / registration. */
+function isAuthRepairRequest(changeRequest: string): boolean {
+  return /login|log.?in|sign.?in|register|signup|sign.?up|password|credentials|auth|can.?t.?log|cant.?log|not.?work.*login|login.*not.?work/i.test(changeRequest);
+}
+
+const AUTH_REPAIR_BLOCK = `
+⚠️  AUTH REPAIR — CRITICAL PRIORITY:
+The existing login/register code may use an INVALID pattern (localStorage passwords, hardcoded arrays, or btoa encoding).
+You MUST replace any broken auth with the NEXUS_AUTH real backend. Follow these rules EXACTLY:
+
+window.NEXUS_AUTH is pre-injected by the platform. Never reassign it.
+
+CORRECT register pattern:
+  async function register(username, email, password) {
+    const r = await fetch(window.NEXUS_AUTH+'/register',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username,email,password})
+    }).then(r=>r.json());
+    if(r.token){ localStorage.setItem('_nexus_token',r.token); return r.user; }
+    throw new Error(r.error||'Registration failed');
+  }
+
+CORRECT login pattern:
+  async function login(emailOrUsername, password) {
+    const isEmail = emailOrUsername.includes('@');
+    const body = isEmail ? {email:emailOrUsername,password} : {username:emailOrUsername,password};
+    const r = await fetch(window.NEXUS_AUTH+'/login',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    }).then(r=>r.json());
+    if(r.token){ localStorage.setItem('_nexus_token',r.token); return r.user; }
+    throw new Error(r.error||'Invalid credentials');
+  }
+
+CORRECT session check on page load:
+  async function checkSession() {
+    const token = localStorage.getItem('_nexus_token');
+    if(!token) return null;
+    return fetch(window.NEXUS_AUTH+'/me',{headers:{Authorization:'Bearer '+token}}).then(r=>r.ok?r.json():null);
+  }
+
+Logout: localStorage.removeItem('_nexus_token')
+
+BANNED PATTERNS — delete these entirely:
+  ✗ localStorage.setItem('password', ...)
+  ✗ localStorage.setItem('user', btoa(...))
+  ✗ const users = [{username:'admin',password:'...'}]
+  ✗ if(password === storedPassword)
+  ✗ fetch('/api/login', ...)  — always use window.NEXUS_AUTH+'/login'
+
+DEMO ACCOUNT (add this to DOMContentLoaded so owner always has a working login):
+  fetch(window.NEXUS_AUTH+'/register',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:'admin',email:'admin@demo.com',password:'NexusDemo123'})
+  }).catch(()=>{});
+
+Show these credentials prominently on the login form:
+  Demo login: admin@demo.com / NexusDemo123
+`;
+
 export async function generateUpdatedCode(
   type: string,
   name: string,
@@ -1084,9 +1142,12 @@ export async function generateUpdatedCode(
 
   const memoryBlock    = memory ? `\n\n${formatMemoryForPrompt(memory)}\n` : "";
   const isGame         = type === "game";
+  const isAuthRepair   = !isGame && isAuthRepairRequest(changeRequest);
   const secretsBlock   = availableSecretNames.length > 0
     ? `\n\nUSER-PROVIDED API KEYS available via window.USER_SECRETS:\n${availableSecretNames.map(n => `  - window.USER_SECRETS.${n}`).join("\n")}`
     : `\n\nNo user API keys yet. If the requested change needs an external service, tell the user which key name to add in Settings → API Keys.`;
+
+  const authRepairSection = isAuthRepair ? AUTH_REPAIR_BLOCK : "";
 
   const sys = isGame
     ? `You are an expert HTML5 game developer. Receive an existing complete game and a change request.
@@ -1110,7 +1171,7 @@ CRITICAL RULES:
    a. Replace every inline onclick="" attribute with addEventListener('click', async () => { try{...}catch(e){alert(e.message)} })
    b. Replace any fetch('/api/...') or fetch('http://...') with fetch(window.NEXUS_API+'/collection')
    c. Ensure window.NEXUS_API is used as-is (it is pre-injected — never check if it's defined or assign it)
-   d. Every async operation must show a loading state and surface errors visibly to the user${secretsBlock}`;
+   d. Every async operation must show a loading state and surface errors visibly to the user${authRepairSection}${secretsBlock}`;
 
   const characterBlock = buildCharacterBlock(characters);
   const userMsg =
@@ -1130,7 +1191,7 @@ CRITICAL RULES:
     });
     const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
     if (stripped.startsWith("<!DOCTYPE") || stripped.startsWith("<html") || stripped.startsWith("<HTML")) {
-      console.log("generateUpdatedCode: success");
+      console.log(`generateUpdatedCode: success${isAuthRepair ? " (auth-repair mode)" : ""}`);
       return stripped;
     }
     return currentCode;
@@ -1139,6 +1200,8 @@ CRITICAL RULES:
     return currentCode;
   }
 }
+
+export { isAuthRepairRequest };
 
 export type ChatTurn = { role: string; content: string; timestamp?: string };
 export type ProjectMemory = {

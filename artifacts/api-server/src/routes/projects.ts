@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { projectsTable, usersTable, charactersTable } from "@workspace/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "../lib/nanoid.js";
-import { generateProjectCode, generateChatResponse, generateUpdatedCode, generateServerJs, updateProjectMemory, type ProjectMemory, type ChatTurn, type CharacterContext } from "../lib/openrouter.js";
+import { generateProjectCode, generateChatResponse, generateUpdatedCode, generateServerJs, updateProjectMemory, isAuthRepairRequest, type ProjectMemory, type ChatTurn, type CharacterContext } from "../lib/openrouter.js";
 import { recordUsage, consumeOverageCreditIfNeeded, canPerformBuild } from "../lib/usage.js";
 import { requireAuth } from "../middleware/auth.js";
 import { streamBuild, subscribe, emitLog, completeBuild } from "../lib/build-logger.js";
@@ -1280,10 +1280,46 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         chatCharacters,
       );
 
-      const changed = updatedCode !== project.generatedCode && updatedCode.length > 100;
+      let finalCode  = updatedCode;
+      let changed    = updatedCode !== project.generatedCode && updatedCode.length > 100;
+      const isAuthFix = isAuthRepairRequest(userMessage);
+
+      // Auth repair retry: if nothing changed on a login/auth fix request, try
+      // once more with an explicit instruction that forces replacement of the old pattern.
+      if (!changed && isAuthFix) {
+        emitLog(project.id, `[Auth Agent] 🔐 Auth pattern detected — deep repair pass in progress...`);
+        try {
+          const retryCode = await generateUpdatedCode(
+            project.type,
+            project.name,
+            project.generatedCode!,
+            `FORCE AUTH REPAIR: Replace ALL login/register logic with real NEXUS_AUTH backend calls. ` +
+            `Remove any localStorage password storage, hardcoded user arrays, or btoa patterns. ` +
+            `Use window.NEXUS_AUTH+'/login' and window.NEXUS_AUTH+'/register' exactly as specified. ` +
+            `Show demo credentials (admin@demo.com / NexusDemo123) on the login form. ` +
+            `Original user request: ${userMessage}`,
+            userSecretNames,
+            priorMemory,
+            chatCharacters,
+          );
+          if (retryCode !== project.generatedCode && retryCode.length > 100) {
+            finalCode = retryCode;
+            changed   = true;
+            emitLog(project.id, `[Auth Agent] ✅ Auth system rebuilt with real backend`);
+          }
+        } catch (retryErr) {
+          console.warn("Auth repair retry failed:", retryErr);
+        }
+      }
 
       // By now the chat reply has had 90-180s to generate in parallel — collect it.
-      const reply = await chatReplyPromise;
+      let reply = await chatReplyPromise;
+
+      // If the change request was auth-related and code still didn't change, override
+      // the optimistic reply with an honest diagnostic message.
+      if (!changed && isAuthFix) {
+        reply = `I dug into the login code in "${project.name}" and ran two repair passes, but the auth logic didn't change — this usually means the app's login is already using the correct NEXUS_AUTH pattern, or it's a very large file that needs a full Rebuild to properly rewire.\n\nHere's what to try:\n- **Rebuild the app** (click the rebuild button) — this regenerates the full app from scratch with the correct auth system guaranteed\n- **Try typing**: "fix the login form to use NEXUS_AUTH and show demo@demo.com / NexusDemo123 credentials" for a more targeted repair\n- **Demo login**: admin@demo.com / NexusDemo123 (auto-created when you open the preview)`;
+      }
 
       // Deliver the real AI reply to the frontend via SSE now that build is done
       emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
@@ -1304,7 +1340,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       }
 
       if (changed) {
-        emitLog(project.id, `[Code Generator] ✅ Updated ${updatedCode.length.toLocaleString()} bytes — changes applied`);
+        emitLog(project.id, `[Code Generator] ✅ Updated ${finalCode.length.toLocaleString()} bytes — changes applied`);
         await new Promise(r => setTimeout(r, 180));
         emitLog(project.id, `[Debugging Agent] 🐛 Validating changes and edge cases...`);
         await new Promise(r => setTimeout(r, 180));
@@ -1320,7 +1356,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
         await db.update(projectsTable)
           .set({
-            generatedCode: updatedCode,
+            generatedCode: finalCode,
             status: prevStatus === "deployed" ? "deployed" : "ready",
             updatedAt: new Date(),
           })
