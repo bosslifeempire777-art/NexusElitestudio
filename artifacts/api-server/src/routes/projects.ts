@@ -255,10 +255,11 @@ router.post("/", requireAuth, async (req, res) => {
   const buildSteps = agentLogs;
   setImmediate(async () => {
     try {
+      const buildUsageAcc = { tokensIn: 0, tokensOut: 0, model: "" };
       const generatedCode = await streamBuild(
         project.id,
         buildSteps,
-        () => generateProjectCode(type, name, prompt),
+        () => generateProjectCode(type, name, prompt, [], null, buildUsageAcc),
       );
       const hasCode = generatedCode && generatedCode.length > 100;
       const finalLogs = [
@@ -282,7 +283,15 @@ router.post("/", requireAuth, async (req, res) => {
           .set({ buildsThisMonth: (freshUser?.buildsThisMonth ?? 0) + 1 })
           .where(eq(usersTable.id, userId));
         // Persist a usage record + consume an overage credit if plan quota was exhausted
-        await recordUsage({ userId, projectId: project.id, kind: "build", description: `Initial build of "${project.name}"` });
+        await recordUsage({
+          userId,
+          projectId: project.id,
+          kind: "build",
+          description: `Initial build of "${project.name}"`,
+          tokensIn: buildUsageAcc.tokensIn,
+          tokensOut: buildUsageAcc.tokensOut,
+          model: buildUsageAcc.model || undefined,
+        });
         await consumeOverageCreditIfNeeded(userId, req.auth!.plan);
       }
     } catch (err) {
@@ -989,12 +998,14 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
 
   const { type: pType, name: pName, prompt: pPrompt } = project;
   const pCharacters = pType === "game" ? await getProjectCharacters(project.id) : [];
+  const pMemory = (project.memory as ProjectMemory | null) ?? null;
   setImmediate(async () => {
     try {
+      const rebuildUsageAcc = { tokensIn: 0, tokensOut: 0, model: "" };
       const generatedCode = await streamBuild(
         project.id,
         newLogs,
-        () => generateProjectCode(pType, pName, pPrompt, pCharacters),
+        () => generateProjectCode(pType, pName, pPrompt, pCharacters, pMemory, rebuildUsageAcc),
       );
       const hasCode = generatedCode && generatedCode.length > 100;
       const finalLogs = [
@@ -1013,7 +1024,15 @@ router.post("/:id/rebuild", requireAuth, async (req, res) => {
         })
         .where(eq(projectsTable.id, project.id));
       if (hasCode) {
-        await recordUsage({ userId, projectId: project.id, kind: "rebuild", description: `Rebuild of "${project.name}"` });
+        await recordUsage({
+          userId,
+          projectId: project.id,
+          kind: "rebuild",
+          description: `Rebuild of "${project.name}"`,
+          tokensIn: rebuildUsageAcc.tokensIn,
+          tokensOut: rebuildUsageAcc.tokensOut,
+          model: rebuildUsageAcc.model || undefined,
+        });
         await consumeOverageCreditIfNeeded(userId, req.auth!.plan);
       }
     } catch (err) {
@@ -1207,10 +1226,12 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     // Kick off chat reply generation IMMEDIATELY as a concurrent promise so it
     // runs in parallel with the agent build logs. Do NOT await it here — the
     // agent indicator lights must start firing within the first second.
+    const chatUsageAcc = { tokensIn: 0, tokensOut: 0, model: "" };
     const chatReplyPromise: Promise<string> = generateChatResponse(
       project.type, project.name, userMessage, project.prompt,
       userSecretNames, priorChat, priorMemory,
       project.generatedCode ?? null,
+      chatUsageAcc,
     ).catch(() => quickReply);
 
     // Helper — persist chat history once we have the real reply
@@ -1234,6 +1255,20 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
       const reply = await chatReplyPromise;
       emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
       await persistChatHistory(reply);
+      // Record token usage for chat-only turns
+      try {
+        await recordUsage({
+          userId: project.userId,
+          projectId: project.id,
+          kind: "chat_only",
+          description: `Chat (no code): "${userMessage.slice(0, 80)}"`,
+          tokensIn: chatUsageAcc.tokensIn,
+          tokensOut: chatUsageAcc.tokensOut,
+          model: chatUsageAcc.model || undefined,
+        });
+      } catch (usageErr) {
+        console.warn("recordUsage (chat-only) failed:", String(usageErr));
+      }
       try {
         const newMemory = await updateProjectMemory(
           project.name, project.type, priorMemory, userMessage, reply, false,
@@ -1272,11 +1307,14 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           await new Promise(r => setTimeout(r, 100));
         }
 
+        const swarmUsageAcc = { tokensIn: 0, tokensOut: 0, model: "" };
         const swarmCode = await generateProjectCode(
           project.type,
           project.name,
           project.prompt ?? project.description ?? userMessage,
           chatCharacters,
+          priorMemory,
+          swarmUsageAcc,
         );
 
         for (const log of swarmLogs.slice(halfIdx)) {
@@ -1288,6 +1326,10 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           finalCode = swarmCode;
           changed   = true;
           emitLog(project.id, `[Genesis Swarm] ✅ Rebuild complete — ${swarmCode.length.toLocaleString()} bytes generated`);
+          // Merge swarm token usage into chatUsageAcc so it's captured in recordUsage
+          chatUsageAcc.tokensIn  += swarmUsageAcc.tokensIn;
+          chatUsageAcc.tokensOut += swarmUsageAcc.tokensOut;
+          if (!chatUsageAcc.model) chatUsageAcc.model = swarmUsageAcc.model;
         } else {
           emitLog(project.id, `[Orchestrator] ⚠️  Swarm generation returned no output — app unchanged`);
         }
@@ -1316,11 +1358,14 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
             emitLog(project.id, log);
             await new Promise(r => setTimeout(r, 100));
           }
+          const escalatedSwarmAcc = { tokensIn: 0, tokensOut: 0, model: "" };
           const swarmCode = await generateProjectCode(
             project.type,
             project.name,
             project.prompt ?? project.description ?? userMessage,
             chatCharacters,
+            priorMemory,
+            escalatedSwarmAcc,
           );
           for (const log of swarmLogs.slice(halfIdx)) {
             emitLog(project.id, log);
@@ -1330,10 +1375,19 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
             finalCode = swarmCode;
             changed   = true;
             emitLog(project.id, `[Genesis Swarm] ✅ Rebuild complete — ${swarmCode.length.toLocaleString()} bytes`);
+            // Merge escalated swarm tokens into concierge token total
+            chatUsageAcc.tokensIn  += escalatedSwarmAcc.tokensIn  + conciergeResult.tokensIn;
+            chatUsageAcc.tokensOut += escalatedSwarmAcc.tokensOut + conciergeResult.tokensOut;
+            if (!chatUsageAcc.model) chatUsageAcc.model = escalatedSwarmAcc.model || conciergeResult.modelUsed;
           }
         } else {
           finalCode = conciergeResult.code;
           changed   = conciergeResult.changed;
+
+          // Merge concierge token usage into chatUsageAcc for billing
+          chatUsageAcc.tokensIn  += conciergeResult.tokensIn;
+          chatUsageAcc.tokensOut += conciergeResult.tokensOut;
+          if (!chatUsageAcc.model) chatUsageAcc.model = conciergeResult.modelUsed;
 
           // Use the concierge's own summary as the reply — it knows exactly what it
           // did (tool calls, what changed) so it's far more accurate than the parallel
@@ -1406,6 +1460,9 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           projectId: project.id,
           kind: "chat_change",
           description: `Chat update [${conciergeModel ?? "concierge"}]: "${userMessage.slice(0, 80)}"`,
+          tokensIn: chatUsageAcc.tokensIn,
+          tokensOut: chatUsageAcc.tokensOut,
+          model: chatUsageAcc.model || undefined,
         });
         await consumeOverageCreditIfNeeded(project.userId, req.auth!.plan);
       } else {

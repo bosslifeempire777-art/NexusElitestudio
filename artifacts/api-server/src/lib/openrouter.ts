@@ -218,6 +218,13 @@ export interface CallOpts {
   messages?:    Array<{ role: string; content: string }>;
   /** Per-run SharedMemory blackboard — tracks call/token metrics on the run */
   mem?:         SharedMemory;
+  /**
+   * Optional accumulator populated as a side-effect.
+   * Pass an object `{ tokensIn: 0, tokensOut: 0, model: "" }` by reference;
+   * callLLM will increment it after each successful call so callers can record
+   * exact token usage for billing.
+   */
+  usageAcc?:    { tokensIn: number; tokensOut: number; model: string };
 }
 
 export async function callLLM(prompt: string, opts: CallOpts = {}): Promise<string> {
@@ -298,11 +305,17 @@ export async function callLLM(prompt: string, opts: CallOpts = {}): Promise<stri
         const content: string = res.data?.choices?.[0]?.message?.content ?? "";
 
         // Track metrics on the per-run blackboard (mirrors MEM.metrics in HYDRA-PRIME llm.ts)
+        const _usage = res.data?.usage ?? {};
         if (mem) {
           mem.metrics.calls     += 1;
-          const usage            = res.data?.usage ?? {};
-          mem.metrics.tokens_in  += usage.prompt_tokens     ?? 0;
-          mem.metrics.tokens_out += usage.completion_tokens ?? 0;
+          mem.metrics.tokens_in  += _usage.prompt_tokens     ?? 0;
+          mem.metrics.tokens_out += _usage.completion_tokens ?? 0;
+        }
+        // Populate the per-call billing accumulator if the caller provided one
+        if (opts.usageAcc) {
+          opts.usageAcc.tokensIn  += _usage.prompt_tokens     ?? 0;
+          opts.usageAcc.tokensOut += _usage.completion_tokens ?? 0;
+          if (!opts.usageAcc.model) opts.usageAcc.model = model;
         }
 
         console.log(`  ✓ [${agentName}] ${model} (${content.length} chars)`);
@@ -818,7 +831,11 @@ async function validateAndPackage(
  * synthesizer can read both .files and .output. The canonical file list is
  * mem.files (written by workers + synthesizer + packager).
  */
-async function hydraSwarm(userPrompt: string, projectName: string): Promise<string> {
+async function hydraSwarm(
+  userPrompt:  string,
+  projectName: string,
+  usageAcc?:   { tokensIn: number; tokensOut: number; model: string },
+): Promise<string> {
   const t0  = Date.now();
   const mem = new SharedMemory();   // ← per-run blackboard
   console.log("\n🐉 HYDRA-PRIME SWARM v4 — booting...");
@@ -865,6 +882,12 @@ async function hydraSwarm(userPrompt: string, projectName: string): Promise<stri
     `\n🎉 HYDRA-PRIME complete in ${elapsed}s | ${Object.keys(mem.files).length} agent files` +
     ` | ${mem.metrics.calls} LLM calls | ~${mem.metrics.tokens_in + mem.metrics.tokens_out} tokens`
   );
+  // Propagate swarm token totals to caller's accumulator for billing
+  if (usageAcc) {
+    usageAcc.tokensIn  += mem.metrics.tokens_in;
+    usageAcc.tokensOut += mem.metrics.tokens_out;
+    if (!usageAcc.model) usageAcc.model = "hydra-swarm-v4";
+  }
   return validated;
 }
 
@@ -912,6 +935,8 @@ export async function generateProjectCode(
   name: string,
   prompt: string,
   characters: CharacterContext[] = [],
+  memory?: ProjectMemory | null,
+  usageAcc?: { tokensIn: number; tokensOut: number; model: string },
 ): Promise<string> {
   if (!process.env.OPENROUTER_API_KEY) {
     console.warn("OPENROUTER_API_KEY not set — using fallback template");
@@ -952,6 +977,7 @@ CRITICAL RULES — follow exactly or the game will not work:
           temperature: 0.7,
           agentName: "GameCodegen",
           agentIds: ["code-generator"],
+          usageAcc,
         },
       );
       const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
@@ -1000,7 +1026,21 @@ CRITICAL RULES — follow exactly or the game will not work:
       `  WRONG: fetch('/api/todos')       →  RIGHT: fetch(window.NEXUS_API+'/todos')\n` +
       `  WRONG: window.NEXUS_API = '...' →  NEVER reassign — it is pre-injected by the platform`;
 
-    const html = await hydraSwarm(swarmPrompt, name);
+    // Inject project history so rebuilds preserve all completed features & decisions
+    const memorySection = memory
+      ? `\n\nPROJECT HISTORY — THIS IS A REBUILD. Preserve every feature that was already built:\n${
+          [
+            memory.summary ? `Summary: ${memory.summary}` : "",
+            (memory.completedTasks ?? []).length
+              ? `Completed features:\n${(memory.completedTasks ?? []).map(t => `  - ${t}`).join("\n")}`
+              : "",
+            (memory.decisions ?? []).length
+              ? `Design decisions:\n${(memory.decisions ?? []).map(d => `  - ${d}`).join("\n")}`
+              : "",
+          ].filter(Boolean).join("\n")
+        }\n`
+      : "";
+    const html = await hydraSwarm(swarmPrompt + memorySection, name, usageAcc);
     if (html && (html.startsWith("<!DOCTYPE") || html.startsWith("<html") || html.startsWith("<HTML"))) {
       console.log("generateProjectCode (swarm): success");
       return html;
@@ -1056,6 +1096,7 @@ WRONG vs RIGHT examples:
         temperature: 0.7,
         agentName: "SingleShotFallback",
         agentIds: ["code-generator"],
+        usageAcc,
       },
     );
     const stripped = result.replace(/^```(?:html)?\n?/i, "").replace(/\n?```$/i, "").trim();
@@ -1240,6 +1281,7 @@ export async function generateChatResponse(
   chatHistory: ChatTurn[] = [],
   memory: ProjectMemory | null = null,
   currentCode: string | null = null,
+  usageAcc?: { tokensIn: number; tokensOut: number; model: string },
 ): Promise<string> {
   if (!process.env.OPENROUTER_API_KEY) return getSimulatedResponse(userMessage, projectType, projectName);
 
@@ -1320,6 +1362,7 @@ Length: 4-8 sentences. Use line breaks and short bullets when listing options.`;
       temperature: 0.7,
       agentName: "ChatOrchestrator",
       agentIds: ["orchestrator"],
+      usageAcc,
     });
     if (result) return result;
   } catch (err: any) {

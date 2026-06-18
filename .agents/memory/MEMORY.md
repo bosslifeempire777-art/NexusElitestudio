@@ -10,3 +10,4 @@
 - [Genesis Swarm full integration status](genesis-swarm-integration.md) — what's implemented vs design doc; dependency-ordered waves, per-model retry, provider hints, NEXUS_PLATFORM_SPEC, QUALITY_STANDARDS, sanitizePrompt
 - [Swarm role + tool config](swarm-role-tool-config.md) — swarm_role_config table holds per-role model+tools; tools column added; workers use _callChainWithTools; defaults: workers=ALL tools, guardian=read-only
 - [Project memory save pattern](project-memory-save.md) — two-path bug: !hasCode turns need __MEMORY_UPDATED__ SSE + onMemoryUpdated prop; code-gen failure outer-catch must also call updateProjectMemory
+- [Token usage tracking pattern](token-usage-tracking.md) — usageAcc side-effect pattern in callLLM; all 4 billing paths wired (build/rebuild/chat_only/chat_change); rebuild passes project.memory so AI preserves prior features

@@ -429,11 +429,13 @@ async function runAgentLoop(
   emitLog: (msg: string) => void,
   state: AgentState,
   preferredModel?: string,
-): Promise<{ text: string; toolCallCount: number; modelUsed: string }> {
+): Promise<{ text: string; toolCallCount: number; modelUsed: string; tokensIn: number; tokensOut: number }> {
   const oaiTools = toOAITools(tools);
   let finalText    = "";
   let modelIdx     = 0;
   let totalCalls   = 0;
+  let totalIn      = 0;
+  let totalOut     = 0;
   // Build model chain: preferred model first, then the standard fallbacks
   const modelChain = preferredModel
     ? [preferredModel, ...CONCIERGE_MODELS.filter(m => m !== preferredModel)]
@@ -481,6 +483,10 @@ async function runAgentLoop(
     const message = choice?.message ?? {};
     messages.push(message);
 
+    // Accumulate token usage for billing
+    totalIn  += res.data?.usage?.prompt_tokens     ?? 0;
+    totalOut += res.data?.usage?.completion_tokens ?? 0;
+
     const calls: any[] = message.tool_calls ?? [];
 
     if (calls.length === 0) {
@@ -519,19 +525,21 @@ async function runAgentLoop(
     if (choice?.finish_reason === "stop" || choice?.finish_reason === "end_turn") break;
   }
 
-  return { text: finalText, toolCallCount: totalCalls, modelUsed: activeModel };
+  return { text: finalText, toolCallCount: totalCalls, modelUsed: activeModel, tokensIn: totalIn, tokensOut: totalOut };
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export interface ConciergeResult {
-  code:        string;
-  changed:     boolean;
-  summary:     string;
-  needsSwarm:  boolean;
-  swarmReason: string;
-  modelUsed:   string;
+  code:          string;
+  changed:       boolean;
+  summary:       string;
+  needsSwarm:    boolean;
+  swarmReason:   string;
+  modelUsed:     string;
   toolCallCount: number;
+  tokensIn:      number;
+  tokensOut:     number;
 }
 
 export async function runConciergeAgent(opts: {
@@ -622,7 +630,7 @@ When done, briefly describe what you changed and confirm it's working.`;
   const displayModel = preferredModel ?? CONCIERGE_MODELS[0];
   emitLog(`[Concierge] 🤖 NEXUS CONCIERGE online — model: ${displayModel} — analyzing "${projectName}"...`);
 
-  const { text: summary, toolCallCount, modelUsed } =
+  const { text: summary, toolCallCount, modelUsed, tokensIn, tokensOut } =
     await runAgentLoop(tools, toolMap, messages, emitLog, state, preferredModel);
 
   const changed = state.code !== currentCode && state.code.length > 500;
@@ -643,5 +651,7 @@ When done, briefly describe what you changed and confirm it's working.`;
     swarmReason:   state.swarmReason,
     modelUsed,
     toolCallCount,
+    tokensIn,
+    tokensOut,
   };
 }
