@@ -1336,6 +1336,18 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
       } else {
         // ── Concierge Agent — autonomous read/analyze/fix/test loop ──────────
+        // Load concierge tool config from DB (admin may have customised it)
+        let conciergeEnabledTools: string[] | undefined;
+        try {
+          const ccRow = await db.execute(sql`
+            SELECT tools FROM swarm_role_config WHERE tier = 'concierge' AND role = 'main' LIMIT 1
+          `);
+          const row = ((ccRow as any).rows ?? [])[0];
+          if (row && Array.isArray(row.tools) && row.tools.length > 0) {
+            conciergeEnabledTools = row.tools.map(String);
+          }
+        } catch { /* non-fatal — use all tools */ }
+
         const conciergeResult = await runConciergeAgent({
           projectId:       project.id,
           projectName:     project.name,
@@ -1346,6 +1358,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           nexusApiUrl,
           nexusAuthUrl,
           model:           conciergeModel,
+          enabledTools:    conciergeEnabledTools,
           emitLog: (msg: string) => emitLog(project.id, msg),
         });
 

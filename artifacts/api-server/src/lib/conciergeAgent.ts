@@ -44,6 +44,24 @@ export function needsFullSwarm(message: string): boolean {
   return SWARM_KEYWORDS.test(message);
 }
 
+/** All tool names the concierge supports — used by the Command Center UI. */
+export const ALL_CONCIERGE_TOOL_NAMES = [
+  "read_app_code",
+  "inspect_dom",
+  "analyze_app_code",
+  "search_replace_in_code",
+  "smoke_test_html",
+  "write_app_code",
+  "test_api_endpoints",
+  "test_auth_flow",
+  "validate_live_api",
+  "escalate_to_swarm",
+  "search_code",
+  "run_tests",
+  "fetch_url",
+  "bash_command",
+] as const;
+
 // ── Mutable agent state (instance-scoped, never module-level) ─────────────────
 
 interface AgentState {
@@ -816,6 +834,7 @@ export async function runConciergeAgent(opts: {
   nexusApiUrl:     string;
   nexusAuthUrl:    string;
   model?:          string;
+  enabledTools?:   string[];
   emitLog:         (msg: string) => void;
 }): Promise<ConciergeResult> {
   const {
@@ -823,10 +842,16 @@ export async function runConciergeAgent(opts: {
     currentCode, userMessage, userSecretNames,
     nexusApiUrl, nexusAuthUrl, emitLog,
     model: preferredModel,
+    enabledTools,
   } = opts;
 
   const state: AgentState = { code: currentCode, needsSwarm: false, swarmReason: "" };
-  const tools   = createAppTools(state, nexusApiUrl, nexusAuthUrl);
+  const allTools = createAppTools(state, nexusApiUrl, nexusAuthUrl);
+  // If the admin has configured a specific tool subset, honour it.
+  // An empty/missing enabledTools list means "all tools".
+  const tools = (enabledTools && enabledTools.length > 0)
+    ? allTools.filter(t => enabledTools.includes(t.name))
+    : allTools;
   const toolMap = new Map(tools.map(t => [t.name, t]));
 
   const secretsLine = userSecretNames.length > 0

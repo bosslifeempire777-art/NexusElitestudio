@@ -713,16 +713,28 @@ function Meta({ label, value }: { label: string; value: string }) {
 
 type RoleEntry    = { primary: string; fallbacks: string[]; specialty: string; tools: string[] };
 type RoleReg      = Record<string, Record<string, RoleEntry>>;
-type ConciergeConf = { primary: string; fallbacks: string[] };
+type ConciergeConf = { primary: string; fallbacks: string[]; tools: string[] };
 
 const TOOL_LABELS: Record<string, string> = {
-  bash_command:    "🖥 Bash",
-  read_file:       "📄 Read File",
-  write_file:      "✏️ Write File",
-  list_directory:  "📁 List Dir",
-  search_code:     "🔍 Search Code",
-  fetch_url:       "🌐 Fetch URL",
-  run_tests:       "🧪 Run Tests",
+  // ── Workspace tools (swarm agents) ─────────────────────────
+  bash_command:            "🖥 Bash",
+  read_file:               "📄 Read File",
+  write_file:              "✏️ Write File",
+  list_directory:          "📁 List Dir",
+  search_code:             "🔍 Search Code",
+  fetch_url:               "🌐 Fetch URL",
+  run_tests:               "🧪 Run Tests",
+  // ── App-specific tools (concierge) ──────────────────────────
+  read_app_code:           "📖 Read Code",
+  inspect_dom:             "🗺 Inspect DOM",
+  analyze_app_code:        "🔬 Analyze Code",
+  search_replace_in_code:  "✂️ Search+Replace",
+  smoke_test_html:         "🧪 Smoke Test",
+  write_app_code:          "💾 Write Code",
+  test_api_endpoints:      "🔁 Test API CRUD",
+  test_auth_flow:          "🔐 Test Auth",
+  validate_live_api:       "🌐 Validate API",
+  escalate_to_swarm:       "🚀 Escalate Swarm",
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -738,9 +750,10 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 function SwarmTab() {
-  const [registry, setRegistry]       = useState<RoleReg>({});
-  const [concierge, setConcierge]     = useState<ConciergeConf>({ primary: "", fallbacks: [] });
-  const [allToolNames, setAllToolNames] = useState<string[]>([]);
+  const [registry, setRegistry]             = useState<RoleReg>({});
+  const [concierge, setConcierge]           = useState<ConciergeConf>({ primary: "", fallbacks: [], tools: [] });
+  const [allToolNames, setAllToolNames]           = useState<string[]>([]);
+  const [allConciergeToolNames, setAllConciergeToolNames] = useState<string[]>([]);
   const [models, setModels]           = useState<ModelInfo[]>([]);
   const [loading, setLoading]         = useState(true);
   const [saving, setSaving]           = useState(false);
@@ -767,9 +780,15 @@ function SwarmTab() {
       ]);
       if (rdResult.status === "fulfilled") {
         setRegistry(rdResult.value.registry || {});
-        setConcierge(rdResult.value.concierge || { primary: "", fallbacks: [] });
+        const conc = rdResult.value.concierge || {};
+        setConcierge({ primary: conc.primary || "", fallbacks: conc.fallbacks || [], tools: conc.tools || [] });
         setAllToolNames(rdResult.value.allToolNames || [
           "bash_command","read_file","write_file","list_directory","search_code","fetch_url","run_tests",
+        ]);
+        setAllConciergeToolNames(rdResult.value.allConciergeToolNames || [
+          "read_app_code","inspect_dom","analyze_app_code","search_replace_in_code",
+          "smoke_test_html","write_app_code","test_api_endpoints","test_auth_flow",
+          "validate_live_api","escalate_to_swarm","search_code","run_tests","fetch_url","bash_command",
         ]);
       } else {
         setSaveError(`Failed to load registry: ${rdResult.reason?.message ?? "unknown error"}`);
@@ -793,6 +812,12 @@ function SwarmTab() {
       : [...current, toolName];
     setRoleTools(tier, role, updated);
   };
+
+  const toggleConcTool = (toolName: string) =>
+    setConcierge(p => ({
+      ...p,
+      tools: p.tools.includes(toolName) ? p.tools.filter(t => t !== toolName) : [...p.tools, toolName],
+    }));
 
   useEffect(() => { reload().catch(console.error); }, []);
 
@@ -974,10 +999,25 @@ function SwarmTab() {
     );
   };
 
-  const renderToolToggles = (tier: string, role: string, currentTools: string[]) => {
-    const key        = `${tier}.${role}`;
-    const isOpen     = openTools.has(key);
-    const toolsToShow = allToolNames.length > 0 ? allToolNames : Object.keys(TOOL_LABELS);
+  const renderToolToggles = (
+    tier: string,
+    role: string,
+    currentTools: string[],
+    opts?: {
+      availableTools?: string[];
+      onToggle?: (name: string) => void;
+      onSelectAll?: () => void;
+      onSelectNone?: () => void;
+      accentClass?: string;
+    },
+  ) => {
+    const key         = `${tier}.${role}`;
+    const isOpen      = openTools.has(key);
+    const toolsToShow = opts?.availableTools ?? (allToolNames.length > 0 ? allToolNames : Object.keys(TOOL_LABELS));
+    const handleToggle = opts?.onToggle ?? ((n: string) => toggleTool(tier, role, n));
+    const handleAll    = opts?.onSelectAll  ?? (() => setRoleTools(tier, role, [...toolsToShow]));
+    const handleNone   = opts?.onSelectNone ?? (() => setRoleTools(tier, role, []));
+    const accent       = opts?.accentClass ?? "bg-primary/15 border-primary/40 text-primary";
     return (
       <div className="mt-2">
         <button
@@ -992,28 +1032,45 @@ function SwarmTab() {
           </span>
         </button>
         {isOpen && (
-          <div className="mt-1.5 grid grid-cols-2 gap-0.5">
-            {toolsToShow.map(toolName => {
-              const active = currentTools.includes(toolName);
-              return (
-                <button
-                  key={toolName}
-                  onClick={() => toggleTool(tier, role, toolName)}
-                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-colors text-left ${
-                    active
-                      ? "bg-primary/15 border-primary/40 text-primary"
-                      : "bg-black/20 border-border/20 text-muted-foreground/50 hover:border-border/40 hover:text-muted-foreground"
-                  }`}
-                >
-                  <span className={`w-3 h-3 rounded-sm border flex-shrink-0 flex items-center justify-center text-[8px] ${
-                    active ? "bg-primary border-primary text-primary-foreground" : "border-border/40"
-                  }`}>
-                    {active ? "✓" : ""}
-                  </span>
-                  {TOOL_LABELS[toolName] ?? toolName}
-                </button>
-              );
-            })}
+          <div className="mt-1.5 space-y-1.5">
+            {/* ── All / None shortcuts ── */}
+            <div className="flex gap-1">
+              <button
+                onClick={handleAll}
+                className="text-[9px] font-mono px-2 py-0.5 rounded border border-border/30 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+              >
+                All
+              </button>
+              <button
+                onClick={handleNone}
+                className="text-[9px] font-mono px-2 py-0.5 rounded border border-border/30 text-muted-foreground hover:text-foreground hover:border-red-400/40 transition-colors"
+              >
+                None
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-0.5">
+              {toolsToShow.map(toolName => {
+                const active = currentTools.includes(toolName);
+                return (
+                  <button
+                    key={toolName}
+                    onClick={() => handleToggle(toolName)}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border transition-colors text-left ${
+                      active
+                        ? accent
+                        : "bg-black/20 border-border/20 text-muted-foreground/50 hover:border-border/40 hover:text-muted-foreground"
+                    }`}
+                  >
+                    <span className={`w-3 h-3 rounded-sm border flex-shrink-0 flex items-center justify-center text-[8px] ${
+                      active ? "bg-primary border-primary text-primary-foreground" : "border-border/40"
+                    }`}>
+                      {active ? "✓" : ""}
+                    </span>
+                    {TOOL_LABELS[toolName] ?? toolName}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -1150,6 +1207,28 @@ function SwarmTab() {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* ── Concierge Tool Selection ── */}
+            <div className="border-t border-cyan-500/20 mt-3 pt-3">
+              <div className="text-[9px] font-mono uppercase tracking-widest text-cyan-400/60 mb-0.5">
+                Tool Access
+              </div>
+              <div className="text-[10px] text-muted-foreground/50 mb-1">
+                Choose which tools the Concierge agent can call. Default: all 14.
+              </div>
+              {renderToolToggles(
+                "concierge",
+                "main",
+                concierge.tools,
+                {
+                  availableTools: allConciergeToolNames,
+                  onToggle:       toggleConcTool,
+                  onSelectAll:    () => setConcierge(p => ({ ...p, tools: [...allConciergeToolNames] })),
+                  onSelectNone:   () => setConcierge(p => ({ ...p, tools: [] })),
+                  accentClass:    "bg-cyan-500/15 border-cyan-500/40 text-cyan-300",
+                },
+              )}
             </div>
           </div>
         </div>

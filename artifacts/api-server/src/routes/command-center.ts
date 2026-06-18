@@ -11,6 +11,7 @@ import {
 import { eq, desc, sql } from "drizzle-orm";
 import { MODEL_TIERS, invalidateTierCache } from "../lib/hydraSwarm.js";
 import { ROLE_REGISTRY, selfImprovement, ALL_TOOL_NAMES } from "../lib/genesisSwarm.js";
+import { ALL_CONCIERGE_TOOL_NAMES } from "../lib/conciergeAgent.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { AGENT_REGISTRY } from "../lib/agents.js";
 import { nanoid } from "../lib/nanoid.js";
@@ -557,7 +558,11 @@ router.get("/role-registry", async (_req, res) => {
     }
 
     // Apply DB overrides
-    const concierge = { primary: "google/gemini-2.5-flash", fallbacks: ["openai/gpt-4o-mini", "deepseek/deepseek-chat"] };
+    const concierge: { primary: string; fallbacks: string[]; tools: string[] } = {
+      primary: "google/gemini-2.5-flash",
+      fallbacks: ["openai/gpt-4o-mini", "deepseek/deepseek-chat"],
+      tools: [...ALL_CONCIERGE_TOOL_NAMES],
+    };
     for (const row of rows) {
       const tier    = String(row.tier);
       const role    = String(row.role);
@@ -569,6 +574,7 @@ router.get("/role-registry", async (_req, res) => {
       if (tier === "concierge" && role === "main") {
         concierge.primary   = primary;
         concierge.fallbacks = fb;
+        if (savedTools) concierge.tools = savedTools;
       } else if (flat[tier]?.[role]) {
         flat[tier][role].primary   = primary;
         flat[tier][role].fallbacks = fb;
@@ -576,7 +582,12 @@ router.get("/role-registry", async (_req, res) => {
       }
     }
 
-    res.json({ registry: flat, concierge, allToolNames: [...ALL_TOOL_NAMES] });
+    res.json({
+      registry: flat,
+      concierge,
+      allToolNames:          [...ALL_TOOL_NAMES],
+      allConciergeToolNames: [...ALL_CONCIERGE_TOOL_NAMES],
+    });
   } catch (err: any) {
     res.status(500).json({ error: "fetch_failed", message: err.message });
   }
@@ -614,12 +625,16 @@ router.put("/role-registry", async (req, res) => {
       const primary = String(concierge.primary).trim();
       const fallbacks = (Array.isArray(concierge.fallbacks) ? concierge.fallbacks : [])
         .filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim());
+      // Validate concierge tools against known names (allow-list)
+      const conciergeTools = (Array.isArray(concierge.tools) ? concierge.tools : [])
+        .filter((s: any) => typeof s === "string" && (ALL_CONCIERGE_TOOL_NAMES as readonly string[]).includes(s));
       await db.execute(sql`
         INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, tools, updated_at, updated_by)
-        VALUES ('concierge', 'main', ${primary}, ${JSON.stringify(fallbacks)}::jsonb, '[]'::jsonb, NOW(), ${userId})
+        VALUES ('concierge', 'main', ${primary}, ${JSON.stringify(fallbacks)}::jsonb, ${JSON.stringify(conciergeTools)}::jsonb, NOW(), ${userId})
         ON CONFLICT (tier, role) DO UPDATE SET
           primary_slug = EXCLUDED.primary_slug,
           fallbacks    = EXCLUDED.fallbacks,
+          tools        = EXCLUDED.tools,
           updated_at   = NOW(),
           updated_by   = ${userId}
       `);
