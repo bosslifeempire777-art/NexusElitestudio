@@ -1820,6 +1820,22 @@ function AgentTerminal({
   const [input, setInput]               = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [conciergeModel, setConciergeModel] = useState<string>(() => {
+    try { return localStorage.getItem("nexus-concierge-model") ?? "qwen/qwen3.7-plus"; }
+    catch { return "qwen/qwen3.7-plus"; }
+  });
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string }>>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+
+  useEffect(() => {
+    setModelsLoading(true);
+    const token = (() => { try { return localStorage.getItem("nexus-token"); } catch { return null; } })();
+    fetch("/api/models", { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.models?.length) setAvailableModels(d.models); })
+      .catch(() => {})
+      .finally(() => setModelsLoading(false));
+  }, []);
 
   const readFileContent = (file: File): Promise<string> =>
     new Promise(resolve => {
@@ -1888,7 +1904,7 @@ function AgentTerminal({
       const res = await fetch(`/api/projects/${projectId}/chat`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ message: text.trim() || undefined, action }),
+        body: JSON.stringify({ message: text.trim() || undefined, action, conciergeModel }),
       });
       const data = await res.json();
       apiReply = data.reply || apiReply;
@@ -2529,6 +2545,40 @@ function AgentTerminal({
         )}
 
         <div ref={bottomRef} />
+      </div>
+
+      {/* Concierge Agent model selector bar */}
+      <div className="shrink-0 flex items-center justify-between px-3 py-1.5 border-t border-border/30 bg-primary/5">
+        <div className="flex items-center gap-1.5">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[9px] font-bold text-primary/80 font-mono uppercase tracking-widest">Concierge Agent</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] text-muted-foreground/50 font-mono">model</span>
+          <select
+            value={conciergeModel}
+            onChange={e => {
+              setConciergeModel(e.target.value);
+              try { localStorage.setItem("nexus-concierge-model", e.target.value); } catch {}
+            }}
+            className="text-[10px] bg-background/80 border border-border/40 text-primary/90 rounded px-1.5 py-0.5 font-mono outline-none hover:border-primary/50 focus:border-primary/60 cursor-pointer max-w-[180px]"
+          >
+            <optgroup label="⚡ Recommended">
+              <option value="qwen/qwen3.7-plus">Qwen 3.7 Plus</option>
+              <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
+              <option value="qwen/qwen3-coder:free">Qwen3 Coder (Free)</option>
+              <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B (Free)</option>
+            </optgroup>
+            {availableModels.length > 0 && (
+              <optgroup label={`All Models (${availableModels.length})`}>
+                {availableModels.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </optgroup>
+            )}
+            {modelsLoading && <option disabled>Loading models…</option>}
+          </select>
+        </div>
       </div>
 
       {/* Input area */}

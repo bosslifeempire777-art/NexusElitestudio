@@ -428,15 +428,23 @@ async function runAgentLoop(
   messages: any[],
   emitLog: (msg: string) => void,
   state: AgentState,
-): Promise<string> {
+  preferredModel?: string,
+): Promise<{ text: string; toolCallCount: number; modelUsed: string }> {
   const oaiTools = toOAITools(tools);
-  let finalText  = "";
-  let modelIdx   = 0;
+  let finalText    = "";
+  let modelIdx     = 0;
+  let totalCalls   = 0;
+  // Build model chain: preferred model first, then the standard fallbacks
+  const modelChain = preferredModel
+    ? [preferredModel, ...CONCIERGE_MODELS.filter(m => m !== preferredModel)]
+    : CONCIERGE_MODELS;
+  let activeModel  = modelChain[0]!;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     if (state.needsSwarm) break;
 
-    const model = CONCIERGE_MODELS[modelIdx % CONCIERGE_MODELS.length];
+    const model = modelChain[modelIdx % modelChain.length]!;
+    activeModel = model;
 
     let res;
     try {
@@ -460,13 +468,12 @@ async function runAgentLoop(
     }
 
     if (res.status >= 400) {
-      // Try next model
       modelIdx++;
-      if (modelIdx >= CONCIERGE_MODELS.length) {
+      if (modelIdx >= modelChain.length) {
         emitLog(`[Concierge] ❌ All models failed (HTTP ${res.status})`);
         break;
       }
-      emitLog(`[Concierge] ↩️  Retrying with ${CONCIERGE_MODELS[modelIdx]}...`);
+      emitLog(`[Concierge] ↩️  Retrying with ${modelChain[modelIdx]}...`);
       continue;
     }
 
@@ -505,13 +512,14 @@ async function runAgentLoop(
         content:      JSON.stringify(output).slice(0, 24_000),
       });
 
+      totalCalls++;
       if (state.needsSwarm) break;
     }
 
     if (choice?.finish_reason === "stop" || choice?.finish_reason === "end_turn") break;
   }
 
-  return finalText;
+  return { text: finalText, toolCallCount: totalCalls, modelUsed: activeModel };
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -522,6 +530,8 @@ export interface ConciergeResult {
   summary:     string;
   needsSwarm:  boolean;
   swarmReason: string;
+  modelUsed:   string;
+  toolCallCount: number;
 }
 
 export async function runConciergeAgent(opts: {
@@ -533,12 +543,14 @@ export async function runConciergeAgent(opts: {
   userSecretNames: string[];
   nexusApiUrl:     string;
   nexusAuthUrl:    string;
+  model?:          string;
   emitLog:         (msg: string) => void;
 }): Promise<ConciergeResult> {
   const {
     projectId, projectName, projectType,
     currentCode, userMessage, userSecretNames,
     nexusApiUrl, nexusAuthUrl, emitLog,
+    model: preferredModel,
   } = opts;
 
   const state: AgentState = { code: currentCode, needsSwarm: false, swarmReason: "" };
@@ -607,25 +619,29 @@ When done, briefly describe what you changed and confirm it's working.`;
     { role: "user",   content: userMessage },
   ];
 
-  emitLog(`[Concierge] 🤖 Starting autonomous analysis of ${projectName}...`);
+  const displayModel = preferredModel ?? CONCIERGE_MODELS[0];
+  emitLog(`[Concierge] 🤖 NEXUS CONCIERGE online — model: ${displayModel} — analyzing "${projectName}"...`);
 
-  const summary = await runAgentLoop(tools, toolMap, messages, emitLog, state);
+  const { text: summary, toolCallCount, modelUsed } =
+    await runAgentLoop(tools, toolMap, messages, emitLog, state, preferredModel);
 
   const changed = state.code !== currentCode && state.code.length > 500;
 
   if (state.needsSwarm) {
     emitLog(`[Concierge] 🚀 Escalating to Genesis Swarm: ${state.swarmReason.slice(0, 80)}`);
   } else if (changed) {
-    emitLog(`[Concierge] 🎉 Done — app updated successfully`);
+    emitLog(`[Concierge] 🎉 Done — ${toolCallCount} tool call(s) · code updated · ready to preview`);
   } else {
-    emitLog(`[Concierge] ✅ Analysis complete — no code changes needed`);
+    emitLog(`[Concierge] ✅ Analysis complete — ${toolCallCount} tool call(s) · no code changes needed`);
   }
 
   return {
-    code:        state.code,
+    code:          state.code,
     changed,
-    summary:     summary || (state.needsSwarm ? `Escalated to swarm: ${state.swarmReason}` : "Analysis complete"),
-    needsSwarm:  state.needsSwarm,
-    swarmReason: state.swarmReason,
+    summary:       summary || (state.needsSwarm ? `Escalated to swarm: ${state.swarmReason}` : "Analysis complete"),
+    needsSwarm:    state.needsSwarm,
+    swarmReason:   state.swarmReason,
+    modelUsed,
+    toolCallCount,
   };
 }

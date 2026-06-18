@@ -1149,7 +1149,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
     return;
   }
 
-  const { message, action } = req.body as { message?: string; action?: string };
+  const { message, action, conciergeModel } = req.body as { message?: string; action?: string; conciergeModel?: string };
   const userMessage = (message || action || "").trim();
 
   if (!userMessage) {
@@ -1303,6 +1303,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           userSecretNames,
           nexusApiUrl,
           nexusAuthUrl,
+          model:           conciergeModel,
           emitLog: (msg: string) => emitLog(project.id, msg),
         });
 
@@ -1333,11 +1334,25 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         } else {
           finalCode = conciergeResult.code;
           changed   = conciergeResult.changed;
+
+          // Use the concierge's own summary as the reply — it knows exactly what it
+          // did (tool calls, what changed) so it's far more accurate than the parallel
+          // generic generateChatResponse() call. Override chatReplyPromise result.
+          if (conciergeResult.summary && conciergeResult.summary.length > 20) {
+            const modelLabel = conciergeResult.modelUsed
+              ? ` *(via ${conciergeResult.modelUsed.split("/").pop()})*`
+              : "";
+            (chatReplyPromise as any).__conciergeOverride =
+              conciergeResult.summary + modelLabel;
+          }
         }
       }
 
-      // By now the chat reply has had 90-180s to generate in parallel — collect it.
-      let reply = await chatReplyPromise;
+      // Collect the reply: prefer the concierge's own summary when available,
+      // fall back to the parallel generateChatResponse() result.
+      let reply = (chatReplyPromise as any).__conciergeOverride
+        ?? await chatReplyPromise;
+
       const isAuthFix = isAuthRepairRequest(userMessage);
 
       // If the change request was auth-related and code still didn't change, override
@@ -1346,7 +1361,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
         reply = `I dug into the login code in "${project.name}" and ran two repair passes, but the auth logic didn't change — this usually means the app's login is already using the correct NEXUS_AUTH pattern, or it's a very large file that needs a full Rebuild to properly rewire.\n\nHere's what to try:\n- **Rebuild the app** (click the rebuild button) — this regenerates the full app from scratch with the correct auth system guaranteed\n- **Try typing**: "fix the login form to use NEXUS_AUTH and show demo@demo.com / NexusDemo123 credentials" for a more targeted repair\n- **Demo login**: admin@demo.com / NexusDemo123 (auto-created when you open the preview)`;
       }
 
-      // Deliver the real AI reply to the frontend via SSE now that build is done
+      // Deliver the real reply to the frontend via SSE now that build is done
       emitLog(project.id, `__REPLY__:${JSON.stringify({ reply })}`);
 
       // Persist chat history with the real reply
@@ -1390,7 +1405,7 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           userId: project.userId,
           projectId: project.id,
           kind: "chat_change",
-          description: `Chat update: "${userMessage.slice(0, 80)}"`,
+          description: `Chat update [${conciergeModel ?? "concierge"}]: "${userMessage.slice(0, 80)}"`,
         });
         await consumeOverageCreditIfNeeded(project.userId, req.auth!.plan);
       } else {
