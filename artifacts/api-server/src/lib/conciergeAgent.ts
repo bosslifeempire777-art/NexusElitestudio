@@ -19,7 +19,7 @@ import { spawn } from "child_process";
 import { promises as fs } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { fetchUrlTool, bashTool, type ToolDef } from "./agentTools.js";
+import { fetchUrlTool, bashTool, searchCodeTool, runTestsTool, type ToolDef } from "./agentTools.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -341,6 +341,241 @@ function createAppTools(
     },
   };
 
+  // ── inspect_dom ─────────────────────────────────────────────────────────
+  const inspectDom: ToolDef = {
+    name: "inspect_dom",
+    description:
+      "Maps the app's DOM structure without reading the full code: returns all element IDs, form IDs, " +
+      "button text, input names, script block count, and critical platform flags (NEXUS_API, NEXUS_AUTH, DOMContentLoaded). " +
+      "Use FIRST to get a quick orientation before read_app_code for large apps.",
+    parameters: { type: "object", properties: {}, required: [] },
+    execute: async () => {
+      const code = state.code;
+      if (!code) return { error: "No app code to inspect" };
+
+      const extract = (re: RegExp): string[] => {
+        const found: string[] = [];
+        const r = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+        let m: RegExpExecArray | null;
+        while ((m = r.exec(code)) !== null && found.length < 50) found.push(m[1] ?? m[0]);
+        return found;
+      };
+
+      const ids      = extract(/\bid\s*=\s*["']([^"']+)["']/i);
+      const forms    = extract(/<form[^>]*\bid\s*=\s*["']([^"']+)["']/i);
+      const buttons  = extract(/<button[^>]*>([\s\S]*?)<\/button>/i)
+        .map(b => b.replace(/<[^>]+>/g, "").trim().slice(0, 60));
+      const inputs   = extract(/\bname\s*=\s*["']([^"']+)["']/i);
+      const selects  = extract(/<select[^>]*\bid\s*=\s*["']([^"']+)["']/i);
+      const eventHandlers = [...(code.match(/addEventListener\s*\(\s*["'](\w+)["']/g) ?? [])]
+        .map(h => h.match(/["'](\w+)["']/)?.[1] ?? "")
+        .filter(Boolean)
+        .slice(0, 20);
+
+      return {
+        ids:            ids.slice(0, 40),
+        forms:          forms.slice(0, 10),
+        buttons:        buttons.slice(0, 25),
+        inputNames:     inputs.slice(0, 20),
+        selects:        selects.slice(0, 10),
+        eventTypes:     [...new Set(eventHandlers)],
+        scriptBlocks:   (code.match(/<script[^>]*>/gi) ?? []).length,
+        styleBlocks:    (code.match(/<style[^>]*>/gi) ?? []).length,
+        totalChars:     code.length,
+        hasNexusApi:    /window\.NEXUS_API/i.test(code),
+        hasNexusAuth:   /window\.NEXUS_AUTH/i.test(code),
+        hasDomReady:    /DOMContentLoaded/i.test(code),
+        hasInlineOnclick: /\sonclick\s*=/i.test(code),
+      };
+    },
+  };
+
+  // ── search_replace_in_code ──────────────────────────────────────────────
+  const searchReplaceCode: ToolDef = {
+    name: "search_replace_in_code",
+    description:
+      "Make a surgical change to the app code: find exact text and replace it. " +
+      "PREFER THIS over rewriting the whole app for targeted fixes — it's faster and less error-prone. " +
+      "The search is literal (not regex). Returns an error if the text is not found exactly as given. " +
+      "Use for: fixing a specific function, updating a value, inserting code, changing a CSS rule, etc.",
+    parameters: {
+      type: "object",
+      properties: {
+        find:        { type: "string",  description: "Exact text to find (case-sensitive, must match verbatim)" },
+        replace:     { type: "string",  description: "Replacement text" },
+        replace_all: { type: "boolean", description: "Replace ALL occurrences (default: first occurrence only)" },
+      },
+      required: ["find", "replace"],
+    },
+    execute: async ({ find, replace, replace_all = false }: { find: string; replace: string; replace_all?: boolean }) => {
+      const code = state.code;
+      if (!code) return { ok: false, error: "No app code to modify" };
+
+      const occurrences: number[] = [];
+      let idx = code.indexOf(find);
+      while (idx !== -1) { occurrences.push(idx); idx = code.indexOf(find, idx + 1); }
+
+      if (occurrences.length === 0) {
+        const hint = find.slice(0, 30);
+        const closeIdx = code.toLowerCase().indexOf(hint.toLowerCase());
+        return {
+          ok:    false,
+          error: `Text not found in app code: "${find.slice(0, 120)}"`,
+          hint:  closeIdx !== -1
+            ? `Similar text (case-insensitive) found near position ${closeIdx}. The app code may use different quotes, whitespace, or variable names.`
+            : "No similar text found — try reading the relevant code section first with read_app_code.",
+        };
+      }
+
+      const newCode = replace_all
+        ? code.split(find).join(replace)
+        : code.slice(0, occurrences[0]) + replace + code.slice(occurrences[0] + find.length);
+
+      state.code = newCode;
+      return {
+        ok:               true,
+        occurrencesFound: occurrences.length,
+        replaced:         replace_all ? occurrences.length : 1,
+        sizeBefore:       code.length,
+        sizeAfter:        newCode.length,
+        note:             occurrences.length > 1 && !replace_all
+          ? `⚠️  ${occurrences.length} occurrences found but only the FIRST was replaced. Set replace_all=true to replace all.`
+          : undefined,
+      };
+    },
+  };
+
+  // ── test_api_endpoints ──────────────────────────────────────────────────
+  const testApiEndpoints: ToolDef = {
+    name: "test_api_endpoints",
+    description:
+      "Tests the NEXUS_API backend end-to-end: creates a record, reads it back, updates it, then deletes it. " +
+      "Use this AFTER any data/API-related change to verify the backend is working. " +
+      "Also verifies the API URL is reachable and responding.",
+    parameters: {
+      type: "object",
+      properties: {
+        collection: {
+          type: "string",
+          description: "Collection to test (default: __smoke_test__). Use a real app collection to test actual data flows.",
+        },
+      },
+      required: [],
+    },
+    execute: async ({ collection = "__smoke_test__" }: { collection?: string }) => {
+      const results: Record<string, any> = { collection, nexusApiUrl };
+
+      try {
+        // CREATE
+        const createRes = await fetch(`${nexusApiUrl}/${collection}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ _test: true, ts: Date.now(), label: "nexus_smoke_test" }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        const createData = await createRes.json().catch(() => ({})) as Record<string, any>;
+        const recordId   = createData.id ?? createData._id ?? null;
+        results.create   = { status: createRes.status, ok: createRes.ok, id: recordId };
+
+        if (recordId) {
+          // READ
+          const readRes   = await fetch(`${nexusApiUrl}/${collection}/${recordId}`, { signal: AbortSignal.timeout(8_000) });
+          results.read    = { status: readRes.status, ok: readRes.ok };
+
+          // UPDATE
+          const updateRes = await fetch(`${nexusApiUrl}/${collection}/${recordId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ _test: true, updated: true, ts: Date.now() }),
+            signal: AbortSignal.timeout(8_000),
+          });
+          results.update  = { status: updateRes.status, ok: updateRes.ok };
+
+          // DELETE
+          const deleteRes = await fetch(`${nexusApiUrl}/${collection}/${recordId}`, {
+            method: "DELETE", signal: AbortSignal.timeout(8_000),
+          });
+          results.delete  = { status: deleteRes.status, ok: deleteRes.ok || deleteRes.status === 404 };
+        } else {
+          results.note = "No record ID returned from create — cannot test read/update/delete";
+        }
+      } catch (e: any) {
+        results.error = e.message;
+      }
+
+      const ops    = (["create", "read", "update", "delete"] as const).filter(k => k in results);
+      const passed = ops.every(k => results[k]?.ok);
+      results.summary = passed
+        ? `✅ All ${ops.length} CRUD operations succeeded`
+        : `❌ Some operations failed — check details above`;
+      return results;
+    },
+  };
+
+  // ── test_auth_flow ──────────────────────────────────────────────────────
+  const testAuthFlow: ToolDef = {
+    name: "test_auth_flow",
+    description:
+      "Tests the complete NEXUS_AUTH flow: registers a new test user, logs in, and verifies the JWT via /me. " +
+      "Use this AFTER any login/auth change to confirm registration + login + session actually work end-to-end.",
+    parameters: { type: "object", properties: {}, required: [] },
+    execute: async () => {
+      const results: Record<string, any> = { nexusAuthUrl };
+      const ts       = Date.now();
+      const email    = `smoke_${ts}@test.nexus`;
+      const password = "SmokeTest123!";
+      let   token    = "";
+
+      try {
+        // REGISTER
+        const regRes  = await fetch(`${nexusAuthUrl}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: `smoke_${ts}`, email, password }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        const regData = await regRes.json().catch(() => ({})) as Record<string, any>;
+        token = regData.token ?? "";
+        results.register = { status: regRes.status, ok: [200, 201, 409].includes(regRes.status), hasToken: Boolean(token) };
+
+        // LOGIN (always try, even if registered)
+        const loginRes  = await fetch(`${nexusAuthUrl}/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        const loginData = await loginRes.json().catch(() => ({})) as Record<string, any>;
+        if (loginData.token) token = loginData.token as string;
+        results.login = { status: loginRes.status, ok: loginRes.ok && Boolean(loginData.token), hasToken: Boolean(loginData.token) };
+
+        // /me — verify JWT
+        if (token) {
+          const meRes  = await fetch(`${nexusAuthUrl}/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal:  AbortSignal.timeout(8_000),
+          });
+          const meData = await meRes.json().catch(() => ({})) as Record<string, any>;
+          results.session = {
+            status:  meRes.status,
+            ok:      meRes.ok,
+            hasUser: Boolean(meData.id ?? meData.userId ?? meData.email ?? meData.username),
+          };
+        } else {
+          results.session = { ok: false, note: "No token obtained — skipped /me check" };
+        }
+      } catch (e: any) {
+        results.error = e.message;
+      }
+
+      const passed = results.register?.ok && results.login?.ok && results.session?.ok;
+      results.summary = passed
+        ? "✅ Auth flow working — register, login, and /me all pass"
+        : "❌ Auth flow has issues — see details above";
+      return results;
+    },
+  };
+
   // ── escalate_to_swarm ───────────────────────────────────────────────────
   const escalateToSwarm: ToolDef = {
     name: "escalate_to_swarm",
@@ -363,11 +598,17 @@ function createAppTools(
 
   return [
     readAppCode,
-    writeAppCode,
+    inspectDom,
     analyzeAppCode,
+    searchReplaceCode,
     smokeTestHtml,
+    writeAppCode,
+    testApiEndpoints,
+    testAuthFlow,
     validateLiveApi,
     escalateToSwarm,
+    searchCodeTool,
+    runTestsTool,
     fetchUrlTool,
     bashTool,
   ];
@@ -386,25 +627,38 @@ function toOAITools(tools: ToolDef[]) {
 
 function toolLogLine(name: string, args: any): string {
   switch (name) {
-    case "read_app_code":      return `[Concierge] 🔍 Reading app ${args.section ?? "full"} code...`;
-    case "write_app_code":     return `[Concierge] 💾 Saving updated code (${((args.html?.length ?? 0) / 1024).toFixed(1)} KB)...`;
-    case "analyze_app_code":   return `[Concierge] 🔬 Running static analysis...`;
-    case "smoke_test_html":    return `[Concierge] 🧪 Running smoke tests...`;
-    case "validate_live_api":  return `[Concierge] 🌐 Validating live API endpoints...`;
-    case "escalate_to_swarm":  return `[Concierge] 🚀 Escalating to full swarm: ${args.reason?.slice(0, 80) ?? ""}`;
-    case "fetch_url":          return `[Concierge] 🌍 Fetching: ${(args.url ?? "").slice(0, 60)}`;
-    case "bash_command":       return `[Concierge] 🖥️  Running: ${(args.command ?? "").slice(0, 60)}`;
-    default:                   return `[Concierge] ⚙️  Tool: ${name}`;
+    case "read_app_code":           return `[Concierge] 🔍 Reading app ${args.section ?? "full"} code...`;
+    case "inspect_dom":             return `[Concierge] 🗺️  Mapping DOM structure...`;
+    case "analyze_app_code":        return `[Concierge] 🔬 Running static analysis...`;
+    case "search_replace_in_code":  return `[Concierge] ✂️  Replacing: "${(args.find ?? "").slice(0, 50)}"`;
+    case "smoke_test_html":         return `[Concierge] 🧪 Smoke testing JS/HTML...`;
+    case "write_app_code":          return `[Concierge] 💾 Saving updated code (${((args.html?.length ?? 0) / 1024).toFixed(1)} KB)...`;
+    case "test_api_endpoints":      return `[Concierge] 🔁 Testing NEXUS_API CRUD (${args.collection ?? "__smoke_test__"})...`;
+    case "test_auth_flow":          return `[Concierge] 🔐 Testing auth flow (register → login → /me)...`;
+    case "validate_live_api":       return `[Concierge] 🌐 Validating live API endpoints...`;
+    case "escalate_to_swarm":       return `[Concierge] 🚀 Escalating to full swarm: ${args.reason?.slice(0, 80) ?? ""}`;
+    case "search_code":             return `[Concierge] 🔎 Searching workspace: "${(args.pattern ?? "").slice(0, 50)}"`;
+    case "run_tests":               return `[Concierge] 🧪 Running tests${args.package ? ` (${args.package})` : ""}${args.filter ? ` — filter: ${args.filter}` : ""}...`;
+    case "fetch_url":               return `[Concierge] 🌍 Fetching: ${(args.url ?? "").slice(0, 60)}`;
+    case "bash_command":            return `[Concierge] 🖥️  Running: ${(args.command ?? "").slice(0, 60)}`;
+    default:                        return `[Concierge] ⚙️  Tool: ${name}`;
   }
 }
 
 function toolResultLine(name: string, result: any): string {
   switch (name) {
+    case "inspect_dom":
+      if (result.error) return `[Concierge] ⚠️  DOM inspect error: ${result.error}`;
+      return `[Concierge] 🗺️  DOM: ${result.ids?.length ?? 0} IDs · ${result.buttons?.length ?? 0} buttons · ${result.forms?.length ?? 0} forms · ${result.scriptBlocks ?? 0} scripts`;
     case "analyze_app_code":
       if (result.error) return `[Concierge] ⚠️  Analysis error: ${result.error}`;
       return result.healthy
         ? `[Concierge] ✅ Analysis: no issues found`
         : `[Concierge] ⚠️  Analysis: ${result.issueCount} issue(s), ${result.warningCount} warning(s)`;
+    case "search_replace_in_code":
+      return result.ok
+        ? `[Concierge] ✂️  Replaced ${result.replaced}/${result.occurrencesFound} occurrence(s) — code ${result.sizeBefore < result.sizeAfter ? "grew" : "shrank"} by ${Math.abs((result.sizeAfter ?? 0) - (result.sizeBefore ?? 0))} chars`
+        : `[Concierge] ❌ search_replace: ${result.error}`;
     case "smoke_test_html":
       return result.passed
         ? `[Concierge] ✅ Smoke test passed — ${result.summary ?? "all checks OK"}`
@@ -413,8 +667,18 @@ function toolResultLine(name: string, result: any): string {
       return result.ok
         ? `[Concierge] 💾 Code saved (${result.lines} lines)`
         : `[Concierge] ❌ Write failed: ${result.error}`;
+    case "test_api_endpoints":
+      return `[Concierge] 🔁 API test: ${result.summary ?? (result.error ? `❌ ${result.error}` : "done")}`;
+    case "test_auth_flow":
+      return `[Concierge] 🔐 Auth test: ${result.summary ?? (result.error ? `❌ ${result.error}` : "done")}`;
     case "validate_live_api":
       return `[Concierge] 🌐 NEXUS_API: ${result.nexusApi?.alive ? "✅ alive" : "❌ unreachable"} | NEXUS_AUTH: ${result.nexusAuth?.alive ? "✅ alive" : "❌ unreachable"}`;
+    case "run_tests":
+      if (result.failed && result.failed !== "0")
+        return `[Concierge] ❌ Tests: ${result.failed} failed${result.passed ? `, ${result.passed} passed` : ""}`;
+      if (result.passed)
+        return `[Concierge] ✅ Tests: ${result.passed} passed`;
+      return `[Concierge] 🧪 Tests complete (exit ${result.exitCode})`;
     default:
       return "";
   }
@@ -569,33 +833,42 @@ export async function runConciergeAgent(opts: {
     ? `User API keys in window.USER_SECRETS: ${userSecretNames.join(", ")}.`
     : "No user API keys configured yet.";
 
-  const systemPrompt = `You are NEXUS CONCIERGE — an elite autonomous AI engineer with full access to a user's web app.
-Your job: fulfill the user's request by reading, analyzing, modifying, and testing the app code yourself.
+  const systemPrompt = `You are NEXUS CONCIERGE — an elite autonomous AI engineer with full tool access to a user's web app.
+Your job: fulfill the user's request by reading, analyzing, modifying, AND verifying the app code yourself.
+You MUST test your work — do not stop until your changes are confirmed working.
 
-TOOLS (use in this order):
-1. read_app_code      → always read first to understand the current state
-2. analyze_app_code   → find issues relevant to the request
-3. smoke_test_html    → validate JS syntax + patterns (run on candidate HTML before writing)
-4. write_app_code     → commit the final fix (only after smoke test passes)
-5. validate_live_api  → verify NEXUS_API / NEXUS_AUTH are responding (for API/auth issues)
-6. escalate_to_swarm  → LAST RESORT: complete rebuild needed (not for targeted fixes)
-7. fetch_url          → read documentation or external resources
-8. bash_command       → advanced shell operations
+TOOLS (14 available — use the right tool for each job):
+ 1. read_app_code          → read current HTML/JS/CSS (section: full|scripts|html|styles)
+ 2. inspect_dom            → quick DOM map: all IDs, buttons, forms, inputs without reading full code
+ 3. analyze_app_code       → static analysis: broken auth, missing NEXUS_API, bad patterns
+ 4. search_replace_in_code → surgical find-and-replace: PREFER THIS for targeted fixes instead of full rewrites
+ 5. smoke_test_html        → validate JS syntax + critical patterns (pass html= to test BEFORE writing)
+ 6. write_app_code         → commit the final HTML (only after smoke_test_html passes)
+ 7. test_api_endpoints     → real CRUD test: create/read/update/delete against NEXUS_API
+ 8. test_auth_flow         → full auth test: register → login → /me → verify JWT
+ 9. validate_live_api      → check NEXUS_API + NEXUS_AUTH reachability
+10. escalate_to_swarm      → LAST RESORT: full rebuild needed (NOT for targeted fixes or bugs)
+11. search_code            → grep workspace files for patterns (useful for finding platform code)
+12. run_tests              → run workspace test suite (vitest/jest — pass package= and filter=)
+13. fetch_url              → read docs or external resources
+14. bash_command           → advanced shell operations (node, curl, etc.)
 
-WORKFLOW — follow exactly:
-1. Read the app code (section='scripts' if it's a JS/auth issue, 'full' for structure)
-2. Analyze to understand the problem
-3. Plan your surgical change (what exactly to add/replace/remove)
-4. Run smoke_test_html on your NEW version (pass html= argument with your proposed code)
-5. If smoke test passes → call write_app_code with the final HTML
-6. If smoke test fails → fix the issues and re-test
-7. Only write_app_code when everything is clean
+WORKFLOW — follow this exactly, do not skip steps:
+1. ORIENT: call inspect_dom for quick layout, then read_app_code (section='scripts' for JS bugs, 'full' for structural issues)
+2. ANALYZE: call analyze_app_code to catch any broken patterns
+3. FIX: use search_replace_in_code for targeted changes — only use write_app_code for large restructures
+4. VALIDATE SYNTAX: run smoke_test_html on the proposed HTML (pass html= arg) — fix any errors before writing
+5. SAVE: call write_app_code with the final clean HTML
+6. VERIFY BACKEND: run test_api_endpoints + test_auth_flow to confirm data/auth flows work end-to-end
+7. If any test fails → fix the issue and re-run the test
+8. Only declare done when ALL checks pass
 
-SURGICAL APPROACH — never rewrite the whole app unless explicitly requested:
-- For a bug fix: change only the broken section
-- For adding a feature: add the new code, leave the rest untouched
+SURGICAL APPROACH (critical — follow this):
+- For a bug fix: use search_replace_in_code to change only the broken lines
+- For adding a feature: inject the new code at the right location, leave everything else intact
 - For UI changes: update only the affected styles/elements
-- Keep all existing functionality, styling, and NEXUS_API usage intact
+- NEVER rewrite the whole app unless the user explicitly asks for a full rebuild
+- After every write_app_code always run at minimum: smoke_test_html + test_api_endpoints
 
 PLATFORM FACTS (CRITICAL — violating these breaks the app):
 - window.NEXUS_API    → pre-injected data backend (ALL persistent data goes through here)
