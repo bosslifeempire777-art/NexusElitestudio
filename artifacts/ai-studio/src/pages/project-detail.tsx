@@ -1821,8 +1821,8 @@ function AgentTerminal({
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [conciergeModel, setConciergeModel] = useState<string>(() => {
-    try { return localStorage.getItem("nexus-concierge-model") ?? "qwen/qwen3.7-plus"; }
-    catch { return "qwen/qwen3.7-plus"; }
+    try { return localStorage.getItem("nexus-concierge-model") ?? ""; }
+    catch { return ""; }
   });
   const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string }>>([]);
   const [modelsLoading, setModelsLoading] = useState(false);

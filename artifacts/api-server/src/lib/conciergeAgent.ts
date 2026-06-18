@@ -25,11 +25,10 @@ import { fetchUrlTool, bashTool, searchCodeTool, runTestsTool, type ToolDef } fr
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-/** Primary model — top of the confirmed-working coding tier */
-const CONCIERGE_MODELS = [
-  "qwen/qwen3.7-plus",
+/** Default fallback chain used only when no model is configured in the DB. */
+const CONCIERGE_DEFAULT_CHAIN = [
+  "google/gemini-2.5-flash",
   "deepseek/deepseek-v4-flash",
-  "qwen/qwen3-coder:free",
   "meta-llama/llama-3.3-70b-instruct:free",
 ];
 
@@ -711,6 +710,7 @@ async function runAgentLoop(
   emitLog: (msg: string) => void,
   state: AgentState,
   preferredModel?: string,
+  externalChain?: string[],
 ): Promise<{ text: string; toolCallCount: number; modelUsed: string; tokensIn: number; tokensOut: number }> {
   const oaiTools = toOAITools(tools);
   let finalText    = "";
@@ -718,10 +718,12 @@ async function runAgentLoop(
   let totalCalls   = 0;
   let totalIn      = 0;
   let totalOut     = 0;
-  // Build model chain: preferred model first, then the standard fallbacks
-  const modelChain = preferredModel
-    ? [preferredModel, ...CONCIERGE_MODELS.filter(m => m !== preferredModel)]
-    : CONCIERGE_MODELS;
+  // Build model chain: DB-supplied chain wins; otherwise build from preferred + default fallbacks
+  const modelChain = externalChain && externalChain.length > 0
+    ? externalChain
+    : preferredModel
+      ? [preferredModel, ...CONCIERGE_DEFAULT_CHAIN.filter(m => m !== preferredModel)]
+      : CONCIERGE_DEFAULT_CHAIN;
   let activeModel  = modelChain[0]!;
 
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -834,6 +836,7 @@ export async function runConciergeAgent(opts: {
   nexusApiUrl:     string;
   nexusAuthUrl:    string;
   model?:          string;
+  fallbackChain?:  string[];
   enabledTools?:   string[];
   emitLog:         (msg: string) => void;
 }): Promise<ConciergeResult> {
@@ -842,6 +845,7 @@ export async function runConciergeAgent(opts: {
     currentCode, userMessage, userSecretNames,
     nexusApiUrl, nexusAuthUrl, emitLog,
     model: preferredModel,
+    fallbackChain,
     enabledTools,
   } = opts;
 
@@ -925,11 +929,11 @@ When done, briefly describe what you changed and confirm it's working.`;
     { role: "user",   content: userMessage },
   ];
 
-  const displayModel = preferredModel ?? CONCIERGE_MODELS[0];
+  const displayModel = preferredModel ?? fallbackChain?.[0] ?? CONCIERGE_DEFAULT_CHAIN[0];
   emitLog(`[Concierge] 🤖 NEXUS CONCIERGE online — model: ${displayModel} — analyzing "${projectName}"...`);
 
   const { text: summary, toolCallCount, modelUsed, tokensIn, tokensOut } =
-    await runAgentLoop(tools, toolMap, messages, emitLog, state, preferredModel);
+    await runAgentLoop(tools, toolMap, messages, emitLog, state, preferredModel, fallbackChain);
 
   const changed = state.code !== currentCode && state.code.length > 500;
 

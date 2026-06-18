@@ -1336,17 +1336,30 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
 
       } else {
         // ── Concierge Agent — autonomous read/analyze/fix/test loop ──────────
-        // Load concierge tool config from DB (admin may have customised it)
+        // Load concierge model + tool config from DB (Command Center is source of truth)
         let conciergeEnabledTools: string[] | undefined;
+        let conciergeModelFromDb:  string | undefined;
+        let conciergeChainFromDb:  string[] | undefined;
         try {
           const ccRow = await db.execute(sql`
-            SELECT tools FROM swarm_role_config WHERE tier = 'concierge' AND role = 'main' LIMIT 1
+            SELECT primary_slug, fallbacks, tools
+            FROM swarm_role_config
+            WHERE tier = 'concierge' AND role = 'main'
+            LIMIT 1
           `);
           const row = ((ccRow as any).rows ?? [])[0];
-          if (row && Array.isArray(row.tools) && row.tools.length > 0) {
-            conciergeEnabledTools = row.tools.map(String);
+          if (row) {
+            if (row.primary_slug) conciergeModelFromDb = String(row.primary_slug);
+            const fb: string[] = Array.isArray(row.fallbacks) ? row.fallbacks.map(String) : [];
+            if (conciergeModelFromDb) conciergeChainFromDb = [conciergeModelFromDb, ...fb];
+            if (Array.isArray(row.tools) && row.tools.length > 0) {
+              conciergeEnabledTools = row.tools.map(String);
+            }
           }
-        } catch { /* non-fatal — use all tools */ }
+        } catch { /* non-fatal — fall back to request body / hardcoded defaults */ }
+
+        // DB config wins; the frontend-sent conciergeModel is only a last-resort fallback
+        const resolvedConciergeModel = conciergeModelFromDb ?? conciergeModel ?? "google/gemini-2.5-flash";
 
         const conciergeResult = await runConciergeAgent({
           projectId:       project.id,
@@ -1357,7 +1370,8 @@ router.post("/:id/chat", requireAuth, async (req, res) => {
           userSecretNames,
           nexusApiUrl,
           nexusAuthUrl,
-          model:           conciergeModel,
+          model:           resolvedConciergeModel,
+          fallbackChain:   conciergeChainFromDb,
           enabledTools:    conciergeEnabledTools,
           emitLog: (msg: string) => emitLog(project.id, msg),
         });
