@@ -9,6 +9,61 @@ const EXPO_OWNER = "Nexuselitestudio";
 const EAS_API    = "https://api.expo.dev";
 const EAS_BIN    = resolve(process.cwd(), "artifacts/api-server/node_modules/.bin/eas");
 
+/**
+ * Build a minimal, allowlisted environment for child processes that run
+ * in untrusted temp directories.  Critically: we do NOT spread process.env
+ * because that would expose OPENROUTER_API_KEY, JWT_SECRET, STRIPE_* keys,
+ * ADMIN_PASSWORD, RENDER_API_KEY, DATABASE_URL, and all other platform secrets
+ * to any lifecycle script that a malicious or compromised dependency might run.
+ *
+ * Only variables necessary for npm / eas to function are included.
+ * The caller adds extras (e.g. EXPO_TOKEN) as needed.
+ */
+function buildSafeEnv(extras: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const safe: Record<string, string> = {
+    PATH:              process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    HOME:              process.env.HOME ?? "/root",
+    TMPDIR:            process.env.TMPDIR ?? tmpdir(),
+    CI:                "1",
+    TERM:              "dumb",
+    LANG:              process.env.LANG ?? "en_US.UTF-8",
+    EXPO_NO_TELEMETRY: "1",
+    // npm / node version managers
+    ...(process.env.NVM_DIR            ? { NVM_DIR:            process.env.NVM_DIR }            : {}),
+    ...(process.env.npm_config_cache   ? { npm_config_cache:   process.env.npm_config_cache }   : {}),
+    ...(process.env.NPM_CONFIG_CACHE   ? { NPM_CONFIG_CACHE:   process.env.NPM_CONFIG_CACHE }   : {}),
+    ...(process.env.npm_config_prefix  ? { npm_config_prefix:  process.env.npm_config_prefix }  : {}),
+  };
+  return { ...safe, ...extras };
+}
+
+/** Blocked lifecycle script keys — deny any package.json that defines these */
+const BLOCKED_PKG_SCRIPTS = new Set([
+  "preinstall", "install", "postinstall",
+  "prepack", "pack", "postpack",
+  "prepublish", "prepublishOnly",
+]);
+
+/**
+ * Validate a generated package.json string.
+ * Throws if it contains lifecycle scripts that could execute arbitrary code
+ * during `npm install`.  This is a defence-in-depth check on top of
+ * `--ignore-scripts`; belt AND suspenders.
+ */
+function validatePackageJson(content: string, filePath: string): void {
+  let pkg: any;
+  try { pkg = JSON.parse(content); } catch { return; } // not valid JSON → npm will reject it anyway
+  if (!pkg.scripts || typeof pkg.scripts !== "object") return;
+  for (const key of BLOCKED_PKG_SCRIPTS) {
+    if (key in pkg.scripts) {
+      throw new Error(
+        `[easUpdate] Security: generated ${filePath} contains blocked lifecycle script "${key}". ` +
+        "Lifecycle scripts are not allowed in platform-managed project files.",
+      );
+    }
+  }
+}
+
 function easHeaders(): Record<string, string> {
   const token = process.env.EXPO_TOKEN;
   if (!token) throw new Error("EXPO_TOKEN not set");
@@ -134,6 +189,12 @@ export async function publishOtaUpdate(opts: {
 
     await mk(dirname(resolved), { recursive: true });
 
+    // Security: validate package.json files for dangerous lifecycle scripts
+    // before writing them.  This is defence-in-depth on top of --ignore-scripts.
+    if (filePath === "package.json" || filePath.endsWith("/package.json")) {
+      validatePackageJson(content, filePath);
+    }
+
     // Binary assets (PNGs) are stored as base64 strings in projectFiles
     if (filePath.match(/\.(png|jpg|jpeg|gif|webp)$/i)) {
       const { writeFile: wfBuf } = await import("node:fs/promises");
@@ -178,15 +239,34 @@ export async function publishOtaUpdate(opts: {
   // ── Step 3: Install dependencies so Metro bundler can run ────────────────
   // `eas update` uses Metro to bundle JS locally before uploading.
   // Without node_modules the bundle step will fail.
+  //
+  // SECURITY: We pass --ignore-scripts to prevent lifecycle scripts (preinstall,
+  // postinstall, etc.) in any dependency from executing arbitrary code on this
+  // server.  Combined with validatePackageJson() above (which blocks dangerous
+  // scripts in the generated package.json itself), this prevents RCE and
+  // secret-exfiltration attacks via the dependency graph.
+  //
+  // We also use buildSafeEnv() — NOT process.env — so that no platform secrets
+  // (OPENROUTER_API_KEY, JWT_SECRET, STRIPE_*, ADMIN_PASSWORD, DATABASE_URL,
+  // RENDER_API_KEY, EXPO_TOKEN, etc.) are accessible to child processes or their
+  // lifecycle scripts.  EXPO_TOKEN is intentionally withheld here; it is only
+  // passed to the `eas update` step (Step 4) which actually needs it.
   console.log("[easUpdate] Installing Expo dependencies (Metro bundler requirement)…");
   try {
     const { stdout: npmOut } = await execFileAsync(
       "npm",
-      ["install", "--legacy-peer-deps", "--prefer-offline", "--no-audit", "--no-fund"],
+      [
+        "install",
+        "--ignore-scripts",       // prevent lifecycle script execution
+        "--legacy-peer-deps",
+        "--prefer-offline",
+        "--no-audit",
+        "--no-fund",
+      ],
       {
         cwd:     dir,
         timeout: 360_000, // 6 minutes
-        env:     { ...process.env, CI: "1" },
+        env:     buildSafeEnv(),  // no secrets — EXPO_TOKEN deliberately excluded
       },
     );
     console.log("[easUpdate] npm install done:", npmOut.slice(0, 200));
@@ -195,6 +275,8 @@ export async function publishOtaUpdate(opts: {
   }
 
   // ── Step 4: Run eas update ───────────────────────────────────────────────
+  // SECURITY: buildSafeEnv() provides only what EAS CLI needs — PATH, HOME,
+  // and EXPO_TOKEN.  All other platform secrets remain out of scope.
   console.log(`[easUpdate] Publishing OTA to branch "${branch}" for ${easProjectSlug}…`);
   const { stdout } = await execFileAsync(
     EAS_BIN,
@@ -208,12 +290,7 @@ export async function publishOtaUpdate(opts: {
     {
       cwd:     dir,
       timeout: 300_000, // 5 minutes (post-install bundling)
-      env:     {
-        ...process.env,
-        EXPO_TOKEN:         token,
-        CI:                 "1",
-        EXPO_NO_TELEMETRY:  "1",
-      },
+      env:     buildSafeEnv({ EXPO_TOKEN: token }),
     },
   );
 
