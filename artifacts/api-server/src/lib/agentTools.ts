@@ -308,6 +308,180 @@ export const runTestsTool: ToolDef = {
   },
 };
 
+export const readAppCodeTool: ToolDef = {
+  name: "read_app_code",
+  description:
+    "Read one or more source files in a single call. Pass an array of paths relative to " +
+    "the workspace root. Returns each file's content (capped at 20 000 chars each). " +
+    "Use instead of multiple read_file calls when you need several files at once.",
+  parameters: {
+    type: "object",
+    properties: {
+      paths: {
+        type: "array",
+        items: { type: "string" },
+        description: "File paths relative to workspace root",
+      },
+    },
+    required: ["paths"],
+  },
+  execute: async ({ paths }: { paths: string[] }) => {
+    const files: Record<string, string | { error: string }> = {};
+    await Promise.all(
+      paths.map(async (p) => {
+        try {
+          const abs = path.join(WORKSPACE, p.replace(/^\/+/, ""));
+          const txt = await fs.readFile(abs, "utf8");
+          files[p] = txt.slice(0, 20_000);
+        } catch (err: any) {
+          files[p] = { error: err.message };
+        }
+      }),
+    );
+    return { files };
+  },
+};
+
+export const writeAppCodeTool: ToolDef = {
+  name: "write_app_code",
+  description:
+    "Write multiple source files in a single call. Pass a map of path → content. " +
+    "Creates parent directories automatically. Overwrites existing files. " +
+    "Use instead of multiple write_file calls when you need to save several files at once.",
+  parameters: {
+    type: "object",
+    properties: {
+      files: {
+        type: "object",
+        additionalProperties: { type: "string" },
+        description: "Map of file path (relative to workspace root) → full file content",
+      },
+    },
+    required: ["files"],
+  },
+  execute: async ({ files }: { files: Record<string, string> }) => {
+    const results: Record<string, { ok: boolean; error?: string }> = {};
+    await Promise.all(
+      Object.entries(files).map(async ([p, content]) => {
+        try {
+          const abs = path.join(WORKSPACE, p.replace(/^\/+/, ""));
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.writeFile(abs, content, "utf8");
+          results[p] = { ok: true };
+        } catch (err: any) {
+          results[p] = { ok: false, error: err.message };
+        }
+      }),
+    );
+    return { results };
+  },
+};
+
+export const searchReplaceInCodeTool: ToolDef = {
+  name: "search_replace_in_code",
+  description:
+    "Find a text pattern across source files and replace it. " +
+    "Safer than bash sed for multi-file edits. Set dryRun:true to preview matches first.",
+  parameters: {
+    type: "object",
+    properties: {
+      search:      { type: "string", description: "Text or regex pattern to find" },
+      replacement: { type: "string", description: "Text to replace matches with" },
+      directory:   { type: "string", description: "Directory to search (relative to workspace root, default: entire workspace)" },
+      filePattern: { type: "string", description: "File glob filter e.g. '*.ts' (default: all text files)" },
+      useRegex:    { type: "boolean", description: "Treat search as a JS regex (default false — literal text)" },
+      dryRun:      { type: "boolean", description: "Preview matches without writing (default false)" },
+    },
+    required: ["search", "replacement"],
+  },
+  execute: async ({ search, replacement, directory, filePattern, useRegex = false, dryRun = false }: {
+    search: string; replacement: string; directory?: string; filePattern?: string; useRegex?: boolean; dryRun?: boolean;
+  }) => {
+    const dir = directory ? path.join(WORKSPACE, directory.replace(/^\/+/, "")) : WORKSPACE;
+    const findGlob = filePattern ? `-name ${JSON.stringify(filePattern)}` : "";
+    const findCmd  = `find . -type f ${findGlob} -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' | head -300`;
+    const found    = await runShell(findCmd, dir);
+    const filePaths = found.stdout.trim().split("\n").filter(Boolean);
+
+    const changed: string[] = [];
+    const preview: Array<{ file: string; matches: number }> = [];
+
+    for (const fp of filePaths) {
+      try {
+        const abs     = path.join(dir, fp);
+        const content = await fs.readFile(abs, "utf8");
+        const re      = useRegex ? new RegExp(search, "g") : null;
+        const count   = re
+          ? (content.match(re) ?? []).length
+          : content.split(search).length - 1;
+        if (count === 0) continue;
+        preview.push({ file: fp, matches: count });
+        if (!dryRun) {
+          const updated = re ? content.replace(re, replacement) : content.split(search).join(replacement);
+          await fs.writeFile(abs, updated, "utf8");
+          changed.push(fp);
+        }
+      } catch { /* skip binary / unreadable files */ }
+    }
+
+    return dryRun
+      ? { dryRun: true, wouldChange: preview, totalMatches: preview.reduce((s, r) => s + r.matches, 0) }
+      : { changed, totalFiles: changed.length };
+  },
+};
+
+export const analyzeAppCodeTool: ToolDef = {
+  name: "analyze_app_code",
+  description:
+    "Scan the project structure and surface an analysis: directory tree, detected tech stack, " +
+    "key config files, and (optionally) a grep for a specific topic. " +
+    "Use before making broad changes so you understand what already exists.",
+  parameters: {
+    type: "object",
+    properties: {
+      directory: { type: "string", description: "Directory to analyze (relative to workspace root, default: whole workspace)" },
+      focus:     { type: "string", description: "Optional topic to grep for e.g. 'authentication', 'database schema'" },
+    },
+    required: [],
+  },
+  execute: async ({ directory, focus }: { directory?: string; focus?: string }) => {
+    const dir = directory ? path.join(WORKSPACE, directory.replace(/^\/+/, "")) : WORKSPACE;
+
+    const tree = await runShell(
+      "find . -maxdepth 4 \\( -path '*/node_modules' -o -path '*/.git' -o -path '*/dist' -o -path '*/.next' \\) -prune -o -print | sort | head -250",
+      dir,
+    );
+
+    const KEY_FILES = [
+      "package.json", "tsconfig.json", "README.md",
+      "src/index.ts", "src/app.ts", "src/main.tsx",
+      "index.html", "vite.config.ts", "drizzle.config.ts",
+    ];
+    const keyFiles: Record<string, string> = {};
+    for (const kf of KEY_FILES) {
+      try {
+        const txt = await fs.readFile(path.join(dir, kf), "utf8");
+        keyFiles[kf] = txt.slice(0, 2_000);
+      } catch { /* file absent */ }
+    }
+
+    let focusMatches: string | undefined;
+    if (focus) {
+      const r = await runShell(
+        `grep -rn ${JSON.stringify(focus)} . --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --exclude-dir=node_modules --exclude-dir=dist -C 2 --max-count=30 2>/dev/null | head -300 || true`,
+        dir,
+      );
+      focusMatches = r.stdout || undefined;
+    }
+
+    return {
+      tree:         tree.stdout.trim().split("\n").filter(Boolean),
+      keyFiles,
+      focusMatches,
+    };
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool collections
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,6 +495,10 @@ export const ALL_AGENT_TOOLS: ToolDef[] = [
   searchCodeTool,
   fetchUrlTool,
   runTestsTool,
+  readAppCodeTool,
+  writeAppCodeTool,
+  searchReplaceInCodeTool,
+  analyzeAppCodeTool,
 ];
 
 /** Read-only + network — swarm agents that should not modify workspace */

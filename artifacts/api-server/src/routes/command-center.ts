@@ -523,16 +523,8 @@ router.delete("/swarm-tiers/:tier", async (req, res) => {
 
 /* ── Role Registry — per-role model config ────────────────── */
 
-// All tools across swarm + concierge (union, swarm names first)
-const ALL_COMBINED_TOOL_NAMES: string[] = [
-  ...ALL_TOOL_NAMES,
-  ...ALL_CONCIERGE_TOOL_NAMES.filter(
-    t => !(ALL_TOOL_NAMES as readonly string[]).includes(t as any),
-  ),
-];
-
 // Default tool sets per role category
-const DEFAULT_WORKER_TOOLS   = [...ALL_COMBINED_TOOL_NAMES];
+const DEFAULT_WORKER_TOOLS   = [...ALL_TOOL_NAMES] as string[];
 const DEFAULT_GUARDIAN_TOOLS = ["read_file", "list_directory", "search_code", "fetch_url"];
 const DEFAULT_REPAIR_TOOLS   = ["bash_command", "read_file", "search_code"];
 
@@ -587,12 +579,14 @@ router.get("/role-registry", async (_req, res) => {
         flat[tier][role].primary   = primary;
         flat[tier][role].fallbacks = fb;
         if (savedTools) {
-          // Auto-upgrade: if the saved set is the old 7-tool set (no concierge tools),
-          // silently extend it to the full combined list so all positions show all tools.
-          const hasNewTools = savedTools.some(
-            t => !(ALL_TOOL_NAMES as readonly string[]).includes(t as any),
+          // Auto-upgrade: if the saved set is the old 7-tool set (missing the 4 new tools),
+          // silently extend it to the full current list so all positions see all real tools.
+          const missingNew = (ALL_TOOL_NAMES as readonly string[]).some(
+            n => !savedTools.includes(n),
           );
-          flat[tier][role].tools = hasNewTools ? savedTools : ALL_COMBINED_TOOL_NAMES;
+          flat[tier][role].tools = missingNew
+            ? [...ALL_TOOL_NAMES]
+            : savedTools;
         }
       }
     }
@@ -600,7 +594,7 @@ router.get("/role-registry", async (_req, res) => {
     res.json({
       registry: flat,
       concierge,
-      allToolNames:          ALL_COMBINED_TOOL_NAMES,
+      allToolNames:          [...ALL_TOOL_NAMES],
       allConciergeToolNames: [...ALL_CONCIERGE_TOOL_NAMES],
     });
   } catch (err: any) {
@@ -622,7 +616,7 @@ router.put("/role-registry", async (req, res) => {
             .filter((s: any) => typeof s === "string" && s.trim())
             .map((s: string) => s.trim());
           const tools = (Array.isArray(conf.tools) ? conf.tools : [])
-            .filter((s: any) => typeof s === "string" && ALL_COMBINED_TOOL_NAMES.includes(s));
+            .filter((s: any) => typeof s === "string" && (ALL_TOOL_NAMES as readonly string[]).includes(s));
           await db.execute(sql`
             INSERT INTO swarm_role_config (tier, role, primary_slug, fallbacks, tools, updated_at, updated_by)
             VALUES (${tier}, ${role}, ${primary}, ${JSON.stringify(fallbacks)}::jsonb, ${JSON.stringify(tools)}::jsonb, NOW(), ${userId})

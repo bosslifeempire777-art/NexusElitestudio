@@ -29,6 +29,10 @@ export const ALL_TOOL_NAMES = [
   "search_code",
   "fetch_url",
   "run_tests",
+  "read_app_code",
+  "write_app_code",
+  "search_replace_in_code",
+  "analyze_app_code",
 ] as const;
 
 export type ToolName = typeof ALL_TOOL_NAMES[number];

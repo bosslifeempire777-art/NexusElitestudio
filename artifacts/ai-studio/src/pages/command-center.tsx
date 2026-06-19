@@ -716,7 +716,7 @@ type RoleReg      = Record<string, Record<string, RoleEntry>>;
 type ConciergeConf = { primary: string; fallbacks: string[]; tools: string[] };
 
 const TOOL_LABELS: Record<string, string> = {
-  // ── Workspace tools (swarm agents) ─────────────────────────
+  // ── Workspace tools (swarm agents — all work in file-system context) ────────
   bash_command:            "🖥 Bash",
   read_file:               "📄 Read File",
   write_file:              "✏️ Write File",
@@ -724,13 +724,13 @@ const TOOL_LABELS: Record<string, string> = {
   search_code:             "🔍 Search Code",
   fetch_url:               "🌐 Fetch URL",
   run_tests:               "🧪 Run Tests",
-  // ── App-specific tools (concierge) ──────────────────────────
-  read_app_code:           "📖 Read Code",
-  inspect_dom:             "🗺 Inspect DOM",
+  read_app_code:           "📖 Batch Read",
+  write_app_code:          "💾 Batch Write",
+  search_replace_in_code:  "✂️ Find+Replace",
   analyze_app_code:        "🔬 Analyze Code",
-  search_replace_in_code:  "✂️ Search+Replace",
+  // ── Live-app tools (concierge only — require a running preview) ─────────────
+  inspect_dom:             "🗺 Inspect DOM",
   smoke_test_html:         "🧪 Smoke Test",
-  write_app_code:          "💾 Write Code",
   test_api_endpoints:      "🔁 Test API CRUD",
   test_auth_flow:          "🔐 Test Auth",
   validate_live_api:       "🌐 Validate API",
