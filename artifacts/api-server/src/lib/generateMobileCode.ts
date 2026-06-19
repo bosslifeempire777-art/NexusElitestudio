@@ -154,6 +154,11 @@ Remember: output ONLY the JSON object with file paths as keys and complete file 
     return buildFallbackFiles(name, slug, prompt, nexusApiBase);
   }
 
+  if (!raw || raw.trim().length < 10) {
+    console.error("[MobileCodegen] Empty or near-empty response from model — using fallback files");
+    return buildFallbackFiles(name, slug, prompt, nexusApiBase);
+  }
+
   const jsonStr = raw
     .replace(/^```(?:json)?\n?/i, "")
     .replace(/\n?```$/i, "")

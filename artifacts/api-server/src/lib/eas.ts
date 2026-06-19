@@ -82,6 +82,20 @@ async function writeTempProject(files: Record<string, string>): Promise<string> 
   return dir;
 }
 
+/** Initialise a minimal git repo in dir so EAS CLI is satisfied. */
+async function initGitRepo(dir: string): Promise<void> {
+  const run = (cmd: string, args: string[]) =>
+    execFileAsync(cmd, args, { cwd: dir }).catch(() => {/* ignore errors on individual steps */});
+
+  await run("git", ["init"]);
+  await run("git", ["config", "user.email", "build@nexuselite.com"]);
+  await run("git", ["config", "user.name", "NexusElite Build"]);
+  await run("git", ["add", "-A"]);
+  // Use --allow-empty so it never fails even if nothing staged
+  await run("git", ["commit", "--allow-empty", "-m", "init"]);
+  console.log(`[EAS] Git repo initialised in ${dir}`);
+}
+
 async function runEasCli(
   args: string[],
   cwd: string,
@@ -186,6 +200,9 @@ export async function triggerMobileBuild(opts: {
     writeTempProject(files),
     pushFilesToGitHub(repoSlug, files),
   ]);
+
+  // EAS CLI requires a git repository — initialise one before invoking it
+  await initGitRepo(dir);
 
   console.log(`[EAS] Triggering ${platform} EAS build for "${projectName}"…`);
 
