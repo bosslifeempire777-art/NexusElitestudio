@@ -242,7 +242,7 @@ export async function callLLM(prompt: string, opts: CallOpts = {}): Promise<stri
 
   const baseChain = MODEL_TIERS[tier] ?? MODEL_TIERS.coding;
 
-  // Prepend any Command Center model overrides
+  // Command Center assignments: when assigned, use ONLY those models — no tier fallback
   let chain = baseChain;
   if (agentIds.length > 0) {
     const assignments = await getAgentAssignments();
@@ -252,8 +252,8 @@ export async function callLLM(prompt: string, opts: CallOpts = {}): Promise<stri
       if (m && !pinned.includes(m)) pinned.push(m);
     }
     if (pinned.length > 0) {
-      console.log(`  [CC] ${agentIds[0]}: ${pinned.join(", ")}`);
-      chain = [...pinned, ...baseChain.filter(m => !pinned.includes(m))];
+      console.log(`  [CC] ${agentIds[0]}: ${pinned.join(", ")} (CC-only, no tier fallback)`);
+      chain = pinned;
     }
   }
 
