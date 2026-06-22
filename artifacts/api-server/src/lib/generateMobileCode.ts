@@ -144,9 +144,10 @@ Requirements: ${prompt}
 Generate all screens, components, navigation, and data fetching needed to fully implement this app.
 Remember: output ONLY the JSON object with file paths as keys and complete file content as values.`;
 
-  let raw = "";
+  let appFiles: Record<string, string>;
+
   try {
-    raw = await callLLM(userMsg, {
+    const raw = await callLLM(userMsg, {
       system,
       tier:        "coding",
       maxTokens:   12_000,
@@ -154,28 +155,28 @@ Remember: output ONLY the JSON object with file paths as keys and complete file 
       agentName:   "MobileCodegen",
       agentIds:    ["code-generator"],
     });
+
+    if (!raw || raw.trim().length < 10) {
+      console.error("[MobileCodegen] Empty or near-empty response from model — using fallback files");
+      appFiles = buildFallbackFiles(name, slug, prompt, nexusApiBase);
+    } else {
+      const jsonStr = raw
+        .replace(/^```(?:json)?\n?/i, "")
+        .replace(/\n?```$/i, "")
+        .trim();
+
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Not an object");
+        console.log(`[MobileCodegen] Generated ${Object.keys(parsed).length} files`);
+        appFiles = parsed;
+      } catch (err: any) {
+        console.error("[MobileCodegen] JSON parse failed:", err?.message);
+        appFiles = buildFallbackFiles(name, slug, prompt, nexusApiBase);
+      }
+    }
   } catch (err: any) {
     console.error("[MobileCodegen] LLM call failed:", err?.message ?? err);
-    return buildFallbackFiles(name, slug, prompt, nexusApiBase);
-  }
-
-  if (!raw || raw.trim().length < 10) {
-    console.error("[MobileCodegen] Empty or near-empty response from model — using fallback files");
-    return buildFallbackFiles(name, slug, prompt, nexusApiBase);
-  }
-
-  const jsonStr = raw
-    .replace(/^```(?:json)?\n?/i, "")
-    .replace(/\n?```$/i, "")
-    .trim();
-
-  let appFiles: Record<string, string>;
-  try {
-    appFiles = JSON.parse(jsonStr);
-    if (typeof appFiles !== "object" || Array.isArray(appFiles)) throw new Error("Not an object");
-    console.log(`[MobileCodegen] Generated ${Object.keys(appFiles).length} files`);
-  } catch (err: any) {
-    console.error("[MobileCodegen] JSON parse failed:", err?.message);
     appFiles = buildFallbackFiles(name, slug, prompt, nexusApiBase);
   }
 
