@@ -23,6 +23,7 @@ import { submitBuild, getSubmissionStatus } from "../lib/easSubmit.js";
 import { createEasWebhook, deleteEasWebhook, listEasWebhooks, type WebhookEvent } from "../lib/easWebhooks.js";
 import { listWorkflowRuns, WORKFLOW_TEMPLATES, triggerWorkflowRun, getWorkflowRunLogs } from "../lib/easWorkflows.js";
 import { runConciergeAgent, needsFullSwarm } from "../lib/conciergeAgent.js";
+import { uploadToExpoSnack } from "../lib/expoSnack.js";
 
 const router: IRouter = Router();
 
@@ -1662,6 +1663,15 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
     console.log(`[MobileBuild] Generating Expo files for project ${project.id}...`);
     const files = await generateMobileCode(project.name, project.prompt ?? project.description ?? "", nexusApiBase, project.id);
 
+    // Upload to Expo Snack for instant preview (fire-and-forget; don't block the EAS build)
+    uploadToExpoSnack(project.name, project.description ?? project.prompt ?? "", files)
+      .then(snack => {
+        db.execute(sql`UPDATE projects SET snack_id = ${snack.hashId}, updated_at = NOW() WHERE id = ${project.id}`)
+          .catch(() => {});
+        console.log(`[MobileBuild] Snack uploaded: ${snack.url}`);
+      })
+      .catch(err => console.warn("[MobileBuild] Snack upload failed (non-fatal):", err?.message));
+
     // Push to GitHub + trigger EAS build (returns array; "all" returns 2 builds)
     console.log(`[MobileBuild] Triggering ${platform} EAS build...`);
     const results = await triggerMobileBuild({
@@ -1707,6 +1717,71 @@ router.post("/:id/mobile-build", requireAuth, async (req, res) => {
   } catch (err: any) {
     console.error("[MobileBuild] Failed:", err?.message ?? err);
     res.status(500).json({ error: "build_failed", message: err?.message ?? "EAS build failed" });
+  }
+});
+
+// ── Expo Snack Preview ───────────────────────────────────────────────────────
+
+/** Return existing Snack info for a project (if it has one) */
+router.get("/:id/snack", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+
+  const snackId = (project as any).snackId ?? null;
+  if (!snackId) { res.json({ snack: null }); return; }
+
+  res.json({
+    snack: {
+      hashId:    snackId,
+      url:       `https://snack.expo.dev/${snackId}`,
+      embedUrl:  `https://snack.expo.dev/embedded?platform=android&preview=true&theme=dark&snack-id=${snackId}&hideQueryParams=true`,
+      expoGoUrl: `https://snack.expo.dev/${snackId}`,
+    },
+  });
+});
+
+/** Generate Expo code + upload to Snack instantly (no EAS build needed) */
+router.post("/:id/snack", requireAuth, async (req, res) => {
+  const userId  = req.auth!.userId;
+  const isAdmin = req.auth!.isAdmin;
+
+  const project = isAdmin
+    ? await db.query.projectsTable.findFirst({ where: eq(projectsTable.id, String(req.params.id)) })
+    : await db.query.projectsTable.findFirst({
+        where: and(eq(projectsTable.id, String(req.params.id)), eq(projectsTable.userId, userId)),
+      });
+
+  if (!project) { res.status(404).json({ error: "not_found" }); return; }
+  if (project.type !== "mobile_app") {
+    res.status(400).json({ error: "not_mobile", message: "Only mobile_app projects support Snack preview." });
+    return;
+  }
+
+  try {
+    const nexusApiBase = `${getBaseUrl()}/api/projects/${project.id}/appdata`;
+    const files = await generateMobileCode(
+      project.name,
+      project.prompt ?? project.description ?? "",
+      nexusApiBase,
+      project.id,
+    );
+
+    const snack = await uploadToExpoSnack(project.name, project.description ?? project.prompt ?? "", files);
+
+    await db.execute(sql`UPDATE projects SET snack_id = ${snack.hashId}, updated_at = NOW() WHERE id = ${project.id}`);
+
+    res.json({ snack });
+  } catch (err: any) {
+    console.error("[Snack] Failed:", err?.message ?? err);
+    res.status(500).json({ error: "snack_failed", message: err?.message ?? "Snack upload failed" });
   }
 });
 

@@ -137,6 +137,9 @@ export default function ProjectDetail() {
   const mobilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showMobileQRModal, setShowMobileQRModal] = useState(false);
   const [qrUrlCopied, setQrUrlCopied] = useState(false);
+  const [snackInfo, setSnackInfo] = useState<{ hashId: string; url: string; embedUrl: string } | null>(null);
+  const [snackLoading, setSnackLoading] = useState(false);
+  const [snackError, setSnackError] = useState<string | null>(null);
   // Build history
   const [buildHistory, setBuildHistory]           = useState<any[]>([]);
   const [historyLoading, setHistoryLoading]       = useState(false);
@@ -377,6 +380,40 @@ export default function ProjectDetail() {
     setMobilePanelTab('build');
     setShowMobilePanel(true);
   }, []);
+
+  const fetchSnack = useCallback(async () => {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/projects/${id}/snack`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const data = await res.json();
+      if (data.snack) setSnackInfo(data.snack);
+    } catch { }
+  }, [id]);
+
+  const generateSnack = useCallback(async () => {
+    if (!id || snackLoading) return;
+    setSnackLoading(true);
+    setSnackError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/snack`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message ?? 'Snack generation failed');
+      setSnackInfo(data.snack);
+    } catch (err: any) {
+      setSnackError(err?.message ?? 'Failed to generate Snack preview');
+    } finally {
+      setSnackLoading(false);
+    }
+  }, [id, snackLoading]);
+
+  useEffect(() => {
+    if (showMobileQRModal && project?.type === 'mobile_app') {
+      fetchSnack();
+    }
+  }, [showMobileQRModal, project?.type, fetchSnack]);
 
   const onMobilePanelTabChange = useCallback((tab: typeof mobilePanelTab) => {
     setMobilePanelTab(tab);
@@ -656,54 +693,83 @@ export default function ProjectDetail() {
 
       {/* ── Mobile QR Preview Modal ── */}
       {showMobileQRModal && project.type === 'mobile_app' && (() => {
-        const fullPreviewUrl = window.location.origin + previewUrl;
-        const qrUrl = mobileArtifactUrl ?? fullPreviewUrl;
-        const copyQrUrl = () => {
-          navigator.clipboard.writeText(qrUrl).then(() => { setQrUrlCopied(true); setTimeout(() => setQrUrlCopied(false), 2000); });
-        };
+        const activeUrl = mobileArtifactUrl ?? snackInfo?.url ?? (window.location.origin + previewUrl);
+        const copyUrl = () => navigator.clipboard.writeText(activeUrl).then(() => { setQrUrlCopied(true); setTimeout(() => setQrUrlCopied(false), 2000); });
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-            <div className="w-full max-w-md bg-card border border-violet-500/40 rounded-lg shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/30 bg-violet-900/20">
+            <div className="w-full max-w-lg bg-card border border-violet-500/40 rounded-lg shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/30 bg-violet-900/20 shrink-0">
                 <div className="flex items-center gap-2">
                   <QrCode className="w-4 h-4 text-violet-400" />
                   <h3 className="font-display font-bold text-sm text-violet-300">PREVIEW ON PHONE</h3>
+                  {snackInfo && <span className="text-[10px] font-mono bg-green-500/20 text-green-400 border border-green-500/30 px-1.5 py-0.5 rounded">Expo Snack ✓</span>}
                 </div>
-                <button onClick={() => setShowMobileQRModal(false)} className="text-muted-foreground hover:text-foreground">
-                  <X className="w-4 h-4" />
-                </button>
+                <button onClick={() => setShowMobileQRModal(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
               </div>
 
-              <div className="p-6 flex flex-col items-center gap-5">
-                <div className="bg-white p-4 rounded-xl shadow-lg">
-                  <QRCodeSVG value={qrUrl} size={200} level="M" />
-                </div>
+              <div className="overflow-y-auto flex-1 p-5 flex flex-col gap-5">
 
-                <div className="text-center">
-                  <p className="text-sm text-foreground font-medium mb-1">
-                    {mobileArtifactUrl ? '📲 Scan to download the APK' : '🌐 Scan to open on your phone'}
+                {/* Snack embed player */}
+                {snackInfo ? (
+                  <div className="w-full rounded-lg overflow-hidden border border-violet-500/30" style={{ height: 400 }}>
+                    <iframe
+                      src={snackInfo.embedUrl}
+                      style={{ width: '100%', height: '100%', border: 0 }}
+                      allow="accelerometer; ambient-light-sensor; camera; encrypted-media; geolocation; gyroscope; hid; microphone; midi; payment; usb; vr; xr-spatial-tracking"
+                      sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts"
+                      title="Expo Snack preview"
+                    />
+                  </div>
+                ) : (
+                  /* Generate Snack CTA */
+                  <div className="border border-violet-500/30 rounded-lg p-5 flex flex-col items-center gap-4 bg-violet-900/10">
+                    <QrCode className="w-10 h-10 text-violet-400 opacity-60" />
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-foreground mb-1">Live Expo Go Preview</p>
+                      <p className="text-xs text-muted-foreground font-mono">Generate an Expo Snack so you can scan a QR code and open the real native app in Expo Go — no build wait.</p>
+                    </div>
+                    {snackError && <p className="text-xs text-red-400 font-mono text-center">{snackError}</p>}
+                    <button
+                      onClick={generateSnack}
+                      disabled={snackLoading}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-mono rounded transition-colors"
+                    >
+                      {snackLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating…</> : <><Zap className="w-3.5 h-3.5" /> Generate Expo Snack Preview</>}
+                    </button>
+                  </div>
+                )}
+
+                {/* QR code row */}
+                <div className="flex flex-col items-center gap-3">
+                  <div className="bg-white p-3 rounded-xl shadow-lg">
+                    <QRCodeSVG value={activeUrl} size={160} level="M" />
+                  </div>
+                  <p className="text-xs text-muted-foreground font-mono text-center">
+                    {mobileArtifactUrl ? '📲 Scan to download the APK' : snackInfo ? '📱 Scan with Expo Go to open the app' : '🌐 Scan to open web preview'}
                   </p>
-                  <p className="text-xs text-muted-foreground font-mono">
-                    {mobileArtifactUrl
-                      ? 'Point your camera at the code to download the built app'
-                      : 'Opens the web preview — build an APK for native installation'}
-                  </p>
+                  <div className="w-full bg-background/60 border border-border/50 rounded flex items-center gap-2 px-3 py-2">
+                    <span className="flex-1 text-[11px] font-mono text-muted-foreground truncate">{activeUrl}</span>
+                    <button onClick={copyUrl} className="shrink-0 text-muted-foreground hover:text-primary">
+                      {qrUrlCopied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                    {snackInfo && (
+                      <a href={snackInfo.url} target="_blank" rel="noreferrer" className="shrink-0 text-violet-400 hover:text-violet-300">
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
                 </div>
 
-                <div className="w-full bg-background/60 border border-border/50 rounded flex items-center gap-2 p-3">
-                  <span className="flex-1 text-xs font-mono text-muted-foreground truncate">{qrUrl}</span>
-                  <button onClick={copyQrUrl} className="shrink-0 text-muted-foreground hover:text-primary transition-colors">
-                    {qrUrlCopied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
-
+                {/* Setup instructions */}
                 <details className="w-full group">
                   <summary className="cursor-pointer text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1.5 select-none">
                     <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
-                    Set up local development with Expo Go
+                    Local development setup
                   </summary>
                   <div className="mt-3 bg-background/60 border border-border/40 rounded p-3 space-y-2">
-                    <p className="text-[10px] text-muted-foreground font-mono mb-2">Run these commands on your machine, then scan the QR from the terminal:</p>
+                    <p className="text-[10px] text-muted-foreground font-mono mb-2">Run on your machine to set up local Expo development:</p>
                     {[
                       'npx create-expo-app my-app',
                       'cd my-app',
@@ -713,30 +779,23 @@ export default function ProjectDetail() {
                       <div key={i} className="flex items-center gap-2 bg-black/40 rounded px-3 py-1.5">
                         <span className="text-violet-400 font-mono text-[10px] select-none">$</span>
                         <span className="text-green-300 font-mono text-[10px] flex-1">{cmd}</span>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(cmd)}
-                          className="text-muted-foreground hover:text-primary transition-colors shrink-0"
-                          title="Copy"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
+                        <button onClick={() => navigator.clipboard.writeText(cmd)} className="text-muted-foreground hover:text-primary shrink-0" title="Copy"><Copy className="w-3 h-3" /></button>
                       </div>
                     ))}
                     <p className="text-[10px] text-muted-foreground/60 font-mono pt-1">
-                      Install <span className="text-violet-400">Expo Go</span> on your phone, then scan the QR shown by <code className="text-green-300">npx expo start</code>
+                      Install <span className="text-violet-400">Expo Go</span> on your phone, then scan the QR from <code className="text-green-300">npx expo start</code>
                     </p>
                   </div>
                 </details>
 
-                {!mobileArtifactUrl && (
-                  <button
-                    onClick={() => { setShowMobileQRModal(false); openMobilePanel(); }}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-violet-600/20 border border-violet-500/40 text-violet-300 text-xs font-mono rounded hover:bg-violet-600/30 transition-colors"
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    Build native APK / IPA instead
-                  </button>
-                )}
+                {/* Build APK shortcut */}
+                <button
+                  onClick={() => { setShowMobileQRModal(false); openMobilePanel(); }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-violet-600/10 border border-violet-500/30 text-violet-400 text-xs font-mono rounded hover:bg-violet-600/20 transition-colors"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  {mobileArtifactUrl ? 'Manage builds' : 'Build native APK / IPA'}
+                </button>
               </div>
             </div>
           </div>

@@ -497,6 +497,8 @@ export async function ensureMainSchema(): Promise<void> {
       )
     `);
 
+    await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS snack_id TEXT`);
+
     console.log("✓ Main application schema verified / applied");
   } catch (err: any) {
     console.error("[ensure-schema] Failed to apply schema:", err?.message ?? err);
