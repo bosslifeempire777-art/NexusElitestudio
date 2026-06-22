@@ -6,6 +6,8 @@ export interface ExpoFiles {
 
 const EXPO_OWNER = "Nexuselitestudio";
 
+const EAS_PROJECT_ID = "eb92825b-ebf3-4a03-bc79-0d22dc47c5c9";
+
 const APP_JSON_TEMPLATE = (name: string, slug: string) => {
   // Bundle identifiers must contain only alphanumerics and dots (no hyphens)
   const bundleId = slug.replace(/-/g, "");
@@ -22,6 +24,9 @@ const APP_JSON_TEMPLATE = (name: string, slug: string) => {
       ios:     { supportsTablet: true, bundleIdentifier: `com.nexuselite.${bundleId}` },
       android: { adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: "#0a0a0f" }, package: `com.nexuselite.${bundleId}` },
       web:     { favicon: "./assets/favicon.png" },
+      extra: {
+        eas: { projectId: EAS_PROJECT_ID },
+      },
     },
   }, null, 2);
 };

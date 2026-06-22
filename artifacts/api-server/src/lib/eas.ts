@@ -213,6 +213,7 @@ export async function triggerMobileBuild(opts: {
       "--profile", "preview",
       "--non-interactive",
       "--no-wait",
+      "--auto-submit",
       "--json",
     ],
     dir,
