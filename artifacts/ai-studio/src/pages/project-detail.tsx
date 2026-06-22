@@ -18,8 +18,9 @@ import {
   Zap, Moon, Layers, Globe, Cpu, RefreshCw, Rocket, Copy, Check, X,
   Sword, Gamepad2, Music, Trophy, Map, Shield, Crosshair, Star,
   ChevronDown, ChevronUp, Download, Clock, DollarSign, Activity, ArrowRight,
-  Plus, Users, Key, Eye, EyeOff, Paperclip,
+  Plus, Users, Key, Eye, EyeOff, Paperclip, QrCode,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { useLocation } from "wouter";
 import { getToken, apiFetch } from "@/lib/auth";
 import { useAuth } from "@/context/AuthContext";
@@ -134,6 +135,8 @@ export default function ProjectDetail() {
   const [isMobileBuilding, setIsMobileBuilding]   = useState(false);
   const [mobileError, setMobileError]             = useState<string | null>(null);
   const mobilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showMobileQRModal, setShowMobileQRModal] = useState(false);
+  const [qrUrlCopied, setQrUrlCopied] = useState(false);
   // Build history
   const [buildHistory, setBuildHistory]           = useState<any[]>([]);
   const [historyLoading, setHistoryLoading]       = useState(false);
@@ -650,6 +653,95 @@ export default function ProjectDetail() {
           </div>
         </div>
       )}
+
+      {/* ── Mobile QR Preview Modal ── */}
+      {showMobileQRModal && project.type === 'mobile_app' && (() => {
+        const fullPreviewUrl = window.location.origin + previewUrl;
+        const qrUrl = mobileArtifactUrl ?? fullPreviewUrl;
+        const copyQrUrl = () => {
+          navigator.clipboard.writeText(qrUrl).then(() => { setQrUrlCopied(true); setTimeout(() => setQrUrlCopied(false), 2000); });
+        };
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md bg-card border border-violet-500/40 rounded-lg shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-violet-500/30 bg-violet-900/20">
+                <div className="flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-violet-400" />
+                  <h3 className="font-display font-bold text-sm text-violet-300">PREVIEW ON PHONE</h3>
+                </div>
+                <button onClick={() => setShowMobileQRModal(false)} className="text-muted-foreground hover:text-foreground">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-6 flex flex-col items-center gap-5">
+                <div className="bg-white p-4 rounded-xl shadow-lg">
+                  <QRCodeSVG value={qrUrl} size={200} level="M" />
+                </div>
+
+                <div className="text-center">
+                  <p className="text-sm text-foreground font-medium mb-1">
+                    {mobileArtifactUrl ? '📲 Scan to download the APK' : '🌐 Scan to open on your phone'}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-mono">
+                    {mobileArtifactUrl
+                      ? 'Point your camera at the code to download the built app'
+                      : 'Opens the web preview — build an APK for native installation'}
+                  </p>
+                </div>
+
+                <div className="w-full bg-background/60 border border-border/50 rounded flex items-center gap-2 p-3">
+                  <span className="flex-1 text-xs font-mono text-muted-foreground truncate">{qrUrl}</span>
+                  <button onClick={copyQrUrl} className="shrink-0 text-muted-foreground hover:text-primary transition-colors">
+                    {qrUrlCopied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                <details className="w-full group">
+                  <summary className="cursor-pointer text-xs font-mono text-violet-400 hover:text-violet-300 flex items-center gap-1.5 select-none">
+                    <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
+                    Set up local development with Expo Go
+                  </summary>
+                  <div className="mt-3 bg-background/60 border border-border/40 rounded p-3 space-y-2">
+                    <p className="text-[10px] text-muted-foreground font-mono mb-2">Run these commands on your machine, then scan the QR from the terminal:</p>
+                    {[
+                      'npx create-expo-app my-app',
+                      'cd my-app',
+                      'npx eas-cli@latest login',
+                      'npx eas-cli@latest init',
+                    ].map((cmd, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-black/40 rounded px-3 py-1.5">
+                        <span className="text-violet-400 font-mono text-[10px] select-none">$</span>
+                        <span className="text-green-300 font-mono text-[10px] flex-1">{cmd}</span>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(cmd)}
+                          className="text-muted-foreground hover:text-primary transition-colors shrink-0"
+                          title="Copy"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    <p className="text-[10px] text-muted-foreground/60 font-mono pt-1">
+                      Install <span className="text-violet-400">Expo Go</span> on your phone, then scan the QR shown by <code className="text-green-300">npx expo start</code>
+                    </p>
+                  </div>
+                </details>
+
+                {!mobileArtifactUrl && (
+                  <button
+                    onClick={() => { setShowMobileQRModal(false); openMobilePanel(); }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-violet-600/20 border border-violet-500/40 text-violet-300 text-xs font-mono rounded hover:bg-violet-600/30 transition-colors"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    Build native APK / IPA instead
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Mobile Build / Publish Panel ── */}
       {showMobilePanel && (
@@ -1345,6 +1437,18 @@ export default function ProjectDetail() {
                   {logsOpen ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
                   <span className="hidden sm:inline text-xs">Logs</span>
                 </Button>
+                {project.type === 'mobile_app' && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowMobileQRModal(true)}
+                    title="Scan QR code to preview on your phone"
+                    className="h-7 px-2 gap-1 text-violet-400 hover:text-violet-300"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline text-xs">Scan</span>
+                  </Button>
+                )}
                 <a href={previewUrl} target="_blank" rel="noreferrer">
                   <Button size="sm" variant="outline" className="h-7 px-2 gap-1">
                     <ExternalLink className="w-3.5 h-3.5" />
