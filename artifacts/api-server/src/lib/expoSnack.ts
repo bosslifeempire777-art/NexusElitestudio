@@ -83,18 +83,22 @@ export async function uploadToExpoSnack(
   const body = {
     name:        name.slice(0, 100),
     description: description.slice(0, 500),
-    sdkVersion:  SDK_VERSION,
-    manifest:    { dependencies },
+    manifest:    { sdkVersion: SDK_VERSION, dependencies },
     code:        codeFiles,
   };
 
+  // Include Expo token so the Snack is saved under the Nexuselitestudio account
+  const headers: Record<string, string> = {
+    "Content-Type":  "application/json",
+    "Expo-Platform": "web",
+  };
+  const expoToken = process.env.EXPO_TOKEN;
+  if (expoToken) headers["Authorization"] = `Bearer ${expoToken}`;
+
   const res = await fetch(SNACK_SAVE_URL, {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Expo-Platform": "web",
-    },
-    body: JSON.stringify(body),
+    method: "POST",
+    headers,
+    body:   JSON.stringify(body),
   });
 
   if (!res.ok) {
