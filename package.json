@@ -19,8 +19,6 @@
       "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-",
       "@tailwindcss/oxide>@tailwindcss/oxide-darwin-arm64": "-",
       "@tailwindcss/oxide>@tailwindcss/oxide-darwin-x64": "-",
-      "@tailwindcss/oxide>@tailwindcss/oxide-linux-arm64-gnu": "-",
-      "@tailwindcss/oxide>@tailwindcss/oxide-linux-x64-gnu": "-",
       "@tailwindcss/oxide>@tailwindcss/oxide-win32-x64-msvc": "-",
       "esbuild>@esbuild/darwin-arm64": "-",
       "esbuild>@esbuild/darwin-x64": "-",
