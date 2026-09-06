@@ -17,13 +17,17 @@ COPY tsconfig.json ./tsconfig.json
 # Bypass frozen-lockfile mismatch from Replit-era lockfile
 RUN pnpm install --no-frozen-lockfile
 
-# Build frontend (output → artifacts/ai-studio/dist/public)
-# then API (serves that folder in production)
+# Build frontend then API
 ENV NODE_ENV=production
 RUN pnpm --filter @workspace/ai-studio build \
- && pnpm --filter @workspace/api-server build
+ && pnpm --filter @workspace/api-server build \
+ && test -f artifacts/ai-studio/dist/public/index.html \
+ && echo "Frontend build OK" \
+ && ls -la artifacts/ai-studio/dist/public | head -20
 
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["pnpm", "--filter", "@workspace/api-server", "start"]
+# Must run from workspace root so staticDir resolves to artifacts/ai-studio/dist/public
+WORKDIR /app
+CMD ["node", "artifacts/api-server/dist/index.cjs"]
