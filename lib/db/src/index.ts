@@ -10,7 +10,20 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const connectionString = process.env.DATABASE_URL;
+
+// Supabase (and most managed Postgres) require SSL. Allow self-signed
+// certs so pooler connections work from Railway/Docker.
+const needsSsl =
+  /supabase\.co|amazonaws\.com|neon\.tech|railway\.app|render\.com/i.test(
+    connectionString,
+  ) || process.env.PGSSLMODE === "require";
+
+export const pool = new Pool({
+  connectionString,
+  ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+});
+
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";
