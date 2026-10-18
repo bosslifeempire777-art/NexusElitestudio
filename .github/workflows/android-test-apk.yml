@@ -1,0 +1,82 @@
+
+name: Android test APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-capacitor-bootstrap
+    paths:
+      - 'artifacts/ai-studio/**'
+      - 'lib/**'
+      - 'mobile-build/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/android-test-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Install web workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build existing React/Vite app
+        env:
+          VITE_API_URL: https://workspaceai-studio-production-4152.up.railway.app/api
+        run: pnpm --filter @workspace/ai-studio build
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor wrapper dependencies
+        working-directory: mobile-build
+        run: npm install
+
+      - name: Copy web app into Capacitor project
+        run: |
+          mkdir -p mobile-build/www
+          cp -R artifacts/ai-studio/dist/public/. mobile-build/www/
+
+      - name: Generate Android project
+        working-directory: mobile-build
+        run: npx cap add android
+
+      - name: Sync Android project
+        working-directory: mobile-build
+        run: npx cap sync android
+
+      - name: Build debug APK for device testing
+        working-directory: mobile-build/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexuselite-ai-studio-debug-apk
+          path: mobile-build/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
