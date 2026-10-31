@@ -1,17 +1,40 @@
 {
-  "name": "nexuselite-ai-studio-android",
-  "version": "1.0.0",
-  "private": true,
-  "description": "Capacitor Android wrapper for the existing NexusElite AI Studio React/Vite app",
+  "name": "workspace",
+  "version": "0.0.0",
+  "license": "MIT",
   "scripts": {
-    "android:sync": "cap sync android",
-    "android:open": "cap open android"
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
-  "dependencies": {
-    "@capacitor/android": "^8.0.0",
-    "@capacitor/core": "^8.0.0"
+  "private": true,"pnpm": {
+    "overrides": {
+      "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0",
+      "esbuild": "0.27.3",
+      "@expo/ngrok-bin>@expo/ngrok-bin-darwin-arm64": "-",
+      "@expo/ngrok-bin>@expo/ngrok-bin-darwin-x64": "-",
+      "@expo/ngrok-bin>@expo/ngrok-bin-linux-arm64": "-",
+      "@expo/ngrok-bin>@expo/ngrok-bin-linux-x64": "-",
+      "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-",
+      "@tailwindcss/oxide>@tailwindcss/oxide-darwin-arm64": "-",
+      "@tailwindcss/oxide>@tailwindcss/oxide-darwin-x64": "-",
+      "@tailwindcss/oxide>@tailwindcss/oxide-win32-x64-msvc": "-",
+      "esbuild>@esbuild/darwin-arm64": "-",
+      "esbuild>@esbuild/darwin-x64": "-",
+      "esbuild>@esbuild/linux-arm64": "-",
+      "esbuild>@esbuild/linux-x64": "-",
+      "esbuild>@esbuild/win32-x64": "-"
+    }
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.0.0"
+    "@openrouter/devtools": "^0.1.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2"
+  },
+  "dependencies": {
+    "@openrouter/sdk": "^0.12.20",
+    "stripe": "^20.4.1",
+    "stripe-replit-sync": "^1.0.0"
   }
 }

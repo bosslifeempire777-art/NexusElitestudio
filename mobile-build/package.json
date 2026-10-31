@@ -1,11 +1,17 @@
 {
-  "name": "nexuselite-ai-studio",
+  "name": "nexuselite-ai-studio-android",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": { "start": "expo start" },
+  "private": true,
+  "description": "Capacitor Android wrapper for the existing NexusElite AI Studio React/Vite app",
+  "scripts": {
+    "android:sync": "cap sync android",
+    "android:open": "cap open android"
+  },
   "dependencies": {
-    "expo": "~52.0.0",
-    "react": "18.3.1",
-    "react-native": "0.76.5"
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
   }
 }
