@@ -43,9 +43,14 @@ export function parseToken(token: string): TokenPayload | null {
 
 export const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
+/** Absolute API base when set (e.g. https://....railway.app/api). Used by the Capacitor APK. */
+const API_BASE =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ||
+  `${BASE_URL.replace(/\/$/, "")}/api`;
+
 export function apiUrl(path: string): string {
-  const base = BASE_URL.replace(/\/$/, "");
-  return `${base}/api${path}`;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${p}`;
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
