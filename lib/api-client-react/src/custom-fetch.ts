@@ -9,6 +9,21 @@ export type BodyType<T> = T;
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
+/** When set (e.g. https://....railway.app/api), relative /api/* paths are rewritten to this origin. */
+const API_BASE =
+  (typeof import.meta !== "undefined"
+    ? (import.meta.env?.VITE_API_URL as string | undefined)
+    : undefined)?.replace(/\/$/, "") || "";
+
+function rewriteApiUrl(url: string): string {
+  if (!API_BASE) return url;
+  if (url.startsWith("/api/")) {
+    return API_BASE + url.slice(4); // drop leading /api, keep the rest
+  }
+  if (url === "/api") return API_BASE;
+  return url;
+}
+
 function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
@@ -306,9 +321,17 @@ export async function customFetch<T = unknown>(
     headers.set("accept", DEFAULT_JSON_ACCEPT);
   }
 
-  const requestInfo = { method, url: resolveUrl(input) };
+  // Rewrite relative /api paths to the absolute backend when VITE_API_URL is set (Capacitor APK).
+  let resolvedInput: RequestInfo | URL = input;
+  if (typeof input === "string") {
+    resolvedInput = rewriteApiUrl(input);
+  } else if (isUrl(input)) {
+    resolvedInput = new URL(rewriteApiUrl(input.toString()));
+  }
 
-  const response = await fetch(input, { ...init, method, headers });
+  const requestInfo = { method, url: resolveUrl(resolvedInput) };
+
+  const response = await fetch(resolvedInput, { ...init, method, headers });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
