@@ -6,7 +6,7 @@ import { Plus, Terminal, Activity, Zap, Database, AlertTriangle, CheckCircle, Tr
 import { format } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
 import { useEffect, useState, useCallback } from "react";
-import { getToken } from "@/lib/auth";
+import { getToken, apiUrl } from "@/lib/auth";
 
 const PLAN_LIMITS: Record<string, { builds: number; projects: number; deployments: number }> = {
   free:    { builds: 1,  projects: 2,  deployments: 0 },
@@ -88,7 +88,7 @@ export default function Dashboard() {
     setDeleteError(null);
     try {
       const token = getToken();
-      const res = await fetch(`/api/projects/${confirmDeleteId}`, {
+      const res = await fetch(apiUrl(`/projects/${confirmDeleteId}`), {
         method: "DELETE",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
